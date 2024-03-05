@@ -1,12 +1,16 @@
 # app.py
+from email.mime.text import MIMEText
 
 import streamlit as st
-import pandas as pd  # For demonstration purposes (you can use a proper database)
+from st_pages import hide_pages
 from google.cloud import firestore
 from datetime import datetime
 import bcrypt
+import smtplib
+from email.message import EmailMessage
 
-# TODO: login with username or email?
+# TODO: add email token on registration
+# TODO: login with username or email? (don't create username, just enter email?)
 # TODO: ensure username/email unique
 # TODO: what genders?
 # TODO: Add password retrieval and reset (and allow other user info to be changed?)
@@ -31,6 +35,7 @@ def login():
 
 
 def register():
+
     st.title("User Registration")
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
@@ -49,6 +54,7 @@ def check_user_exists(username):
 
 def register_user(username, password, user_gender, user_birth_year):
     hashed_password = hash_password(password)
+    confirmation_token = bcrypt.gensalt().decode('utf8')
     now = datetime.now()
     user_data = {
         "username": username,
@@ -57,13 +63,16 @@ def register_user(username, password, user_gender, user_birth_year):
         "last_active": now,
         "user_gender": user_gender,
         "user_birth_year": user_birth_year,
-        "account_type": "user"
+        "account_type": "user",
+        "confirmation_token": confirmation_token,
+        "is_confirmed": False
     }
     if check_user_exists(username):
         st.warning("Username already in use! Please choose another.")
     else:
         db.collection("users").document(username).set(user_data)
-        st.success("User registered successfully!")
+        send_confirmation_email("tophermcw@gmail.com", username, confirmation_token)
+        st.success("You have been sent an email - please click the link in the message to continue registration.")
 
 
 def authenticate_user(username, password):
@@ -87,6 +96,25 @@ def hash_password(password):
     return hashed_password
 
 
+def send_confirmation_email(send_to, username, confirmation_token):
+
+    smtpserver = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+    smtpserver.ehlo()
+    smtpserver.login(st.secrets["email_address"], st.secrets["gmail_app_password"])
+
+    subject = "Confirm Your Account Registration"
+    body = f"Click the link below to confirm your registration:\n\n"
+    confirmation_link = f"{st.secrets['app_url']}confirm?token={confirmation_token}&user={username}"
+    body += confirmation_link
+    msg = MIMEText(body)
+    msg['Subject'] = subject
+    msg['From'] = st.secrets["email_address"]
+    msg['To'] = send_to
+
+    smtpserver.send_message(msg)
+    smtpserver.close()
+
+
 def main():
     st.sidebar.title("Navigation")
     choice = st.sidebar.radio("Select an option:", ["Login", "Register"])
@@ -98,5 +126,6 @@ def main():
 
 
 if __name__ == "__main__":
+    hide_pages(['confirm'])
     main()
 
