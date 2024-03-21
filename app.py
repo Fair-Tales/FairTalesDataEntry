@@ -3,13 +3,13 @@ from email.mime.text import MIMEText
 
 import streamlit as st
 from st_pages import hide_pages
+import streamlit_authenticator as stauth
 from google.cloud import firestore
 from datetime import datetime
 import bcrypt
 import smtplib
-from email.message import EmailMessage
 
-# TODO: add email token on registration
+# TODO: migrate to Stauth!! https://blog.streamlit.io/streamlit-authenticator-part-2-adding-advanced-features-to-your-authentication-component/
 # TODO: login with username or email? (don't create username, just enter email?)
 # TODO: ensure username/email unique
 # TODO: what genders?
