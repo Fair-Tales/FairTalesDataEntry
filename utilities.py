@@ -24,7 +24,10 @@ def check_authetication_status():
 
 
 def hide():
-    hide_pages(['confirm', 'user_home', 'add_book'])
+    hide_pages([
+        'confirm', 'user_home', 'add_book', 'account_settings', 'confirm_entry',
+        'add_character', 'add_author'
+    ])
 
 
 def author_entry_to_name(entry):
@@ -101,3 +104,36 @@ class FirestoreWrapper:
     def get_all_documents_stream(self, collection):
         db = firestore.Client.from_service_account_json(self.firestore_key)
         return db.collection(collection).stream()
+
+
+# TODO: check that required fields (e.g. book title) are not blank
+# TODO: populate form with current metadata/previoulsy entered form data f select edit
+# TODO: fix warnings in table display (arrows?)
+class FormConfirmation:
+    """
+    Class with helper methods to handle form confirmation and routing
+    based on form type.
+    """
+
+    forms = {
+        'new_book': 'confirm_new_book',
+        'new_author': 'confirm_new_author'
+    }
+
+    @classmethod
+    def confirm_new_book(cls):
+        st.dataframe(st.session_state.book_metadata)
+
+        col1, col2 = st.columns(2)
+        confirm_button = col1.button("Confirm")
+        edit_button = col2.button("Edit")
+
+        if confirm_button:
+            if st.session_state.book_metadata['author'] == "None of these (create a new author).":
+                st.switch_page("./pages/add_author.py")
+
+            if st.session_state.book_metadata['publisher'] == "None of these (create a new publisher).":
+                st.warning("Publisher creation not implemented yet!")
+
+        if edit_button:
+            st.switch_page("./pages/add_book.py")

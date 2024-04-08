@@ -1,7 +1,10 @@
 import streamlit as st
-from utilities import author_entry_to_name
-# TODO: make this a utility? Does not need to be a page as it stands.
+from utilities import author_entry_to_name, hide
 
+hide()
+
+
+# TODO: wire this up with session state so that the form is prepopulated if editing an already entered book.
 
 def new_book_metadata():
 
@@ -13,7 +16,7 @@ def new_book_metadata():
     }
 
     with st.form("new_book"):
-        st.write("Please enter metadata for the new book.")
+        st.header("Please enter metadata for the new book.")
 
         metadata = {
             key: None for key in ['title', 'author', 'illustrator', 'publisher', 'date_published']
@@ -42,4 +45,13 @@ def new_book_metadata():
         submitted = st.form_submit_button("Submit")
         if submitted:
             st.session_state['book_metadata'] = metadata
+            st.session_state['active_form_to_confirm'] = 'new_book'
             st.switch_page("./pages/confirm_entry.py")
+
+
+new_book_metadata()
+
+cancel_button = st.button("Cancel entering new book.")
+
+if cancel_button:
+    st.switch_page("./pages/user_home.py")

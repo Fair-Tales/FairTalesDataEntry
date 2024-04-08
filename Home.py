@@ -1,15 +1,13 @@
-
 import streamlit as st
-st.set_page_config(
-    page_title="Home",
-    initial_sidebar_state="expanded"
-)
 from email.mime.text import MIMEText
 from google.cloud import firestore
 from datetime import datetime
 import bcrypt
 import smtplib
-
+st.set_page_config(
+    page_title="Home",
+    initial_sidebar_state="expanded"
+)
 from utilities import hide, is_authenticated, FirestoreWrapper
 
 # TODO: migrate to json token to secrets.toml (https://discuss.streamlit.io/t/how-to-use-an-entire-json-file-in-the-secrets-app-settings-when-deploying-on-the-community-cloud/49375/2)
@@ -32,6 +30,8 @@ from utilities import hide, is_authenticated, FirestoreWrapper
 # TODO: make fields blank when switching register/login and vice verca
 # TODO: schedule user database backup?
 # TODO: currently just using username as email. Happy with this?
+
+# TODO: add confirmation check before some actions (e..g. cancel book entry): https://www.aprime.io/streamlit-tutorial-dynamic-confirmation-modals-session-state/
 
 db = firestore.Client.from_service_account_json("./secrets/firestore_service_account_key.json")
 users_ref = db.collection("users")

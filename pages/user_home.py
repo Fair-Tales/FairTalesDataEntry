@@ -3,7 +3,6 @@ from streamlit_option_menu import option_menu
 from instruction_strings import home_intro
 from utilities import check_authetication_status, hide
 
-from pages.add_book import new_book_metadata
 
 hide()
 st.title("Data entry")
@@ -64,7 +63,7 @@ def author_search():
 
 # TODO: wire this up to store new book in Firestore!
 def add_book():
-    new_book_metadata()
+    st.switch_page("./pages/add_book.py")
 
 
 navigation_dict = {
