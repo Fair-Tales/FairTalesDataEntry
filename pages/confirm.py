@@ -16,7 +16,7 @@ else:
             user_ref.update({
                 'is_confirmed': True
             })
-        st.success("User registration successful!")
+        st.success("User registration successful! You can now login.")
 
     except:
         st.error("Registration failed. Please try again.")

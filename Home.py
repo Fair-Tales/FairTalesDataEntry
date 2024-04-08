@@ -1,22 +1,37 @@
-# app.py
-from email.mime.text import MIMEText
 
 import streamlit as st
-from st_pages import hide_pages
-import streamlit_authenticator as stauth
+st.set_page_config(
+    page_title="Home",
+    initial_sidebar_state="expanded"
+)
+from email.mime.text import MIMEText
 from google.cloud import firestore
 from datetime import datetime
 import bcrypt
 import smtplib
 
-# TODO: migrate to Stauth!! https://blog.streamlit.io/streamlit-authenticator-part-2-adding-advanced-features-to-your-authentication-component/
-# TODO: login with username or email? (don't create username, just enter email?)
+from utilities import hide, is_authenticated, FirestoreWrapper
+
+# TODO: migrate to json token to secrets.toml (https://discuss.streamlit.io/t/how-to-use-an-entire-json-file-in-the-secrets-app-settings-when-deploying-on-the-community-cloud/49375/2)
+
+# TODO:make better use of st-pages to show/hide and use icons: https://github.com/blackary/st_pages?tab=readme-ov-file
+
+# TODO: remove credentials wrapper utility?
+# TODO: add wrapper for firestore database (e.g. to search authors etc)
+# TODO: refactor some login/registration code from here
+# TODO: add different redirect to admin_home is user is admin
+
+# TODO: add options menu; https://discuss.streamlit.io/t/streamlit-option-menu-is-a-simple-streamlit-component-that-allows-users-to-select-a-single-item-from-a-list-of-options-in-a-menu/20514
+# TODO: add TCs at registration.
+
+
 # TODO: ensure username/email unique
-# TODO: what genders?
+# TODO: what genders when registering?
+
 # TODO: Add password retrieval and reset (and allow other user info to be changed?)
 # TODO: make fields blank when switching register/login and vice verca
-# TODO: add KDF hashing for extra security?
 # TODO: schedule user database backup?
+# TODO: currently just using username as email. Happy with this?
 
 db = firestore.Client.from_service_account_json("./secrets/firestore_service_account_key.json")
 users_ref = db.collection("users")
@@ -24,12 +39,12 @@ users_ref = db.collection("users")
 
 def login():
     st.title("Login")
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
+    username = st.text_input("Email", value="")
+    password = st.text_input("Password", type="password", value="")
     if st.button("Login"):
         if authenticate_user(username, password):
-            st.success(f"Welcome, {username}!")
-            st.write("Your homepage content goes here.")
+            st.session_state['authentication_status'] = True
+            st.switch_page("./pages/user_home.py")
         else:
             st.error("Invalid credentials.")
 
@@ -37,7 +52,7 @@ def login():
 def register():
 
     st.title("User Registration")
-    username = st.text_input("Username")
+    username = st.text_input("Email")
     password = st.text_input("Password", type="password")
     user_gender = st.selectbox("Gender", ["Female", "Male", "Other"])
     user_birth_year = st.number_input("Birth year", min_value=1900, max_value=2030, value=1980)
@@ -71,7 +86,7 @@ def register_user(username, password, user_gender, user_birth_year):
         st.warning("Username already in use! Please choose another.")
     else:
         db.collection("users").document(username).set(user_data)
-        send_confirmation_email("tophermcw@gmail.com", username, confirmation_token)
+        send_confirmation_email(username, username, confirmation_token)
         st.success("You have been sent an email - please click the link in the message to continue registration.")
 
 
@@ -119,6 +134,9 @@ def main():
     st.sidebar.title("Navigation")
     choice = st.sidebar.radio("Select an option:", ["Login", "Register"])
 
+    # TODO: move this to within authenticated user code for security
+    st.session_state['firestore'] = FirestoreWrapper("./secrets/firestore_service_account_key.json")
+
     if choice == "Login":
         login()
     elif choice == "Register":
@@ -126,6 +144,8 @@ def main():
 
 
 if __name__ == "__main__":
-    hide_pages(['confirm'])
+    hide()
+    if is_authenticated():
+        st.switch_page("./pages/user_home.py")
     main()
 
