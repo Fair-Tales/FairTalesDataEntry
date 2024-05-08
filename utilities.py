@@ -89,8 +89,11 @@ class FirestoreWrapper:
         self.firestore_key = json.loads(st.secrets["firestore_key"])
 
     def connect(self):
-        creds = service_account.Credentials.from_service_account_info(self.firestore_key)
-        return firestore.Client(credentials=creds, project="sawdataentry")
+        if is_authenticated():
+            creds = service_account.Credentials.from_service_account_info(self.firestore_key)
+            return firestore.Client(credentials=creds, project="sawdataentry")
+        else:
+            return None
 
     def single_field_search(self, collection, field, contains_string):
         db = self.connect()

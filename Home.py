@@ -22,6 +22,7 @@ from utilities import hide, is_authenticated, FirestoreWrapper
 
 # TODO: ensure username/email unique
 # TODO: what genders when registering?
+# TODO: add logout and 'remember me'
 
 # TODO: Add password retrieval and reset (and allow other user info to be changed?)
 # TODO: make fields blank when switching register/login and vice verca
@@ -132,7 +133,6 @@ def main():
     st.sidebar.title("Navigation")
     choice = st.sidebar.radio("Select an option:", ["Login", "Register"])
 
-    # TODO: move this to within authenticated user code for security
     st.session_state['firestore'] = FirestoreWrapper()
 
     if choice == "Login":
