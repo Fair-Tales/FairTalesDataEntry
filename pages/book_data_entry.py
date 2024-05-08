@@ -1,14 +1,14 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
 from utilities import hide
-from instruction_strings import data_entry_instructions
+from text_content import Instructions
 
 
 hide()
 st.title(
     f"Enter book data: {st.session_state.book_metadata['title']}"
 )
-st.write(data_entry_instructions)
+st.write(Instructions.data_entry_instructions)
 
 selected_option = option_menu(
     None, ["Upload page photos", "Enter text", "Add a Character"],

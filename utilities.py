@@ -5,10 +5,9 @@ from google.oauth2 import service_account
 from st_pages import hide_pages
 import pandas as pd
 import json
-
-
-# TODO: refactor utility methods to classes for conciseness.
-# TODO: fix this Arrow table issue https://discuss.streamlit.io/t/applying-automatic-fixes-for-column-types-to-make-the-dataframe-arrow-compatible/52717/2
+import bcrypt
+import smtplib
+from email.mime.text import MIMEText
 
 
 def is_authenticated():
@@ -18,7 +17,7 @@ def is_authenticated():
     return st.session_state['authentication_status']
 
 
-def check_authetication_status():
+def check_authentication_status():
     if 'authentication_status' not in st.session_state:
         st.session_state['authentication_status'] = False
 
@@ -30,8 +29,58 @@ def check_authetication_status():
 def hide():
     hide_pages([
         'confirm', 'user_home', 'add_book', 'account_settings', 'confirm_entry',
-        'add_character', 'add_author', 'book_data_entry', 'enter_text'
+        'add_character', 'add_author', 'book_data_entry', 'enter_text',
+        'register_user'
     ])
+
+
+def check_user_exists(username):
+    db = FirestoreWrapper().connect(auth=False)
+    users_ref = db.collection("users")
+    query_ref = users_ref.where(filter=firestore.FieldFilter("username", "==", username))
+    docs = query_ref.get()
+    return len(docs) >= 1
+
+
+def authenticate_user(username, password):
+    db = FirestoreWrapper().connect(auth=False)
+    users_ref = db.collection("users")
+    query_ref = users_ref.where(filter=firestore.FieldFilter("username", "==", username))
+    docs = query_ref.get()
+    if len(docs) == 1:
+        stored_password = docs[0].to_dict()['password']
+        return bcrypt.checkpw(
+            password=password.encode('utf8'),
+            hashed_password=stored_password.encode('utf8')
+        )
+
+    return False
+
+
+def hash_password(password):
+    hashed_password = bcrypt.hashpw(
+        password.encode('utf8'), bcrypt.gensalt()
+    ).decode('utf8')
+    return hashed_password
+
+
+def send_confirmation_email(send_to, username, confirmation_token):
+
+    smtpserver = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+    smtpserver.ehlo()
+    smtpserver.login(st.secrets["email_address"], st.secrets["gmail_app_password"])
+
+    subject = "Confirm Your Account Registration"
+    body = f"Click the link below to confirm your registration:\n\n"
+    confirmation_link = f"{st.secrets['app_url']}confirm?token={confirmation_token}&user={username}"
+    body += confirmation_link
+    msg = MIMEText(body)
+    msg['Subject'] = subject
+    msg['From'] = st.secrets["email_address"]
+    msg['To'] = send_to
+
+    smtpserver.send_message(msg)
+    smtpserver.close()
 
 
 def author_entry_to_name(entry):
@@ -43,42 +92,6 @@ def author_entry_to_name(entry):
     return ' '.join([author['forename'], author['surname']])
 
 
-# TODO: is this still needed?
-class CredentialsWrapper:
-    """
-    Wrapper class to handle getting credential dictionary from
-    Firestore for use in streamlit-authenticator.
-    """
-
-    def __init__(self, firestore_key):
-        self.firestore_key = firestore_key
-
-    def credentials(self):
-        db = firestore.Client.from_service_account_json(self.firestore_key)
-        users = db.collection("users").stream()
-
-        credentials_dict = {
-            'usernames':
-                {
-                    user.id: {
-                        'password': user.to_dict()['password'],
-                        'logged_in': False
-                    }
-                    for user in users
-                }
-        }
-        return credentials_dict
-
-    def update_credentials(self):
-        """
-        Streamlit-authenticator wants us to update everything by just overwriting the config
-        file by dumping the new version from memory. This does not seem ideal or safe!
-
-        This method just updates any fields in the database that have been changed for the current user.
-        """
-        pass
-
-
 class FirestoreWrapper:
     """
     Wrapper class to handle interacting with
@@ -88,9 +101,12 @@ class FirestoreWrapper:
     def __init__(self):
         self.firestore_key = json.loads(st.secrets["firestore_key"])
 
-    def connect(self):
-        creds = service_account.Credentials.from_service_account_info(self.firestore_key)
-        return firestore.Client(credentials=creds, project="sawdataentry")
+    def connect(self, auth=True):
+        if is_authenticated() or not auth:
+            creds = service_account.Credentials.from_service_account_info(self.firestore_key)
+            return firestore.Client(credentials=creds, project="sawdataentry")
+        else:
+            return None
 
     def single_field_search(self, collection, field, contains_string):
         db = self.connect()
