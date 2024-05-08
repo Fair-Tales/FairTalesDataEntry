@@ -33,7 +33,8 @@ from utilities import hide, is_authenticated, FirestoreWrapper
 
 # TODO: add confirmation check before some actions (e..g. cancel book entry): https://www.aprime.io/streamlit-tutorial-dynamic-confirmation-modals-session-state/
 
-db = firestore.Client.from_service_account_json("./secrets/firestore_service_account_key.json")
+# TODO: refactor this...
+db = FirestoreWrapper().connect()
 users_ref = db.collection("users")
 
 
