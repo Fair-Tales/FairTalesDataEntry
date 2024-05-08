@@ -1,6 +1,6 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
-from instruction_strings import home_intro
+from text_content import Alerts, Instructions
 from utilities import check_authetication_status, hide
 
 
@@ -9,12 +9,8 @@ st.title("SAW data entry tool")
 
 check_authetication_status()
 
-st.write(home_intro)
-
-st.write(
-    "Before adding a book to our database, please search to check that we do not already have the book. You can also "
-    "search by author to see which books that we have by them."
-)
+st.write(Instructions.home_intro)
+st.write(Instructions.advise_to_search)
 
 selected_option = option_menu(
     None, ["Search Books", "Search Authors", "Add a Book"],
@@ -54,7 +50,7 @@ def book_search():
             st.write(books)
 
         else:
-            st.warning("No matching books found! Please ensure that the title is spelled correctly.")
+            st.warning(Alerts.no_matching_book)
 
 
 def author_search():

@@ -17,7 +17,8 @@ from utilities import hide, is_authenticated, FirestoreWrapper
 # TODO: add different redirect to admin_home if user is admin
 
 # TODO: add options menu; https://discuss.streamlit.io/t/streamlit-option-menu-is-a-simple-streamlit-component-that-allows-users-to-select-a-single-item-from-a-list-of-options-in-a-menu/20514
-# TODO: add TCs at registration.
+
+# TODO: migrate all text to use text_content module
 
 # TODO: ensure username/email unique
 # TODO: what genders when registering?
