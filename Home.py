@@ -15,13 +15,11 @@ from utilities import hide, is_authenticated, FirestoreWrapper
 # TODO:make better use of st-pages to show/hide and use icons: https://github.com/blackary/st_pages?tab=readme-ov-file
 
 # TODO: remove credentials wrapper utility?
-# TODO: add wrapper for firestore database (e.g. to search authors etc)
 # TODO: refactor some login/registration code from here
-# TODO: add different redirect to admin_home is user is admin
+# TODO: add different redirect to admin_home if user is admin
 
 # TODO: add options menu; https://discuss.streamlit.io/t/streamlit-option-menu-is-a-simple-streamlit-component-that-allows-users-to-select-a-single-item-from-a-list-of-options-in-a-menu/20514
 # TODO: add TCs at registration.
-
 
 # TODO: ensure username/email unique
 # TODO: what genders when registering?
