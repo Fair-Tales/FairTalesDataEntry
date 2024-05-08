@@ -1,13 +1,13 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
 from text_content import Alerts, Instructions
-from utilities import check_authetication_status, hide
+from utilities import check_authentication_status, hide
 
 
 hide()
 st.title("SAW data entry tool")
 
-check_authetication_status()
+check_authentication_status()
 
 st.write(Instructions.home_intro)
 st.write(Instructions.advise_to_search)

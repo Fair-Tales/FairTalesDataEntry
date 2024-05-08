@@ -5,7 +5,7 @@ hide()
 token = st.query_params.token
 user = st.query_params.user
 
-db = FirestoreWrapper().connect()
+db = FirestoreWrapper().connect(auth=False)
 user_ref = db.collection("users").document(user)
 
 if user_ref.get().to_dict()['is_confirmed']:
