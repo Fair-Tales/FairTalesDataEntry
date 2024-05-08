@@ -10,8 +10,6 @@ st.set_page_config(
 )
 from utilities import hide, is_authenticated, FirestoreWrapper
 
-# TODO: migrate to json token to secrets.toml (https://discuss.streamlit.io/t/how-to-use-an-entire-json-file-in-the-secrets-app-settings-when-deploying-on-the-community-cloud/49375/2)
-
 # TODO:make better use of st-pages to show/hide and use icons: https://github.com/blackary/st_pages?tab=readme-ov-file
 
 # TODO: remove credentials wrapper utility?

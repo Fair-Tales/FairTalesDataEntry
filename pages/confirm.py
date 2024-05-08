@@ -1,10 +1,10 @@
 import streamlit as st
-from google.cloud import firestore
+from utilities import FirestoreWrapper
 
 token = st.query_params.token
 user = st.query_params.user
 
-db = firestore.Client.from_service_account_json("./secrets/firestore_service_account_key.json")
+db = FirestoreWrapper().connect()
 user_ref = db.collection("users").document(user)
 
 if user_ref.get().to_dict()['is_confirmed']:
