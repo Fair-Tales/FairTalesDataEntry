@@ -25,7 +25,7 @@ def new_author():
             "Birth year", min_value=1900, max_value=2024, value=2023
         )
 
-        metadata['author'] = st.selectbox(
+        metadata['gender'] = st.selectbox(
             "Gender",
             options=[
                 'Female',
@@ -37,6 +37,7 @@ def new_author():
         submitted = st.form_submit_button("Submit")
         if submitted:
             st.session_state['author_details'] = metadata
+            st.session_state['active_form_to_confirm'] = 'new_author'
             st.switch_page("./pages/confirm_entry.py")
 
 

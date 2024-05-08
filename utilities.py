@@ -6,6 +6,8 @@ import pandas as pd
 
 
 # TODO: refactor utility methods to classes for conciseness.
+# TODO: fix this Arrow table issue https://discuss.streamlit.io/t/applying-automatic-fixes-for-column-types-to-make-the-dataframe-arrow-compatible/52717/2
+
 
 def is_authenticated():
     if 'authentication_status' not in st.session_state:
@@ -26,7 +28,7 @@ def check_authetication_status():
 def hide():
     hide_pages([
         'confirm', 'user_home', 'add_book', 'account_settings', 'confirm_entry',
-        'add_character', 'add_author'
+        'add_character', 'add_author', 'book_data_entry', 'enter_text'
     ])
 
 
@@ -117,16 +119,23 @@ class FormConfirmation:
 
     forms = {
         'new_book': 'confirm_new_book',
-        'new_author': 'confirm_new_author'
+        'new_author': 'confirm_new_author',
+        'new_character': 'confirm_new_character'
     }
 
     @classmethod
-    def confirm_new_book(cls):
-        st.dataframe(st.session_state.book_metadata)
+    def display_confirmation(cls, session_metadata):
 
+        st.dataframe(st.session_state[session_metadata], use_container_width=True)
         col1, col2 = st.columns(2)
         confirm_button = col1.button("Confirm")
         edit_button = col2.button("Edit")
+
+        return confirm_button, edit_button
+
+    @classmethod
+    def confirm_new_book(cls):
+        confirm_button, edit_button = cls.display_confirmation('book_metadata')
 
         if confirm_button:
             if st.session_state.book_metadata['author'] == "None of these (create a new author).":
@@ -137,3 +146,23 @@ class FormConfirmation:
 
         if edit_button:
             st.switch_page("./pages/add_book.py")
+
+    @classmethod
+    def confirm_new_author(cls):
+        confirm_button, edit_button = cls.display_confirmation('author_details')
+
+        if confirm_button:
+            st.switch_page("./pages/book_data_entry.py")
+
+        if edit_button:
+            st.switch_page("./pages/add_author.py")
+
+    @classmethod
+    def confirm_new_character(cls):
+        confirm_button, edit_button = cls.display_confirmation('character_details')
+
+        if confirm_button:
+            st.switch_page("./pages/book_data_entry.py")
+
+        if edit_button:
+            st.switch_page("./pages/add_character.py")

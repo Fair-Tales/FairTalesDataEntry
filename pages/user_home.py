@@ -5,7 +5,7 @@ from utilities import check_authetication_status, hide
 
 
 hide()
-st.title("Data entry")
+st.title("SAW data entry tool")
 
 check_authetication_status()
 
