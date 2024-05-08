@@ -5,7 +5,7 @@ from utilities import (
     hide, hash_password, check_user_exists,
     send_confirmation_email, FirestoreWrapper
 )
-from text_content import Alerts
+from text_content import Alerts, Forms
 
 hide()
 
@@ -38,11 +38,11 @@ st.title("User Registration")
 username = st.text_input("Email", value="", key='register_email')
 password = st.text_input("Password", type="password", value="", key='register_password')
 user_gender = st.selectbox(
-    "Which most accurately describes your gender identity?",
-    ["Woman", "Man", "Non-binary", "Let me type...", "Prefer not to say"]
+    Forms.user_gender_registration['question'],
+    Forms.user_gender_registration['options']
 )
-if user_gender == "Let me type...":
-    gender = st.text_input(label="Please describe your gender identify.", value="")
+if user_gender == Forms.user_gender_registration['manual_input_option']:
+    gender = st.text_input(label=Forms.user_gender_registration['manual_input_prompt'], value="")
 else:
     gender = user_gender
 

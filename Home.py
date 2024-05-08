@@ -12,7 +12,8 @@ from text_content import Terms
 
 # TODO: refactor utility methods to classes for conciseness (including authentication stuff).
 # TODO: add different redirect to admin_home if user is admin
-# TODO: migrate all text to use text_content module
+# TODO: migrate all text to use text_content module (including form content - use forms.py)
+#     Migrate to different data type for form content e.g. https://www.reddit.com/r/learnpython/comments/13yqaol/best_way_to_get_a_dictlike_object_with_dot/
 # TODO: add logout and 'remember me'
 # TODO: Add password retrieval and reset (and allow other user info to be changed?)
 # TODO: schedule user database backup?
