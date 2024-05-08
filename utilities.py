@@ -92,42 +92,6 @@ def author_entry_to_name(entry):
     return ' '.join([author['forename'], author['surname']])
 
 
-# TODO: is this still needed?
-class CredentialsWrapper:
-    """
-    Wrapper class to handle getting credential dictionary from
-    Firestore for use in streamlit-authenticator.
-    """
-
-    def __init__(self, firestore_key):
-        self.firestore_key = firestore_key
-
-    def credentials(self):
-        db = firestore.Client.from_service_account_json(self.firestore_key)
-        users = db.collection("users").stream()
-
-        credentials_dict = {
-            'usernames':
-                {
-                    user.id: {
-                        'password': user.to_dict()['password'],
-                        'logged_in': False
-                    }
-                    for user in users
-                }
-        }
-        return credentials_dict
-
-    def update_credentials(self):
-        """
-        Streamlit-authenticator wants us to update everything by just overwriting the config
-        file by dumping the new version from memory. This does not seem ideal or safe!
-
-        This method just updates any fields in the database that have been changed for the current user.
-        """
-        pass
-
-
 class FirestoreWrapper:
     """
     Wrapper class to handle interacting with

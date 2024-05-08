@@ -19,14 +19,12 @@ from text_content import Terms
 
 # TODO: migrate all text to use text_content module
 
-# TODO: ensure username/email unique
 # TODO: what genders when registering?
 # TODO: add logout and 'remember me'
 
 # TODO: Add password retrieval and reset (and allow other user info to be changed?)
 # TODO: make fields blank when switching register/login and vice verca
 # TODO: schedule user database backup?
-# TODO: currently just using username as email. Happy with this?
 
 # TODO: add confirmation check before some actions (e..g. cancel book entry): https://www.aprime.io/streamlit-tutorial-dynamic-confirmation-modals-session-state/
 
