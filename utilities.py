@@ -1,8 +1,10 @@
 from google.cloud import firestore
 import streamlit as st
 from google.cloud.firestore_v1 import FieldFilter
+from google.oauth2 import service_account
 from st_pages import hide_pages
 import pandas as pd
+import json
 
 
 # TODO: refactor utility methods to classes for conciseness.
@@ -83,11 +85,16 @@ class FirestoreWrapper:
     Firestore database (searching, querying, entering new data).
     """
 
-    def __init__(self, firestore_key):
-        self.firestore_key = firestore_key
+    def __init__(self):
+        self.firestore_key = json.loads(st.secrets["firestore_key"])
+
+    def connect(self):
+        creds = service_account.Credentials.from_service_account_info(self.firestore_key)
+        return firestore.Client(credentials=creds, project="sawdataentry")
 
     def single_field_search(self, collection, field, contains_string):
-        db = firestore.Client.from_service_account_json(self.firestore_key)
+        db = self.connect()
+
         results = (
             db.collection(collection)
                 .where(filter=FieldFilter(field, ">=", contains_string))
@@ -99,12 +106,12 @@ class FirestoreWrapper:
         return pd.DataFrame(results_dict)
 
     def get_by_reference(self, collection, document_ref):
-        db = firestore.Client.from_service_account_json(self.firestore_key)
+        db = self.connect()
         doc_ref = db.collection(collection).document(document_ref)
         return doc_ref.get()
 
     def get_all_documents_stream(self, collection):
-        db = firestore.Client.from_service_account_json(self.firestore_key)
+        db = self.connect()
         return db.collection(collection).stream()
 
 

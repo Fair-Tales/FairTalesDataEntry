@@ -1,3 +1,7 @@
+# Project specific (development stuff)
+databases/
+secrets/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -151,6 +155,14 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+########################################################################
+# Streamlit
+########################################################################
+.streamlit/
+lib/streamlit/static
+streamlit-storage
+
 
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can

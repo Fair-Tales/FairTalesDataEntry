@@ -135,7 +135,7 @@ def main():
     choice = st.sidebar.radio("Select an option:", ["Login", "Register"])
 
     # TODO: move this to within authenticated user code for security
-    st.session_state['firestore'] = FirestoreWrapper("./secrets/firestore_service_account_key.json")
+    st.session_state['firestore'] = FirestoreWrapper()
 
     if choice == "Login":
         login()
