@@ -7,32 +7,22 @@ from utilities import hide, is_authenticated, FirestoreWrapper, authenticate_use
 from text_content import Terms
 
 # TODO:make better use of st-pages to show/hide and use icons: https://github.com/blackary/st_pages?tab=readme-ov-file
-
-# TODO: refactor utility methods to classes for conciseness (including authentication stuff).
 # TODO: fix this Arrow table issue https://discuss.streamlit.io/t/applying-automatic-fixes-for-column-types-to-make-the-dataframe-arrow-compatible/52717/2
-
-# TODO: remove credentials wrapper utility?
-# TODO: refactor some login/registration code from here
-# TODO: add different redirect to admin_home if user is admin
-
 # TODO: add options menu; https://discuss.streamlit.io/t/streamlit-option-menu-is-a-simple-streamlit-component-that-allows-users-to-select-a-single-item-from-a-list-of-options-in-a-menu/20514
 
+# TODO: refactor utility methods to classes for conciseness (including authentication stuff).
+# TODO: add different redirect to admin_home if user is admin
 # TODO: migrate all text to use text_content module
-
-# TODO: what genders when registering?
 # TODO: add logout and 'remember me'
-
 # TODO: Add password retrieval and reset (and allow other user info to be changed?)
-# TODO: make fields blank when switching register/login and vice verca
 # TODO: schedule user database backup?
-
 # TODO: add confirmation check before some actions (e..g. cancel book entry): https://www.aprime.io/streamlit-tutorial-dynamic-confirmation-modals-session-state/
 
 
 def login():
     st.title("Login")
-    username = st.text_input("Email", value="")
-    password = st.text_input("Password", type="password", value="")
+    username = st.text_input("Email", value="", key='login_email')
+    password = st.text_input("Password", type="password", value="", key='login_password')
     if st.button("Login"):
         if authenticate_user(username, password):
             st.session_state['authentication_status'] = True

@@ -5,39 +5,48 @@ from utilities import (
     hide, hash_password, check_user_exists,
     send_confirmation_email, FirestoreWrapper
 )
+from text_content import Alerts
 
 hide()
 
 
-def register_user(username, password, user_gender, user_birth_year):
-    hashed_password = hash_password(password)
+def register_user(_username, _password, _gender, _birth_year):
+    hashed_password = hash_password(_password)
     confirmation_token = bcrypt.gensalt().decode('utf8')
     now = datetime.now()
     user_data = {
-        "username": username,
+        "username": _username,
         "password": hashed_password,
         "account_creation_date": now,
         "last_active": now,
-        "user_gender": user_gender,
-        "user_birth_year": user_birth_year,
+        "user_gender": _gender,
+        "user_birth_year": _birth_year,
         "account_type": "user",
         "confirmation_token": confirmation_token,
         "is_confirmed": False
     }
-    if check_user_exists(username):
-        st.warning("Username already in use! Please choose another.")
+    if check_user_exists(_username):
+        st.warning(Alerts.user_exists)
     else:
         db = FirestoreWrapper().connect(auth=False)
         db.collection("users").document(username).set(user_data)
         send_confirmation_email(username, username, confirmation_token)
-        st.success("You have been sent an email - please click the link in the message to continue registration.")
+        st.success(Alerts.email_sent)
 
 
 st.title("User Registration")
-username = st.text_input("Email")
-password = st.text_input("Password", type="password")
-user_gender = st.selectbox("Gender", ["Female", "Male", "Other"])
+username = st.text_input("Email", value="", key='register_email')
+password = st.text_input("Password", type="password", value="", key='register_password')
+user_gender = st.selectbox(
+    "Which most accurately describes your gender identity?",
+    ["Woman", "Man", "Non-binary", "Let me type...", "Prefer not to say"]
+)
+if user_gender == "Let me type...":
+    gender = st.text_input(label="Please describe your gender identify.", value="")
+else:
+    gender = user_gender
+
 user_birth_year = st.number_input("Birth year", min_value=1900, max_value=2030, value=1980)
 
 if st.button("Register"):
-    register_user(username, password, user_gender, user_birth_year)
+    register_user(username, password, gender, user_birth_year)
