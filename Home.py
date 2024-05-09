@@ -17,7 +17,7 @@ from text_content import Terms
 # TODO: Add password retrieval and reset (and allow other user info to be changed?)
 # TODO: schedule user database backup?
 # TODO: add confirmation check before some actions (e..g. cancel book entry): https://www.aprime.io/streamlit-tutorial-dynamic-confirmation-modals-session-state/
-
+# TODO: improve email address validation
 
 def login():
     st.title("Login")

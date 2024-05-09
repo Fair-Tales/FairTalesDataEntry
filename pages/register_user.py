@@ -1,6 +1,7 @@
 import streamlit as st
 from datetime import datetime
 import bcrypt
+import re
 st.set_page_config(
     initial_sidebar_state="auto"
 )
@@ -37,18 +38,34 @@ def register_user(_username, _password, _gender, _birth_year):
         st.switch_page("./pages/register_user_done.py")
 
 
-def validate_user_details(_username, _password, _gender, _user_birth_year):
+def is_valid_email(email):
+    return ('@' in email) and ('.' in email)
+
+
+def validate_user_details(_username, _password, _gender, _gender_custom, _user_birth_year):
 
     fields = {
         "Email": _username,
         "Password": _password,
-        "Gender": _gender,
         "Birth year": _user_birth_year
     }
 
     for field in fields.keys():
         if fields[field] == "":
             st.warning(Alerts.no_blank_field(field))
+            return False
+
+    if not is_valid_email(_username):
+        st.warning(Alerts.invalid_email)
+        return False
+
+    if _gender is None or _gender == "":
+        if _gender_custom == "":
+            st.warning(Alerts.please_enter_gender)
+            return False
+    else:
+        if _gender_custom != "" and _gender not in (None, "", GenderRegistration.manual_input_option):
+            st.warning(Alerts.please_select_other)
             return False
 
     return True
@@ -58,19 +75,16 @@ with st.form('registration_form'):
     st.title("User Registration")
     username = st.text_input("Email", value="", key='register_email')
     password = st.text_input("Password", type="password", value="", key='register_password')
-    user_gender = st.selectbox(
+    gender = st.selectbox(
         GenderRegistration.question,
-        GenderRegistration.options
+        GenderRegistration.options,
+        index=None
     )
-    if user_gender == GenderRegistration.manual_input_option:
-        print("SELL")
-        gender = st.text_input(label=GenderRegistration.manual_input_prompt, value="")
-    else:
-        gender = user_gender
+    gender_custom = st.text_input(label=GenderRegistration.manual_input_prompt, value="")
 
     user_birth_year = st.number_input("Birth year", min_value=1900, max_value=2030, value=1980)
     registered = st.form_submit_button("Register")
 
     if registered:
-        if validate_user_details(username, password, gender, user_birth_year):
+        if validate_user_details(username, password, gender, gender_custom, user_birth_year):
             register_user(username, password, gender, user_birth_year)
