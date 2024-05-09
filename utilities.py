@@ -67,14 +67,26 @@ def hash_password(password):
     return hashed_password
 
 
-def send_confirmation_email(send_to, username, confirmation_token):
+def send_confirmation_email(send_to, username, confirmation_token, name):
 
     smtpserver = smtplib.SMTP_SSL('smtp.gmail.com', 465)
     smtpserver.ehlo()
     smtpserver.login(st.secrets["email_address"], st.secrets["gmail_app_password"])
 
-    subject = "Confirm Your Account Registration"
-    body = f"Click the link below to confirm your registration:\n\n"
+    subject = "Please confirm your account registration"
+    body = """
+        Dear %s, 
+        
+        Thank you for registering for an account for our data entry tool.
+        Please click the link below to confirm your registration.
+        
+        If you did not register, please reply to this email to let us know
+        and we will delete your email address.
+        
+        Thanks,
+        The Fair Tales team
+        
+    """ % name
     confirmation_link = f"{st.secrets['app_url']}confirm?token={confirmation_token}&user={username}"
     body += confirmation_link
     msg = MIMEText(body)

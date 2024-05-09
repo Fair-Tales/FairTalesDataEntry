@@ -14,12 +14,13 @@ from text_content import Alerts, GenderRegistration
 hide()
 
 
-def register_user(_username, _password, _gender, _birth_year):
+def register_user(_username, _name, _password, _gender, _birth_year):
     hashed_password = hash_password(_password)
     confirmation_token = bcrypt.gensalt().decode('utf8')
     now = datetime.now()
     user_data = {
         "username": _username,
+        "name": _name,
         "password": hashed_password,
         "account_creation_date": now,
         "last_active": now,
@@ -34,7 +35,7 @@ def register_user(_username, _password, _gender, _birth_year):
     else:
         db = FirestoreWrapper().connect(auth=False)
         db.collection("users").document(username).set(user_data)
-        send_confirmation_email(username, username, confirmation_token)
+        send_confirmation_email(username, username, confirmation_token, _name)
         st.switch_page("./pages/register_user_done.py")
 
 
@@ -42,10 +43,11 @@ def is_valid_email(email):
     return ('@' in email) and ('.' in email)
 
 
-def validate_user_details(_username, _password, _gender, _gender_custom, _user_birth_year):
+def validate_user_details(_username, _name, _password, _gender, _gender_custom, _user_birth_year):
 
     fields = {
         "Email": _username,
+        "Name": _name,
         "Password": _password,
         "Birth year": _user_birth_year
     }
@@ -74,11 +76,13 @@ def validate_user_details(_username, _password, _gender, _gender_custom, _user_b
 with st.form('registration_form'):
     st.title("User Registration")
     username = st.text_input("Email", value="", key='register_email')
+    name = st.text_input("Name", value="", key='name_of_user')
     password = st.text_input("Password", type="password", value="", key='register_password')
     gender = st.selectbox(
         GenderRegistration.question,
         GenderRegistration.options,
-        index=None
+        index=None,
+        help=GenderRegistration.help
     )
     gender_custom = st.text_input(label=GenderRegistration.manual_input_prompt, value="")
 
@@ -86,5 +90,5 @@ with st.form('registration_form'):
     registered = st.form_submit_button("Register")
 
     if registered:
-        if validate_user_details(username, password, gender, gender_custom, user_birth_year):
-            register_user(username, password, gender, user_birth_year)
+        if validate_user_details(username, name, password, gender, gender_custom, user_birth_year):
+            register_user(username, name, password, gender, user_birth_year)

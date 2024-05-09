@@ -19,6 +19,9 @@ from text_content import Terms
 # TODO: add confirmation check before some actions (e..g. cancel book entry): https://www.aprime.io/streamlit-tutorial-dynamic-confirmation-modals-session-state/
 # TODO: improve email address validation
 
+# TODO: add data protection statement to T&Cs.
+
+
 def login():
     st.title("Login")
     username = st.text_input("Email", value="", key='login_email')

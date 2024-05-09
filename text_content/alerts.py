@@ -4,7 +4,10 @@ class Alerts:
     """
 
     user_exists = "Username already in use! Please choose another."
-    email_sent = "You have been sent an email - please click the link in the message to continue registration."
+    email_sent = """
+        You have been sent an email - please click the link in the message to continue registration.
+        If you did not receive the email, please check your junk folder.
+    """
 
     @staticmethod
     def no_blank_field(field_name):
