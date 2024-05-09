@@ -30,7 +30,7 @@ def hide():
     hide_pages([
         'confirm', 'user_home', 'add_book', 'account_settings', 'confirm_entry',
         'add_character', 'add_author', 'book_data_entry', 'enter_text',
-        'register_user'
+        'register_user', 'register_user_done'
     ])
 
 
@@ -48,6 +48,9 @@ def authenticate_user(username, password):
     query_ref = users_ref.where(filter=firestore.FieldFilter("username", "==", username))
     docs = query_ref.get()
     if len(docs) == 1:
+        if not docs[0].to_dict()['is_confirmed']:
+            return False
+
         stored_password = docs[0].to_dict()['password']
         return bcrypt.checkpw(
             password=password.encode('utf8'),
