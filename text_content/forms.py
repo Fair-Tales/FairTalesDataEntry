@@ -1,6 +1,6 @@
 class GenderRegistration:
 
-    options = ["Woman", "Man", "Non-binary", "Let me type...", "Prefer not to say"]
-    manual_input_option = "Let me type..."
-    question = "Which most accurately describes your gender identity?"
-    manual_input_prompt = "Please describe your gender identify."
+    options = ["Woman", "Man", "Non-binary", "Other (type below)", "Prefer not to say"]
+    manual_input_option = "Other (type below)"
+    question = "What is your gender identity? Please select an option"
+    manual_input_prompt = "Or describe your gender identify here."
