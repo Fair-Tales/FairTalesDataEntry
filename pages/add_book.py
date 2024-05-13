@@ -34,7 +34,7 @@ def new_book_metadata():
         )
         metadata['author'] = st.selectbox(
             "Select from existing authors",
-            options=["None of these (create a new author)."] + list(author_dict.keys())
+            options=["None of these (create a new author now)."] + list(author_dict.keys())
         )
         metadata['publisher'] = st.selectbox(
             "Select from existing publishers", options=["None of these (create a new publisher)."] + []

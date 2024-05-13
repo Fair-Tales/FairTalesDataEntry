@@ -77,7 +77,7 @@ def send_confirmation_email(send_to, username, confirmation_token, name):
     body = """
         Dear %s, 
         
-        Thank you for registering for an account for our data entry tool.
+        Thank you for registering for an account on our data entry tool.
         Please click the link below to confirm your registration.
         
         If you did not register, please reply to this email to let us know
@@ -179,8 +179,10 @@ class FormConfirmation:
             if st.session_state.book_metadata['author'] == "None of these (create a new author).":
                 st.switch_page("./pages/add_author.py")
 
-            if st.session_state.book_metadata['publisher'] == "None of these (create a new publisher).":
-                st.warning("Publisher creation not implemented yet!")
+            else:
+                st.switch_page("./pages/book_data_entry.py")
+            # if st.session_state.book_metadata['publisher'] == "None of these (create a new publisher).":
+            #     st.warning("Publisher creation not implemented yet!")
 
         if edit_button:
             st.switch_page("./pages/add_book.py")
