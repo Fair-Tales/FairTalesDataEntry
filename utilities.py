@@ -166,6 +166,8 @@ class FirestoreWrapper:
         db = self.connect()
         return db.collection(collection).stream()
 
+    def username_to_doc_ref(self, username):
+        return self.connect().collection('users').document(username)
 
 # TODO: check that required fields (e.g. book title) are not blank
 # TODO: populate form with current metadata/previoulsy entered form data f select edit
@@ -183,9 +185,9 @@ class FormConfirmation:
     }
 
     @classmethod
-    def display_confirmation(cls, session_metadata):
+    def display_confirmation(cls, data):
 
-        st.dataframe(st.session_state[session_metadata], use_container_width=True)
+        st.dataframe(data, use_container_width=True)
         col1, col2 = st.columns(2)
         confirm_button = col1.button("Confirm")
         edit_button = col2.button("Edit")
@@ -194,13 +196,17 @@ class FormConfirmation:
 
     @classmethod
     def confirm_new_book(cls):
-        confirm_button, edit_button = cls.display_confirmation('book_metadata')
+        confirm_button, edit_button = cls.display_confirmation(
+            st.session_state['current_book'].to_dict(form_fields_only=True)
+        )
 
         if confirm_button:
-            if st.session_state.book_metadata['author'] == "None of these (create a new author).":
+            if st.session_state['current_book'].author == "None of these (create a new author).":
                 st.switch_page("./pages/add_author.py")
 
             else:
+                st.session_state['current_book'].register()
+                st.session_state['current_book'].save_to_db()
                 st.switch_page("./pages/book_data_entry.py")
             # if st.session_state.book_metadata['publisher'] == "None of these (create a new publisher).":
             #     st.warning("Publisher creation not implemented yet!")

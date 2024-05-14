@@ -1,10 +1,13 @@
 import streamlit as st
-from utilities import author_entry_to_name
+from datetime import datetime
+from utilities import author_entry_to_name, FirestoreWrapper
+
 
 class Book:
 
     fields = {
         'title': "",
+        'author': None,
         'character_count': -1,
         'page_count': -1,
         'word_count': -1,
@@ -36,11 +39,15 @@ class Book:
             for key in self.fields.keys():
                 setattr(self, key, db_object[key])
 
-    def to_dict(self):
-
+    def to_dict(self, form_fields_only=False):
+        fields_iterable = (
+            self.form_fields.keys()
+            if form_fields_only
+            else self.fields.keys()
+        )
         return {
-                key: getattr(self, key)
-                for key in self.fields.keys()
+                field: getattr(self, field)
+                for field in fields_iterable
             }
 
     def to_form(self):
@@ -80,7 +87,17 @@ class Book:
         )
         submitted = st.form_submit_button("Submit")
         if submitted:
-            st.session_state['book_metadata'] = metadata
             st.session_state['current_book'] = self
             st.session_state['active_form_to_confirm'] = 'new_book'
             st.switch_page("./pages/confirm_entry.py")
+
+    def register(self):
+        """ Sets entered_by user and records datetime. """
+        self.entered_by = FirestoreWrapper().username_to_doc_ref(
+            st.session_state['username']
+        )
+        self.datetime_created = datetime.now()
+
+    def save_to_db(self):
+        db = FirestoreWrapper().connect()
+        db.collection('books').document(self.title).set(self.to_dict(), merge=True)

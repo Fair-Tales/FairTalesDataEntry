@@ -5,7 +5,7 @@ from text_content import Instructions
 
 hide()
 st.title(
-    f"Enter book data: {st.session_state.book_metadata['title']}"
+    f"Enter book data: {st.session_state.current_book.title}"
 )
 st.write(Instructions.data_entry_instructions)
 
