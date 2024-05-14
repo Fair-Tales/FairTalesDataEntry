@@ -11,7 +11,7 @@ from text_content import Terms
 # TODO: add options menu; https://discuss.streamlit.io/t/streamlit-option-menu-is-a-simple-streamlit-component-that-allows-users-to-select-a-single-item-from-a-list-of-options-in-a-menu/20514
 
 # TODO: refactor utility methods to classes for conciseness (including authentication stuff).
-# TODO: add different redirect to admin_home if user is admin
+# TODO: add different redirect to admin_home if user is admin (options to edit, download, validate data)
 # TODO: migrate all text to use text_content module (including form content - use forms.py)
 # TODO: add logout and 'remember me'
 # TODO: Add password retrieval and reset (and allow other user info to be changed?)
@@ -21,6 +21,7 @@ from text_content import Terms
 
 # TODO: add data protection statement to T&Cs.
 
+# TODO: either move publisher and illustrator creation to later on (easier on computer), or simplify them: just name?
 
 def login():
     st.title("Login")
@@ -58,6 +59,7 @@ def main():
 
 if __name__ == "__main__":
     hide()
+
     if is_authenticated():
         st.switch_page("./pages/user_home.py")
     main()

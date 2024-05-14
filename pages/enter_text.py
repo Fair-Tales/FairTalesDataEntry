@@ -2,11 +2,18 @@ import streamlit as st
 from utilities import hide, FormConfirmation
 from PIL import Image
 from streamlit_dimensions import st_dimensions
+import s3fs
 # TODO: use a method metadata_to_form to store session state entered data and re-display it in a form for revision?
 # TODO: add capability to add or edit characters while paging through book.
 
 hide()
 NUMBER_OF_PAGES = 2
+
+fs = s3fs.S3FileSystem(
+        anon=False,
+        key=st.secrets['AWS_ACCESS_KEY_ID'],
+        secret=st.secrets['AWS_SECRET_ACCESS_KEY']
+    )
 
 if 'current_page_number' not in st.session_state:
     st.session_state['current_page_number'] = 1
@@ -42,10 +49,23 @@ st.write("Showing page %d of %d." % (st.session_state.current_page_number, NUMBE
 
 col3, col4 = st.columns(2)
 container_width = st_dimensions(key="main")['width']
-w, h = Image.open("temp_gruffalo_%d.png" % st.session_state.current_page_number).size
+# w, h = Image.open("temp_gruffalo_%d.png" % st.session_state.current_page_number).size
+
+with fs.open(
+        "sawimages/temp_gruffalo_%d.png" % st.session_state.current_page_number,
+        mode='rb'
+    ) as f:
+    w, h = Image.open(f).size
+
 image_width = int(container_width/2)
 
-col3.image("temp_gruffalo_%d.png" % st.session_state.current_page_number, width=image_width)
+col3.image(
+    fs.open(
+        "sawimages/temp_gruffalo_%d.png" % st.session_state.current_page_number,
+        mode='rb'
+    ).read(),
+    width=image_width
+)
 page_text = col4.text_area(
     "Enter page text",
     height=int(image_width*h/w),

@@ -3,7 +3,6 @@ from streamlit_option_menu import option_menu
 from utilities import hide
 from text_content import Instructions
 
-
 hide()
 st.title(
     f"Enter book data: {st.session_state.book_metadata['title']}"
