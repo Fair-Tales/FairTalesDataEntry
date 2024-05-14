@@ -23,6 +23,10 @@ from text_content import Terms
 
 # TODO: either move publisher and illustrator creation to later on (easier on computer), or simplify them: just name?
 
+# TODO: add 'Home' option to return to user home at any time
+# TODO: make book names lower case (and have separate Title field)
+
+
 def login():
     st.title("Login")
     username = st.text_input("Email", value="", key='login_email')
@@ -30,6 +34,7 @@ def login():
     if st.button("Login"):
         if authenticate_user(username, password):
             st.session_state['authentication_status'] = True
+            st.session_state['username'] = username
             st.switch_page("./pages/user_home.py")
         else:
             st.error("Invalid credentials.")

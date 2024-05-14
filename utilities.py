@@ -42,16 +42,25 @@ def check_user_exists(username):
     return len(docs) >= 1
 
 
-def authenticate_user(username, password):
+def get_user(username):
     db = FirestoreWrapper().connect(auth=False)
     users_ref = db.collection("users")
     query_ref = users_ref.where(filter=firestore.FieldFilter("username", "==", username))
     docs = query_ref.get()
     if len(docs) == 1:
-        if not docs[0].to_dict()['is_confirmed']:
+        return docs[0]
+    else:
+        return None
+
+
+def authenticate_user(username, password):
+
+    user = get_user(username)
+    if user is not None:
+        if not user.to_dict()['is_confirmed']:
             return False
 
-        stored_password = docs[0].to_dict()['password']
+        stored_password = user.to_dict()['password']
         return bcrypt.checkpw(
             password=password.encode('utf8'),
             hashed_password=stored_password.encode('utf8')
