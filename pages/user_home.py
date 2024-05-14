@@ -2,6 +2,7 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 from text_content import Alerts, Instructions
 from utilities import check_authentication_status, hide
+from data_structures import Book
 
 
 hide()
@@ -61,8 +62,8 @@ def author_search():
     st.warning("Not implemented yet!")
 
 
-# TODO: wire this up to store new book in Firestore!
 def add_book():
+    st.session_state['current_book'] = Book()
     st.switch_page("./pages/add_book.py")
 
 

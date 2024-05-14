@@ -28,6 +28,12 @@ from text_content import Terms
 
 # TODO: write wrapper/adapter for interacting with firestore and in-memory (meta)data and forms...
 
+# TODO: implement 'current_book" in session state (replace book_metadata : make this a property of Book class?)
+#    FIRST: make this work with 'edit' after adding a new book
+#    THEN: wire it up to save new book in db
+#    THEN: make it work with "edit my books"
+# TODO: store ref to db object in Book class. And implement save method. Auto save?
+
 
 def login():
     st.title("Login")
