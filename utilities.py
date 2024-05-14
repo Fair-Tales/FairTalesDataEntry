@@ -30,7 +30,7 @@ def hide():
     hide_pages([
         'confirm', 'user_home', 'add_book', 'account_settings', 'confirm_entry',
         'add_character', 'add_author', 'book_data_entry', 'enter_text',
-        'register_user', 'register_user_done'
+        'register_user', 'register_user_done', 'review_my_books'
     ])
 
 
@@ -133,6 +133,7 @@ class FirestoreWrapper:
             return None
 
     def single_field_search(self, collection, field, contains_string):
+        """ Search for string withing field. """
         db = self.connect()
 
         results = (
@@ -141,6 +142,17 @@ class FirestoreWrapper:
                 .where(filter=FieldFilter(field, "<=", contains_string + 'z'))
                 .stream()
         )
+
+        results_dict = list(map(lambda x: x.to_dict(), results))
+        return pd.DataFrame(results_dict)
+
+    def get_by_field(self, collection, field, match):
+        """ Get exact match in field"""
+        db = self.connect()
+        results = db.collection(collection).where(
+            filter=FieldFilter(field, "==", match)
+        ).stream()
+        # return doc_ref.get()
 
         results_dict = list(map(lambda x: x.to_dict(), results))
         return pd.DataFrame(results_dict)

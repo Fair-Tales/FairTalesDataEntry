@@ -20,3 +20,10 @@ class Instructions:
         
         You can click `Save` at any time and return to complete the data entry later.    
     """
+
+    review_my_books = """
+        Here you can select books to edit from those that you started entering previously.
+        Any data that you entered previously should have saved automatically.
+        Please note that only books that you have not submitted for validation are
+        available to edit.
+    """

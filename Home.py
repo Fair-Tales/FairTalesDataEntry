@@ -26,6 +26,8 @@ from text_content import Terms
 # TODO: add 'Home' option to return to user home at any time
 # TODO: make book names lower case (and have separate Title field)
 
+# TODO: write wrapper/adapter for interacting with firestore and in-memory (meta)data and forms...
+
 
 def login():
     st.title("Login")
