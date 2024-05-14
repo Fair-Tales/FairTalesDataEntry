@@ -59,6 +59,7 @@ def main():
 
 if __name__ == "__main__":
     hide()
+
     if is_authenticated():
         st.switch_page("./pages/user_home.py")
     main()
