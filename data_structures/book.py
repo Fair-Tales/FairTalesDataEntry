@@ -56,7 +56,8 @@ class Book:
         metadata = {
             key: None for key in ['title', 'author', 'illustrator', 'publisher', 'date_published']
         }
-        metadata['title'] = st.text_input("Title")
+        # metadata['title'] = st.text_input("Title")
+        self.title = st.text_input("Title", value=self.title)
         metadata['date_published'] = st.number_input(
             "Date published", min_value=1900, max_value=2024, value=2023
         )
@@ -80,5 +81,6 @@ class Book:
         submitted = st.form_submit_button("Submit")
         if submitted:
             st.session_state['book_metadata'] = metadata
+            st.session_state['current_book'] = self
             st.session_state['active_form_to_confirm'] = 'new_book'
             st.switch_page("./pages/confirm_entry.py")
