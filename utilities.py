@@ -197,7 +197,10 @@ class FormConfirmation:
     @classmethod
     def confirm_new_book(cls):
         confirm_button, edit_button = cls.display_confirmation(
-            st.session_state['current_book'].to_dict(form_fields_only=True)
+            st.session_state['current_book'].to_dict(
+                form_fields_only=True,
+                convert_ref_fields_to_ids=True
+            )
         )
 
         if confirm_button:

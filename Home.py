@@ -25,14 +25,18 @@ from text_content import Terms
 
 # TODO: add 'Home' option to return to user home at any time
 # TODO: make book names lower case (and have separate Title field)
-
-# TODO: write wrapper/adapter for interacting with firestore and in-memory (meta)data and forms...
+# TODO: remove navigation menu (use options_menu for login or register) and default to collapse menu on all pages
 
 # TODO: implement 'current_book" in session state (replace book_metadata : make this a property of Book class?)
 #    FIRST: make this work with 'edit' after adding a new book
 #    THEN: wire it up to save new book in db
 #    THEN: make it work with "edit my books"
 # TODO: store ref to db object in Book class. And implement save method. Auto save?
+
+# TODO: check new author name is unique (and add to global author_dict - see next)
+# TODO: refactor author dict so that it is only built once to reduce queries
+
+# TODO: finish implementing review_my_books: show selected
 
 
 def login():

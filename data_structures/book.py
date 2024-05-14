@@ -1,6 +1,7 @@
 import streamlit as st
 from datetime import datetime
 from utilities import author_entry_to_name, FirestoreWrapper
+from text_content import Instructions
 
 
 class Book:
@@ -20,15 +21,18 @@ class Book:
         'illustrator': None,
         'publisher': None,
         'last_updated': -1,
-        'published': 2024,
+        'published': 2012,
         'validated': False,
         'validated_by': None
     }
 
     form_fields = {
         'title': 'Title',
-        'published': 'Date published'
+        'published': 'Date published',
+        'author': 'Author'
     }
+
+    ref_fields = ['author', 'entered_by']  # Reference fields will display document ID for human consumption
 
     def __init__(self, db_object=None):
         if db_object is None:
@@ -39,54 +43,66 @@ class Book:
             for key in self.fields.keys():
                 setattr(self, key, db_object[key])
 
-    def to_dict(self, form_fields_only=False):
+        self.author_name = None
+        self.author_dict = {}
+
+    def get_field(self, field, convert_ref_fields_to_ids=False):
+        if convert_ref_fields_to_ids and field in self.ref_fields:
+            return getattr(self, field).get().id
+        else:
+            return getattr(self, field)
+
+    def to_dict(self, form_fields_only=False, convert_ref_fields_to_ids=False):
         fields_iterable = (
             self.form_fields.keys()
             if form_fields_only
             else self.fields.keys()
         )
         return {
-                field: getattr(self, field)
+                field: self.get_field(field, convert_ref_fields_to_ids)
                 for field in fields_iterable
             }
 
     def to_form(self):
-
-        author_dict = {
-            author_entry_to_name(author): author.id
+# TODO: refactor this to reduce number of queries! (e.g. store author_dict once and update it manually)
+        self.author_dict = {
+            author_entry_to_name(author): author.reference
             for author in
             st.session_state.firestore.get_all_documents_stream(collection='authors')
         }
 
         st.header("Please enter metadata for the new book.")
 
-        metadata = {
-            key: None for key in ['title', 'author', 'illustrator', 'publisher', 'date_published']
-        }
-        # metadata['title'] = st.text_input("Title")
         self.title = st.text_input("Title", value=self.title)
-        metadata['date_published'] = st.number_input(
-            "Date published", min_value=1900, max_value=2024, value=2023
+        self.published = st.number_input(
+            "Date published", min_value=1900, max_value=2024, value=self.published
         )
-        st.write(
-            """
-            Please select author, publisher and illustrator. 
-            If not listed, please select `None of these` and you will be guided 
-            to enter these details on the next step.
-            """
+        st.write(Instructions.author_publisher_illustrator_select)
+
+        author_options = ["None of these (create a new author now)."] + list(self.author_dict.keys())
+        author_index = (
+            author_options.index(author_entry_to_name(self.author.get()))
+            if self.author is not None and author_entry_to_name(self.author.get()) in author_options
+            else 0
         )
-        metadata['author'] = st.selectbox(
+
+        self.author_name = st.selectbox(
             "Select from existing authors",
-            options=["None of these (create a new author now)."] + list(author_dict.keys())
+            options=author_options,
+            index=author_index
         )
-        metadata['publisher'] = st.selectbox(
+
+# TODO: for publisher/illustrator as for author
+        self.publisher = st.selectbox(
             "Select from existing publishers", options=["None of these (create a new publisher)."] + []
         )
-        metadata['illustrator'] = st.selectbox(
+        self.illustrator = st.selectbox(
             "Select from existing illustrators", options=["None of these (create a new illustrator)."] + []
         )
         submitted = st.form_submit_button("Submit")
+
         if submitted:
+            self.author = self.author_dict.get(self.author_name, None)
             st.session_state['current_book'] = self
             st.session_state['active_form_to_confirm'] = 'new_book'
             st.switch_page("./pages/confirm_entry.py")
@@ -100,4 +116,4 @@ class Book:
 
     def save_to_db(self):
         db = FirestoreWrapper().connect()
-        db.collection('books').document(self.title).set(self.to_dict(), merge=True)
+        db.collection('books').document(self.title.lower()).set(self.to_dict(), merge=True)

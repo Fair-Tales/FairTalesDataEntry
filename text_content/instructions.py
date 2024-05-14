@@ -27,3 +27,9 @@ class Instructions:
         Please note that only books that you have not submitted for validation are
         available to edit.
     """
+
+    author_publisher_illustrator_select = """
+        Please select author, publisher and illustrator. 
+        If not listed, please select `None of these` and you will be guided 
+        to enter these details on the next steps.
+    """
