@@ -211,8 +211,6 @@ class FormConfirmation:
                 st.session_state['current_book'].register()
                 st.session_state['current_book'].save_to_db()
                 st.switch_page("./pages/book_data_entry.py")
-            # if st.session_state.book_metadata['publisher'] == "None of these (create a new publisher).":
-            #     st.warning("Publisher creation not implemented yet!")
 
         if edit_button:
             st.switch_page("./pages/add_book.py")

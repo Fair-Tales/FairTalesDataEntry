@@ -2,7 +2,7 @@ import streamlit as st
 from datetime import datetime
 from utilities import author_entry_to_name, FirestoreWrapper
 from text_content import Instructions
-
+import numpy as np
 
 class Book:
 
@@ -41,14 +41,26 @@ class Book:
 
         else:
             for key in self.fields.keys():
-                setattr(self, key, db_object[key])
+                setattr(self, key, self.safe_cast(db_object[key]))
 
         self.author_name = None
         self.author_dict = {}
 
+    @staticmethod
+    def safe_cast(value):
+        if isinstance(value, np.int64):
+            return int(value)
+        elif isinstance(value, np.bool_):
+            return bool(value)
+        else:
+            return value
+
     def get_field(self, field, convert_ref_fields_to_ids=False):
         if convert_ref_fields_to_ids and field in self.ref_fields:
-            return getattr(self, field).get().id
+            if getattr(self, field) is None:
+                return None
+            else:
+                return getattr(self, field).get().id
         else:
             return getattr(self, field)
 
@@ -108,11 +120,12 @@ class Book:
             st.switch_page("./pages/confirm_entry.py")
 
     def register(self):
-        """ Sets entered_by user and records datetime. """
-        self.entered_by = FirestoreWrapper().username_to_doc_ref(
-            st.session_state['username']
-        )
-        self.datetime_created = datetime.now()
+        """ Sets entered_by user and records datetime if not set. """
+        if self.datetime_created == -1:
+            self.entered_by = FirestoreWrapper().username_to_doc_ref(
+                st.session_state['username']
+            )
+            self.datetime_created = datetime.now()
 
     def save_to_db(self):
         db = FirestoreWrapper().connect()
