@@ -122,10 +122,13 @@ class FirestoreWrapper:
     Firestore database (searching, querying, entering new data).
     """
 
-    def __init__(self):
+    def __init__(self, auth=True):
+        self.auth = auth
         self.firestore_key = json.loads(st.secrets["firestore_key"])
 
-    def connect(self, auth=True):
+    def connect(self, auth=None):
+
+        auth = self.auth if auth is None else auth
         if is_authenticated() or not auth:
             creds = service_account.Credentials.from_service_account_info(self.firestore_key)
             return firestore.Client(credentials=creds, project="sawdataentry")
@@ -169,8 +172,8 @@ class FirestoreWrapper:
     def username_to_doc_ref(self, username):
         return self.connect().collection('users').document(username)
 
+
 # TODO: check that required fields (e.g. book title) are not blank
-# TODO: populate form with current metadata/previoulsy entered form data f select edit
 # TODO: fix warnings in table display (arrows?)
 class FormConfirmation:
     """
@@ -217,10 +220,27 @@ class FormConfirmation:
 
     @classmethod
     def confirm_new_author(cls):
-        confirm_button, edit_button = cls.display_confirmation('author_details')
+        confirm_button, edit_button = cls.display_confirmation(
+            st.session_state['current_author'].to_dict(
+                form_fields_only=True,
+                convert_ref_fields_to_ids=True
+            )
+        )
 
         if confirm_button:
-            st.switch_page("./pages/book_data_entry.py")
+            # TODO: add author to master author_dict
+            st.session_state['current_author'].register()
+            st.session_state['current_author'].save_to_db()
+            st.session_state['author_dict'][
+                st.session_state['current_author'].name
+            ] = st.session_state['current_author'].get_ref()
+
+            st.session_state['current_book'].set_author(
+                st.session_state['current_author'].name
+            )
+            # TODO: go back to add_book (change title of add_book page)
+            st.switch_page("./pages/add_book.py")
+            # st.switch_page("./pages/book_data_entry.py")
 
         if edit_button:
             st.switch_page("./pages/add_author.py")

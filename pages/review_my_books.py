@@ -1,11 +1,11 @@
 import streamlit as st
-from utilities import get_user, hide, FirestoreWrapper
-from text_content import Alerts, Instructions
+from utilities import hide
+from text_content import Instructions
 from data_structures import Book
 
 hide()
 
-db = FirestoreWrapper().connect()
+db = st.session_state.firestore.connect()
 user_ref = db.document(
     f"users/{st.session_state['username']}"
 )

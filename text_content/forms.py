@@ -9,3 +9,12 @@ class GenderRegistration:
         our archivists. We may use this information for analysis purposes in our research, but only to
         calculate aggregate statistics. Your personal information will be kept private.   
     """
+
+
+class AuthorForm:
+    header = "Please enter author details."
+    gender_options = ["Woman", "Man", "Non-binary", "Other", "Unknown"]
+    gender_prompt = """
+        Please use a web search to enter the gender of the author to the best of your knowledge.
+        If it is not clear from a cursory search, please select `Unknown`.
+    """

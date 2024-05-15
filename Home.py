@@ -1,10 +1,11 @@
 import streamlit as st
 st.set_page_config(
     page_title="Home",
-    initial_sidebar_state="auto"
+    initial_sidebar_state="collapsed"
 )
-from utilities import hide, is_authenticated, FirestoreWrapper, authenticate_user
+from utilities import hide, is_authenticated, FirestoreWrapper, authenticate_user, author_entry_to_name
 from text_content import Terms
+from data_structures import Author, Book
 
 # TODO:make better use of st-pages to show/hide and use icons: https://github.com/blackary/st_pages?tab=readme-ov-file
 # TODO: fix this Arrow table issue https://discuss.streamlit.io/t/applying-automatic-fixes-for-column-types-to-make-the-dataframe-arrow-compatible/52717/2
@@ -24,21 +25,17 @@ from text_content import Terms
 # TODO: either move publisher and illustrator creation to later on (easier on computer), or simplify them: just name?
 
 # TODO: add 'Home' option to return to user home at any time
-# TODO: make book names lower case (and have separate Title field)
 # TODO: remove navigation menu (use options_menu for login or register) and default to collapse menu on all pages
 
 # TODO: Implement auto save?
 
 # TODO: check new author name is unique (and add to global author_dict - see next)
-# TODO: refactor author dict so that it is only built once to reduce queries
 
 # TODO: finish implementing review_my_books: show selected
 
-# TODO: implement author data class for add new author (also simplify author interactions in Book class?)
+# TODO: update author class so that Book stores an author instance and uses properties w/ setters to handle author name, selection and reference access
 
 # TODO: either exapand Book.safe_cast and move to utilities, or remove pandas usage in FiresotreWarrper
-
-# TODO: use st.session_state.firestore instead or importing FirestoreWtrapper each time.
 
 
 def login():
@@ -64,11 +61,23 @@ def terms_and_conditions():
         st.switch_page("./pages/register_user.py")
 
 
+def initialise():
+    st.session_state['firestore'] = FirestoreWrapper(auth=True)
+    st.session_state['current_book'] = Book()
+    st.session_state['author'] = Author()
+    st.session_state['active_form_to_confirm'] = None
+
+    firestore = FirestoreWrapper(auth=False)
+    st.session_state['author_dict'] = {
+        author_entry_to_name(author): author.reference
+        for author in
+        firestore.get_all_documents_stream(collection='authors')
+    }
+
+
 def main():
     st.sidebar.title("Navigation")
     choice = st.sidebar.radio("Select an option:", ["Login", "Register"])
-
-    st.session_state['firestore'] = FirestoreWrapper()
 
     if choice == "Login":
         login()
@@ -77,6 +86,8 @@ def main():
 
 
 if __name__ == "__main__":
+
+    initialise()
     hide()
 
     if is_authenticated():

@@ -1,10 +1,11 @@
 import streamlit as st
-from datetime import datetime
-from utilities import author_entry_to_name, FirestoreWrapper
+from utilities import author_entry_to_name
 from text_content import Instructions
-import numpy as np
+from .base_structure import DataStructureBase
+from .author import Author
 
-class Book:
+
+class Book(DataStructureBase):
 
     fields = {
         'title': "",
@@ -35,54 +36,15 @@ class Book:
     ref_fields = ['author', 'entered_by']  # Reference fields will display document ID for human consumption
 
     def __init__(self, db_object=None):
-        if db_object is None:
-            for key in self.fields.keys():
-                setattr(self, key, self.fields[key])
-
-        else:
-            for key in self.fields.keys():
-                setattr(self, key, self.safe_cast(db_object[key]))
-
+        super().__init__(db_object=db_object)
         self.author_name = None
-        self.author_dict = {}
+        self.belongs_to_collection = 'books'
 
-    @staticmethod
-    def safe_cast(value):
-        if isinstance(value, np.int64):
-            return int(value)
-        elif isinstance(value, np.bool_):
-            return bool(value)
-        else:
-            return value
-
-    def get_field(self, field, convert_ref_fields_to_ids=False):
-        if convert_ref_fields_to_ids and field in self.ref_fields:
-            if getattr(self, field) is None:
-                return None
-            else:
-                return getattr(self, field).get().id
-        else:
-            return getattr(self, field)
-
-    def to_dict(self, form_fields_only=False, convert_ref_fields_to_ids=False):
-        fields_iterable = (
-            self.form_fields.keys()
-            if form_fields_only
-            else self.fields.keys()
-        )
-        return {
-                field: self.get_field(field, convert_ref_fields_to_ids)
-                for field in fields_iterable
-            }
+    @property
+    def document_id(self):
+        return self.title.lower().replace(" ", "_")
 
     def to_form(self):
-# TODO: refactor this to reduce number of queries! (e.g. store author_dict once and update it manually)
-        self.author_dict = {
-            author_entry_to_name(author): author.reference
-            for author in
-            st.session_state.firestore.get_all_documents_stream(collection='authors')
-        }
-
         st.header("Please enter metadata for the new book.")
 
         self.title = st.text_input("Title", value=self.title)
@@ -91,7 +53,9 @@ class Book:
         )
         st.write(Instructions.author_publisher_illustrator_select)
 
-        author_options = ["None of these (create a new author now)."] + list(self.author_dict.keys())
+        author_options = ["None of these (create a new author now)."] + list(
+            st.session_state['author_dict'].keys()
+        )
         author_index = (
             author_options.index(author_entry_to_name(self.author.get()))
             if self.author is not None and author_entry_to_name(self.author.get()) in author_options
@@ -114,19 +78,16 @@ class Book:
         submitted = st.form_submit_button("Submit")
 
         if submitted:
-            self.author = self.author_dict.get(self.author_name, None)
+            self.set_author(self.author_name)
             st.session_state['current_book'] = self
-            st.session_state['active_form_to_confirm'] = 'new_book'
-            st.switch_page("./pages/confirm_entry.py")
 
-    def register(self):
-        """ Sets entered_by user and records datetime if not set. """
-        if self.datetime_created == -1:
-            self.entered_by = FirestoreWrapper().username_to_doc_ref(
-                st.session_state['username']
-            )
-            self.datetime_created = datetime.now()
+            if self.author is None:
+                st.session_state['current_author'] = Author()
+                st.switch_page("./pages/add_author.py")
+            else:
+                st.session_state['active_form_to_confirm'] = 'new_book'
+                st.switch_page("./pages/confirm_entry.py")
 
-    def save_to_db(self):
-        db = FirestoreWrapper().connect()
-        db.collection('books').document(self.title.lower()).set(self.to_dict(), merge=True)
+    def set_author(self, author_name):
+        self.author = st.session_state['author_dict'].get(author_name, None)
+        print("Author =", self.author, author_name)
