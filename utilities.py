@@ -172,6 +172,11 @@ class FirestoreWrapper:
     def username_to_doc_ref(self, username):
         return self.connect().collection('users').document(username)
 
+    def document_exists(self, collection, doc_id):
+        db = self.connect()
+        doc = db.collection(collection).document(doc_id).get()
+        return doc.exists
+
 
 # TODO: check that required fields (e.g. book title) are not blank
 # TODO: fix warnings in table display (arrows?)
@@ -213,7 +218,7 @@ class FormConfirmation:
             else:
                 st.session_state['current_book'].register()
                 st.session_state['current_book'].save_to_db()
-                st.switch_page("./pages/book_data_entry.py")
+                st.switch_page("./pages/page_photo_upload.py")
 
         if edit_button:
             st.switch_page("./pages/add_book.py")
@@ -228,7 +233,6 @@ class FormConfirmation:
         )
 
         if confirm_button:
-            # TODO: add author to master author_dict
             st.session_state['current_author'].register()
             st.session_state['current_author'].save_to_db()
             st.session_state['author_dict'][
@@ -238,9 +242,7 @@ class FormConfirmation:
             st.session_state['current_book'].set_author(
                 st.session_state['current_author'].name
             )
-            # TODO: go back to add_book (change title of add_book page)
             st.switch_page("./pages/add_book.py")
-            # st.switch_page("./pages/book_data_entry.py")
 
         if edit_button:
             st.switch_page("./pages/add_author.py")

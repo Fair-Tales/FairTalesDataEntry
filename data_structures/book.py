@@ -1,6 +1,6 @@
 import streamlit as st
 from utilities import author_entry_to_name
-from text_content import Instructions
+from text_content import Instructions, BookForm
 from .base_structure import DataStructureBase
 from .author import Author
 
@@ -24,7 +24,9 @@ class Book(DataStructureBase):
         'last_updated': -1,
         'published': 2012,
         'validated': False,
-        'validated_by': None
+        'validated_by': None,
+        'photos_uploaded': False,
+        'photos_url': ""
     }
 
     form_fields = {
@@ -45,7 +47,7 @@ class Book(DataStructureBase):
         return self.title.lower().replace(" ", "_")
 
     def to_form(self):
-        st.header("Please enter metadata for the new book.")
+        st.header(BookForm.header)
 
         self.title = st.text_input("Title", value=self.title)
         self.published = st.number_input(

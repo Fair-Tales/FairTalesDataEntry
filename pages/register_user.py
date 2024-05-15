@@ -1,7 +1,6 @@
 import streamlit as st
 from datetime import datetime
 import bcrypt
-import re
 st.set_page_config(
     initial_sidebar_state="auto"
 )

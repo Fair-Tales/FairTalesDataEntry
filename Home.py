@@ -29,14 +29,22 @@ from data_structures import Author, Book
 
 # TODO: Implement auto save?
 
-# TODO: check new author name is unique (and add to global author_dict - see next)
-
 # TODO: finish implementing review_my_books: show selected
 
 # TODO: update author class so that Book stores an author instance and uses properties w/ setters to handle author name, selection and reference access
 
 # TODO: either exapand Book.safe_cast and move to utilities, or remove pandas usage in FiresotreWarrper
 
+# TODO: replace check_user_exists function with better solution as in FirestoreWrapper.document_exists
+
+# TODO: add QR code for photo upload?
+
+# TODO: add functionality to skip photo upload page (or choose to change photos) if photos were already uploaded
+# TODO: update login so that it can redirect to a different page after success e.g. to upload photos on phone
+
+# TODO: check book title is unique
+
+# TODO: check Nonetype not subscriptable error on enter_text page. And change layout according to image dimensions.
 
 def login():
     st.title("Login")

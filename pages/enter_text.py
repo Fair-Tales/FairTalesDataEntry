@@ -49,19 +49,24 @@ st.write("Showing page %d of %d." % (st.session_state.current_page_number, NUMBE
 
 col3, col4 = st.columns(2)
 container_width = st_dimensions(key="main")['width']
-# w, h = Image.open("temp_gruffalo_%d.png" % st.session_state.current_page_number).size
 
+# with fs.open(
+#         "sawimages/temp_gruffalo_%d.png" % st.session_state.current_page_number,
+#         mode='rb'
+# ) as f:
+#     w, h = Image.open(f).size
 with fs.open(
-        "sawimages/temp_gruffalo_%d.png" % st.session_state.current_page_number,
+        f"sawimages/{st.session_state['current_book'].title}/page_{st.session_state.current_page_number}.jpg",
         mode='rb'
-    ) as f:
+) as f:
     w, h = Image.open(f).size
+
 
 image_width = int(container_width/2)
 
 col3.image(
     fs.open(
-        "sawimages/temp_gruffalo_%d.png" % st.session_state.current_page_number,
+        f"sawimages/{st.session_state['current_book'].title}/page_{st.session_state.current_page_number}.jpg",
         mode='rb'
     ).read(),
     width=image_width

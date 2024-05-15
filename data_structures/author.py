@@ -62,6 +62,12 @@ class Author(DataStructureBase):
         submitted = st.form_submit_button("Submit")
 
         if submitted:
-            st.session_state['current_author'] = self
-            st.session_state['active_form_to_confirm'] = 'new_author'
-            st.switch_page("./pages/confirm_entry.py")
+            if st.session_state.firestore.document_exists(
+                collection='authors',
+                doc_id=self.document_id
+            ):
+                st.warning(AuthorForm.author_exists)
+            else:
+                st.session_state['current_author'] = self
+                st.session_state['active_form_to_confirm'] = 'new_author'
+                st.switch_page("./pages/confirm_entry.py")

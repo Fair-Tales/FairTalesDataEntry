@@ -11,10 +11,18 @@ class GenderRegistration:
     """
 
 
+class BookForm:
+    header = "Please enter or review the details of this book."
+
+
 class AuthorForm:
     header = "Please enter author details."
     gender_options = ["Woman", "Man", "Non-binary", "Other", "Unknown"]
     gender_prompt = """
         Please use a web search to enter the gender of the author to the best of your knowledge.
         If it is not clear from a cursory search, please select `Unknown`.
+    """
+    author_exists = """
+        This author already exists in the database. Please either select them from the 
+        dropdown menu above, or enter a unique name for your new author.
     """

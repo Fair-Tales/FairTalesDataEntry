@@ -9,6 +9,24 @@ class Instructions:
         Before adding a book to our database, please search to check that we do not already have the book. You can also 
         search by author to see which books that we have by them.
     """
+    photo_upload_header = """
+        1. Upload photos of pages
+    """
+    photo_upload_instructions = """
+        The next step is for you to take and upload photos of each page of the book. This is easiest on a 
+        mobile device with a camera such as a smart phone. Once you have taken the photos, you should log 
+        into this app on your mobile device and return to this page by selecting `Edit my books` in the 
+        options menu on your homepage, and selecting this book.
+        
+        
+        Instructions for taking the photos:
+        - Please take clear and high resolution images (the clearer the better!).
+        - Either take a photo of a single page or the whole double-page spread, depending on the flow of the text. 
+        See the diagram below.
+        - Ensure you get the whole page in the photo, including the corners and edges.
+        - Ensure good lighting and try to reduce glare.
+        - Try to hold the book flat - you can use your thumb or finger.  
+    """
 
     data_entry_instructions = """
         You will now be guided through entering the data for this book.

@@ -1,8 +1,6 @@
 import streamlit as st
 from utilities import hide, FormConfirmation
 
-# TODO: use a method metadata_to_form to store session state entered data and re-display it in a form for revision?
-
 hide()
 
 st.write(
