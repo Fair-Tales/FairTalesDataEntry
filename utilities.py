@@ -30,7 +30,8 @@ def hide():
     hide_pages([
         'confirm', 'user_home', 'add_book', 'account_settings', 'confirm_entry',
         'add_character', 'add_author', 'book_data_entry', 'enter_text',
-        'register_user', 'register_user_done', 'review_my_books'
+        'register_user', 'register_user_done', 'review_my_books',
+        'page_photo_upload'
     ])
 
 
@@ -177,6 +178,11 @@ class FirestoreWrapper:
         doc = db.collection(collection).document(doc_id).get()
         return doc.exists
 
+    def update_field(self, collection, document, field, value):
+        db = self.connect()
+        doc_ref = db.collection(collection).document(document)
+        doc_ref.update({field: value})
+
 
 # TODO: check that required fields (e.g. book title) are not blank
 # TODO: fix warnings in table display (arrows?)
@@ -216,9 +222,14 @@ class FormConfirmation:
                 st.switch_page("./pages/add_author.py")
 
             else:
+                # TODO: only save if Book has been modified
                 st.session_state['current_book'].register()
                 st.session_state['current_book'].save_to_db()
-                st.switch_page("./pages/page_photo_upload.py")
+
+                if st.session_state.current_book.photos_uploaded:
+                    st.switch_page("./pages/enter_text.py")
+                else:
+                    st.switch_page("./pages/page_photo_upload.py")
 
         if edit_button:
             st.switch_page("./pages/add_book.py")

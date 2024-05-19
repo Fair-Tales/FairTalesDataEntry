@@ -3,11 +3,9 @@ from utilities import hide, FormConfirmation
 from PIL import Image
 from streamlit_dimensions import st_dimensions
 import s3fs
-# TODO: use a method metadata_to_form to store session state entered data and re-display it in a form for revision?
-# TODO: add capability to add or edit characters while paging through book.
 
 hide()
-NUMBER_OF_PAGES = 2
+NUMBER_OF_PAGES = 7
 
 fs = s3fs.S3FileSystem(
         anon=False,
@@ -31,10 +29,29 @@ def page_change(delta):
         st.session_state['current_page_number'] = NUMBER_OF_PAGES
 
 
-story_page = st.checkbox(
-    "Does this page contain story text?",
-    value=False
-)
+@st.cache_data(max_entries=3)
+def load_image():
+    return Image.open(fs.open(
+            f"sawimages/{st.session_state['current_book'].title}/page_{st.session_state.current_page_number}.jpg",
+            mode='rb'
+        ))
+
+
+def display_image():
+    page_image = load_image()
+    w, h = page_image.size
+
+    container_width = st_dimensions(key="main")['width']
+    _image_width = int(container_width / 2)
+
+    col1.write("# ")
+    col1.image(
+        page_image,
+        width=_image_width
+    )
+    scaled_height = int(_image_width*h/w)
+    return scaled_height
+
 
 col1, col2 = st.columns(2)
 previous_page = col1.button("Previous page", use_container_width=True, key='b1')
@@ -45,35 +62,16 @@ if next_page:
 if previous_page:
     page_change(-1)
 
-st.write("Showing page %d of %d." % (st.session_state.current_page_number, NUMBER_OF_PAGES))
-
-col3, col4 = st.columns(2)
-container_width = st_dimensions(key="main")['width']
-
-# with fs.open(
-#         "sawimages/temp_gruffalo_%d.png" % st.session_state.current_page_number,
-#         mode='rb'
-# ) as f:
-#     w, h = Image.open(f).size
-with fs.open(
-        f"sawimages/{st.session_state['current_book'].title}/page_{st.session_state.current_page_number}.jpg",
-        mode='rb'
-) as f:
-    w, h = Image.open(f).size
-
-
-image_width = int(container_width/2)
-
-col3.image(
-    fs.open(
-        f"sawimages/{st.session_state['current_book'].title}/page_{st.session_state.current_page_number}.jpg",
-        mode='rb'
-    ).read(),
-    width=image_width
+col1.write("Showing page %d of %d." % (st.session_state.current_page_number, NUMBER_OF_PAGES))
+story_page = col2.checkbox(
+    "Does this page contain story text?",
+    value=False
 )
-page_text = col4.text_area(
+image_height = display_image()
+
+page_text = col2.text_area(
     "Enter page text",
-    height=int(image_width*h/w),
+    height=image_height,
     value="The Gruffalo looked angrily at the small mouse and thought to herself....",
     disabled=not story_page
 )

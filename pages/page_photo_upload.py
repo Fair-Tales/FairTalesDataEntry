@@ -28,12 +28,26 @@ def upload_page_photos():
     uploaded_files = st.file_uploader("Select page photos to upload", accept_multiple_files=True)
     for fi, uploaded_file in enumerate(uploaded_files):
 
-        st.write("filename:", uploaded_file.name)
+        st.write("Saving page photos to the database, please stay on this page...")
         with fs.open(
                 f"sawimages/{st.session_state['current_book'].title}/page_{fi+1}.jpg",
                 'wb'
         ) as out_file:
             out_file.write(uploaded_file.read())
+
+    st.session_state.firestore.update_field(
+        collection='books',
+        document=st.session_state.current_book.document_id,
+        field='photos_uploaded',
+        value=True
+    )
+    st.session_state.firestore.update_field(
+        collection='books',
+        document=st.session_state.current_book.document_id,
+        field='photos_url',
+        value=f"sawimages/{st.session_state['current_book'].title}"
+    )
+    st.write("Page photo upload complete, you may continue.")
 
 
 upload_page_photos()

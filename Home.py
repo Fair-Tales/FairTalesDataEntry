@@ -33,7 +33,7 @@ from data_structures import Author, Book
 
 # TODO: update author class so that Book stores an author instance and uses properties w/ setters to handle author name, selection and reference access
 
-# TODO: either exapand Book.safe_cast and move to utilities, or remove pandas usage in FiresotreWarrper
+# TODO: either expand Book.safe_cast and move to utilities, or remove pandas usage in FiresotreWarrper
 
 # TODO: replace check_user_exists function with better solution as in FirestoreWrapper.document_exists
 
@@ -44,7 +44,11 @@ from data_structures import Author, Book
 
 # TODO: check book title is unique
 
+# TODO: implement last updated. !!! And only save Book (or other object) if they have been modified !!!
+
 # TODO: check Nonetype not subscriptable error on enter_text page. And change layout according to image dimensions.
+
+# TODO: add caching for page images
 
 def login():
     st.title("Login")
