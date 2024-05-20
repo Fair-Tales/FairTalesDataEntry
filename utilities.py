@@ -225,6 +225,9 @@ class FormConfirmation:
                 # TODO: only save if Book has been modified
                 st.session_state['current_book'].register()
                 st.session_state['current_book'].save_to_db()
+                st.session_state['book_dict'][
+                    st.session_state['current_book'].title
+                ] = st.session_state['current_book'].get_ref()
 
                 if st.session_state.current_book.photos_uploaded:
                     st.switch_page("./pages/enter_text.py")

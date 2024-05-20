@@ -48,7 +48,12 @@ from data_structures import Author, Book
 
 # TODO: check Nonetype not subscriptable error on enter_text page. And change layout according to image dimensions.
 
-# TODO: add caching for page images
+# TODO: add options menu when selected book to review/edit
+
+# TODO: replace auhtor_dict and book_dict with cached retrieval methods (will not scale to v. large database but OK for now)
+
+# TODO: move save and add_to_dict to registration method of data structure base (and ensure only called once - not when editing).
+
 
 def login():
     st.title("Login")
@@ -84,6 +89,11 @@ def initialise():
         author_entry_to_name(author): author.reference
         for author in
         firestore.get_all_documents_stream(collection='authors')
+    }
+    st.session_state['book_dict'] = {
+        book.to_dict()['title']: book.reference
+        for book in
+        firestore.get_all_documents_stream(collection='books')
     }
 
 
