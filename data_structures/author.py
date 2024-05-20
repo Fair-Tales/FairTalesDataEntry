@@ -6,6 +6,7 @@ from .base_structure import DataStructureBase
 class Author(DataStructureBase):
 
     fields = {
+        'is_registered': False,
         'forename': "",
         'surname': "",
         'birth_year': 1970,
@@ -25,7 +26,7 @@ class Author(DataStructureBase):
     ref_fields = []
 
     def __init__(self, db_object=None):
-        super().__init__(db_object=db_object)
+        super().__init__(collection='authors', db_object=db_object)
         self.belongs_to_collection = 'authors'
 
     @property

@@ -223,7 +223,6 @@ class FormConfirmation:
 
             else:
                 st.session_state['current_book'].register()
-                st.session_state['current_book'].save_to_db()
                 st.session_state['book_dict'][
                     st.session_state['current_book'].title
                 ] = st.session_state['current_book'].get_ref()
@@ -247,12 +246,11 @@ class FormConfirmation:
 
         if confirm_button:
             st.session_state['current_author'].register()
-            st.session_state['current_author'].save_to_db()
             st.session_state['author_dict'][
                 st.session_state['current_author'].name
             ] = st.session_state['current_author'].get_ref()
 
-            st.session_state['current_book'].set_author(
+            st.session_state['current_book'].author = (
                 st.session_state['current_author'].name
             )
             st.switch_page("./pages/add_book.py")

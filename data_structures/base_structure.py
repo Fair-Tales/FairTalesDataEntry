@@ -4,9 +4,48 @@ import numpy as np
 from abc import ABC, abstractmethod
 
 
-class DataStructureBase(ABC):
+class Field:
 
-    def __init__(self, db_object=None):
+    # Allow reference fields to be set by passing a string
+    # that is a key to relevant lookup dictionary:
+    ref_field_setters = {
+        'author': 'author_dict',
+        'book': 'book_dict',
+    }
+
+    def __set_name__(self, owner, name):
+        self._name = name
+
+    def __get__(self, instance, owner):
+        return instance.__dict__[self._name]
+
+    def __set__(self, instance, value):
+
+        if self._name in self.ref_field_setters.keys() and isinstance(value, str):
+            value = st.session_state[self.ref_field_setters[self._name]].get(value, None)
+
+        instance.__dict__[self._name] = value
+
+        if self._name != "last_updated":
+            instance.update_record(
+                field=self._name,
+                value=value
+            )
+
+
+class DataStructureBase(ABC):
+    """
+    Note: is_registered is special attribute to flags if object has been saved to the database.
+    All other attributes are handled by the Field descriptor and update the database
+    on __set__ if is_registered is True.
+    """
+    last_updated = Field()
+    entered_by = Field()
+    datetime_created = Field()
+
+    def __init__(self, collection, db_object=None):
+        self.belongs_to_collection = collection
+
         if db_object is None:
             for key in self.fields.keys():
                 setattr(self, key, self.fields[key])
@@ -53,17 +92,56 @@ class DataStructureBase(ABC):
     def document_id(self):
         pass
 
+    # @property
+    # def last_updated(self):
+    #     return self._last_updated
+    #
+    # @last_updated.setter
+    # def last_updated(self, value):
+    #     self._last_updated = value
+    #     self.update_record('is_registered', value)
+
+    # @property
+    # def entered_by(self):
+    #     return self._entered_by
+    #
+    # @entered_by.setter
+    # def entered_by(self, value):
+    #     self._entered_by = value
+    #     self.update_record('entered_by', value)
+
+    # @property
+    # def datetime_created(self):
+    #     return self._datetime_created
+    #
+    # @datetime_created.setter
+    # def datetime_created(self, value):
+    #     self._datetime_created = value
+    #     self.update_record('datetime_created', value)
+
+    def update_record(self, field, value):
+        if self.is_registered:
+            st.session_state.firestore.update_field(
+                collection=self.belongs_to_collection,
+                document=self.document_id,
+                field=field,
+                value=value
+            )
+            self.last_updated = datetime.now()
+
     def get_ref(self):
         db = st.session_state.firestore.connect()
         return db.collection(self.belongs_to_collection).document(self.document_id)
 
     def register(self):
         """ Sets entered_by user and records datetime if not set. """
-        if self.datetime_created == -1:
+        if not self.is_registered:
             self.entered_by = st.session_state['firestore'].username_to_doc_ref(
                 st.session_state['username']
             )
             self.datetime_created = datetime.now()
+            self.is_registered = True
+            self.save_to_db()
 
     def save_to_db(self):
         db = st.session_state['firestore'].connect()

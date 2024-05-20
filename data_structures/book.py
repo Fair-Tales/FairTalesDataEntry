@@ -1,13 +1,16 @@
 import streamlit as st
 from utilities import author_entry_to_name
 from text_content import Instructions, BookForm
-from .base_structure import DataStructureBase
+from .base_structure import DataStructureBase, Field
 from .author import Author
 
 
 class Book(DataStructureBase):
 
+    author = Field()
+
     fields = {
+        'is_registered': False,
         'title': "",
         'author': None,
         'character_count': -1,
@@ -38,9 +41,8 @@ class Book(DataStructureBase):
     ref_fields = ['author', 'entered_by']  # Reference fields will display document ID for human consumption
 
     def __init__(self, db_object=None):
-        super().__init__(db_object=db_object)
-        self.author_name = None
-        self.belongs_to_collection = 'books'
+        super().__init__(collection='books', db_object=db_object)
+        # self.author_name = None
 
     @property
     def document_id(self):
@@ -64,7 +66,7 @@ class Book(DataStructureBase):
             else 0
         )
 
-        self.author_name = st.selectbox(
+        self.author = st.selectbox(
             "Select from existing authors",
             options=author_options,
             index=author_index
@@ -80,7 +82,6 @@ class Book(DataStructureBase):
         submitted = st.form_submit_button("Submit")
 
         if submitted:
-            self.set_author(self.author_name)
             st.session_state['current_book'] = self
 
             if self.author is None:
@@ -89,7 +90,3 @@ class Book(DataStructureBase):
             else:
                 st.session_state['active_form_to_confirm'] = 'new_book'
                 st.switch_page("./pages/confirm_entry.py")
-
-    def set_author(self, author_name):
-        self.author = st.session_state['author_dict'].get(author_name, None)
-        print("Author =", self.author, author_name)
