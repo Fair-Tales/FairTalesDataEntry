@@ -4,7 +4,6 @@ from PIL import Image
 from streamlit_dimensions import st_dimensions
 import s3fs
 
-# TODO: move common properties to BaseDataStructure (and setter logic? - with db update if registered)
 # TODO: also set Book.page_count at the same time
 # TODO: get NUMBER_OF_PAGES from Book, get page contains story from Page
 # TODO: button to replace page text entry with character add form (write character data structure)
@@ -12,7 +11,6 @@ import s3fs
 # TODO: delete character or alias?
 
 hide()
-NUMBER_OF_PAGES = 7
 
 fs = s3fs.S3FileSystem(
         anon=False,
@@ -32,8 +30,8 @@ def page_change(delta):
 
     if st.session_state.current_page_number < 1:
         st.session_state['current_page_number'] = 1
-    elif st.session_state.current_page_number > NUMBER_OF_PAGES:
-        st.session_state['current_page_number'] = NUMBER_OF_PAGES
+    elif st.session_state.current_page_number > st.session_state.current_book.page_count:
+        st.session_state['current_page_number'] = st.session_state.current_book.page_count
 
 
 @st.cache_data(max_entries=3)
@@ -69,7 +67,10 @@ if next_page:
 if previous_page:
     page_change(-1)
 
-col1.write("Showing page %d of %d." % (st.session_state.current_page_number, NUMBER_OF_PAGES))
+col1.write(
+    "Showing page %d of %d."
+    % (st.session_state.current_page_number, st.session_state.current_book.page_count)
+)
 story_page = col2.checkbox(
     "Does this page contain story text?",
     value=False

@@ -47,6 +47,7 @@ def upload_page_photos():
 
         st.session_state.current_book.photos_uploaded = True
         st.session_state.current_book.photos_url = photos_url
+        st.session_state.current_book.page_count = len(uploaded_files)
 
         st.write("Page photo upload complete, you may continue.")
 
