@@ -222,7 +222,6 @@ class FormConfirmation:
                 st.switch_page("./pages/add_author.py")
 
             else:
-                # TODO: only save if Book has been modified
                 st.session_state['current_book'].register()
                 st.session_state['current_book'].save_to_db()
                 st.session_state['book_dict'][

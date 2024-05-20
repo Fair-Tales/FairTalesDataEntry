@@ -42,19 +42,21 @@ def upload_page_photos():
         page.register()
         page.save_to_db()
 
-    st.session_state.firestore.update_field(
-        collection='books',
-        document=st.session_state.current_book.document_id,
-        field='photos_uploaded',
-        value=True
-    )
-    st.session_state.firestore.update_field(
-        collection='books',
-        document=st.session_state.current_book.document_id,
-        field='photos_url',
-        value=f"sawimages/{st.session_state['current_book'].title}"
-    )
-    st.write("Page photo upload complete, you may continue.")
+    if uploaded_files:
+        st.session_state.firestore.update_field(
+            collection='books',
+            document=st.session_state.current_book.document_id,
+            field='photos_uploaded',
+            value=True
+        )
+        st.session_state.firestore.update_field(
+            collection='books',
+            document=st.session_state.current_book.document_id,
+            field='photos_url',
+            value=f"sawimages/{st.session_state['current_book'].title}"
+        )
+
+        st.write("Page photo upload complete, you may continue.")
 
 
 upload_page_photos()

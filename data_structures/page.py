@@ -21,6 +21,9 @@ class Page(DataStructureBase):
         self._book = None
         super().__init__(db_object=db_object)
         self.belongs_to_collection = 'pages'
+        if db_object is None:
+            self.page_number = page_number
+            self.book = book
 
     @property
     def document_id(self):
