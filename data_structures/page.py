@@ -6,13 +6,13 @@ from .base_structure import DataStructureBase, Field
 class Page(DataStructureBase):
 
     fields = {
+        'is_registered': False,
         'contains_story': False,
         'book': None,
         'page_number': -1,
         'text': "",
         'datetime_created': -1,
         'entered_by': None,
-        'is_registered': False,
         'last_updated': -1
     }
 

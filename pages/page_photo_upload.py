@@ -26,35 +26,27 @@ fs = s3fs.S3FileSystem(
 # TODO: set file order (sort ascending? time modified? https://stackoverflow.com/questions/31588543/how-to-change-order-of-files-in-multiple-file-input)
 def upload_page_photos():
     uploaded_files = st.file_uploader("Select page photos to upload", accept_multiple_files=True)
-    for fi, uploaded_file in enumerate(uploaded_files):
-        page_number = fi + 1
-        st.write("Saving page photos to the database, please stay on this page...")
-        with fs.open(
-                f"sawimages/{st.session_state['current_book'].title}/page_{page_number}.jpg",
-                'wb'
-        ) as out_file:
-            out_file.write(uploaded_file.read())
-
-        page = Page(
-            page_number=page_number,
-            book=st.session_state['current_book'].title
-        )
-        page.register()
-        page.save_to_db()
 
     if uploaded_files:
-        st.session_state.firestore.update_field(
-            collection='books',
-            document=st.session_state.current_book.document_id,
-            field='photos_uploaded',
-            value=True
-        )
-        st.session_state.firestore.update_field(
-            collection='books',
-            document=st.session_state.current_book.document_id,
-            field='photos_url',
-            value=f"sawimages/{st.session_state['current_book'].title}"
-        )
+        st.write("Saving page photos to the database, please stay on this page...")
+        photos_url = f"sawimages/{st.session_state['current_book'].title}"
+
+        for fi, uploaded_file in enumerate(uploaded_files):
+            page_number = fi + 1
+            with fs.open(
+                    photos_url + f"/page_{page_number}.jpg",
+                    'wb'
+            ) as out_file:
+                out_file.write(uploaded_file.read())
+
+            page = Page(
+                page_number=page_number,
+                book=st.session_state['current_book'].title
+            )
+            page.register()
+
+        st.session_state.current_book.photos_uploaded = True
+        st.session_state.current_book.photos_url = photos_url
 
         st.write("Page photo upload complete, you may continue.")
 

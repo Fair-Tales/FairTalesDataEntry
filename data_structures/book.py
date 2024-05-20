@@ -44,7 +44,6 @@ class Book(DataStructureBase):
 
     def __init__(self, db_object=None):
         super().__init__(collection='books', db_object=db_object)
-        # self.author_name = None
 
     @property
     def document_id(self):
