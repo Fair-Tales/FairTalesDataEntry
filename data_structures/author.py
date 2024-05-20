@@ -1,9 +1,14 @@
 import streamlit as st
 from text_content import Instructions, AuthorForm
-from .base_structure import DataStructureBase
+from .base_structure import DataStructureBase, Field
 
 
 class Author(DataStructureBase):
+
+    forename = Field()
+    surname = Field()
+    birth_year = Field()
+    gender = Field()
 
     fields = {
         'is_registered': False,
@@ -11,9 +16,9 @@ class Author(DataStructureBase):
         'surname': "",
         'birth_year': 1970,
         'gender': "",
-        'book_count': -1,
         'entered_by': None,
-        'datetime_created': -1
+        'datetime_created': -1,
+        'last_updated': -1
     }
 
     form_fields = {
@@ -27,7 +32,6 @@ class Author(DataStructureBase):
 
     def __init__(self, db_object=None):
         super().__init__(collection='authors', db_object=db_object)
-        self.belongs_to_collection = 'authors'
 
     @property
     def name(self):
