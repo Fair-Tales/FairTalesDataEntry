@@ -26,11 +26,10 @@ class Field:
 
         instance.__dict__[self._name] = value
 
-        if self._name != "last_updated":
-            instance.update_record(
-                field=self._name,
-                value=value
-            )
+        instance.update_record(
+            field=self._name,
+            value=value
+        )
 
 
 class DataStructureBase(ABC):
@@ -92,33 +91,6 @@ class DataStructureBase(ABC):
     def document_id(self):
         pass
 
-    # @property
-    # def last_updated(self):
-    #     return self._last_updated
-    #
-    # @last_updated.setter
-    # def last_updated(self, value):
-    #     self._last_updated = value
-    #     self.update_record('is_registered', value)
-
-    # @property
-    # def entered_by(self):
-    #     return self._entered_by
-    #
-    # @entered_by.setter
-    # def entered_by(self, value):
-    #     self._entered_by = value
-    #     self.update_record('entered_by', value)
-
-    # @property
-    # def datetime_created(self):
-    #     return self._datetime_created
-    #
-    # @datetime_created.setter
-    # def datetime_created(self, value):
-    #     self._datetime_created = value
-    #     self.update_record('datetime_created', value)
-
     def update_record(self, field, value):
         if self.is_registered:
             st.session_state.firestore.update_field(
@@ -127,7 +99,8 @@ class DataStructureBase(ABC):
                 field=field,
                 value=value
             )
-            self.last_updated = datetime.now()
+            if field != 'last_updated':
+                self.last_updated = datetime.now()
 
     def get_ref(self):
         db = st.session_state.firestore.connect()

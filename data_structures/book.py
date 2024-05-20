@@ -88,5 +88,11 @@ class Book(DataStructureBase):
                 st.session_state['current_author'] = Author()
                 st.switch_page("./pages/add_author.py")
             else:
-                st.session_state['active_form_to_confirm'] = 'new_book'
-                st.switch_page("./pages/confirm_entry.py")
+                if self.is_registered:
+                    if st.session_state.current_book.photos_uploaded:
+                        st.switch_page("./pages/enter_text.py")
+                    else:
+                        st.switch_page("./pages/page_photo_upload.py")
+                else:
+                    st.session_state['active_form_to_confirm'] = 'new_book'
+                    st.switch_page("./pages/confirm_entry.py")

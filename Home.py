@@ -52,7 +52,9 @@ from data_structures import Author, Book
 
 # TODO: replace auhtor_dict and book_dict with cached retrieval methods (will not scale to v. large database but OK for now)
 
-# TODO: move save and add_to_dict to registration method of data structure base (and ensure only called once - not when editing).
+# TODO: dynamically choose textt - whether to add or edit book, and 'cancel new' or 'cancel edit'
+
+# TODO: add 'help' instructions throughout
 
 
 def login():
