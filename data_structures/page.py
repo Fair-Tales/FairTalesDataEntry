@@ -5,8 +5,6 @@ from .base_structure import DataStructureBase, Field
 
 class Page(DataStructureBase):
 
-    book = Field()
-
     fields = {
         'contains_story': False,
         'book': None,
@@ -17,6 +15,10 @@ class Page(DataStructureBase):
         'is_registered': False,
         'last_updated': -1
     }
+
+    for field in fields.keys():
+        if field not in [DataStructureBase.base_class_fields] + ['is_registered']:
+            vars()[field] = Field()
 
     form_fields = {}
     ref_fields = ['book', 'entered_by']  # Reference fields will display document ID for human consumption

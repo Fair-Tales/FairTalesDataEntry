@@ -4,7 +4,6 @@ from PIL import Image
 from streamlit_dimensions import st_dimensions
 import s3fs
 
-# TODO: make it so that all Book(etc) attributes are properties and when you change one it also gets updated in the database!
 # TODO: move common properties to BaseDataStructure (and setter logic? - with db update if registered)
 # TODO: also set Book.page_count at the same time
 # TODO: get NUMBER_OF_PAGES from Book, get page contains story from Page

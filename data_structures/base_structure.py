@@ -38,9 +38,9 @@ class DataStructureBase(ABC):
     All other attributes are handled by the Field descriptor and update the database
     on __set__ if is_registered is True.
     """
-    last_updated = Field()
-    entered_by = Field()
-    datetime_created = Field()
+    base_class_fields = ['last_updated', 'entered_by', 'datetime_created']
+    for v in base_class_fields:
+        vars()[v] = Field()
 
     def __init__(self, collection, db_object=None):
         self.belongs_to_collection = collection

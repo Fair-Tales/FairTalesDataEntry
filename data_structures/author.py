@@ -5,11 +5,6 @@ from .base_structure import DataStructureBase, Field
 
 class Author(DataStructureBase):
 
-    forename = Field()
-    surname = Field()
-    birth_year = Field()
-    gender = Field()
-
     fields = {
         'is_registered': False,
         'forename': "",
@@ -20,6 +15,10 @@ class Author(DataStructureBase):
         'datetime_created': -1,
         'last_updated': -1
     }
+
+    for field in fields.keys():
+        if field not in [DataStructureBase.base_class_fields] + ['is_registered']:
+            vars()[field] = Field()
 
     form_fields = {
         'forename': 'First name(s)',

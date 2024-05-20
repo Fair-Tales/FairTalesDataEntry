@@ -7,8 +7,6 @@ from .author import Author
 
 class Book(DataStructureBase):
 
-    author = Field()
-
     fields = {
         'is_registered': False,
         'title': "",
@@ -31,6 +29,10 @@ class Book(DataStructureBase):
         'photos_uploaded': False,
         'photos_url': ""
     }
+
+    for field in fields.keys():
+        if field not in [DataStructureBase.base_class_fields] + ['is_registered']:
+            vars()[field] = Field()
 
     form_fields = {
         'title': 'Title',
