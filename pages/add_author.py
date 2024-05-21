@@ -1,5 +1,5 @@
 import streamlit as st
-from utilities import author_entry_to_name, hide
+from utilities import hide
 
 hide()
 

@@ -6,15 +6,13 @@ st.set_page_config(
     # layout="wide",
     initial_sidebar_state='collapsed'
 )
-from utilities import hide, FormConfirmation
-from data_structures import Page
+from utilities import hide
+from data_structures import Page, Character
 from text_content import EnterText
 
 
-# TODO: save page text to database
 # TODO: write character and alias data structures
 # (TODO: make forms work for c and a)
-# TODO: button to replace page text entry with character add form (write character data structure)
 # TODO: button to replace page text entry with alias add form (write alias data structure)
 # TODO: delete character or alias?
 # TODO: add splitlines and replace tabs to text entry
@@ -133,14 +131,13 @@ def text_entry(element, image_height, delta=50):
 
 def character_entry(element):
 
+    st.session_state['current_character'] = Character(
+        book=st.session_state['current_book'].title
+    )
     with element.form('character'):
-        st.header("Character entry placeholder")
-        st.text_input("Something")
-        submitted = st.form_submit_button("Submit")
+        st.session_state['current_character'].to_form()
 
-    subcol1, subcol2 = element.columns(2)
-    subcol1.button('Save character', use_container_width=True)
-    subcol2.button('Cancel', use_container_width=True, on_click=adding_text)
+    element.button('Cancel adding character', use_container_width=True, on_click=adding_text)
 
 
 def user_entry_box(element, image_height, delta=50):

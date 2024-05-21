@@ -27,6 +27,7 @@ class AuthorForm:
         dropdown menu above, or enter a unique name for your new author.
     """
 
+
 class EnterText:
 
     header = "Please enter text and add characters"
@@ -37,3 +38,30 @@ class EnterText:
         important for our language analysis.**
         - Please also add all characters and their aliases as you encounter them.
     """
+
+
+class CharacterForm:
+
+    header = "Please enter details of this character"
+
+    gender_options = ["Female", "Male", "Non-specific", "Transgender"]
+    gender_help = """
+        Please select character gender based only on pronouns. If it is not clear
+        because gendered pronouns are not used, please select `Non-specific`.
+        Please do not use the illustrations to infer gender and only select
+        `Transgender` if this is explicit in the text.
+    """
+    character_exists = """
+            This character already exists in the database.
+            If you want to create a new alias for an existing character, please
+            cancel this entry and select `Add alias`.
+        """
+    protagonist_help = """
+        The protagonist is the main character.
+    """
+    plural_help = """
+            Select if this is a group or collection of characters e.g. 'the witches'.
+        """
+    human_help = """
+            Select if character is human (rather than non-human - animal, monster etc).
+        """

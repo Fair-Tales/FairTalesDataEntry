@@ -27,7 +27,8 @@ def register_user(_username, _name, _password, _gender, _birth_year):
         "user_birth_year": _birth_year,
         "account_type": "user",
         "confirmation_token": confirmation_token,
-        "is_confirmed": False
+        "is_confirmed": False,
+        "trust_rating": 0
     }
     if check_user_exists(_username):
         st.warning(Alerts.user_exists)

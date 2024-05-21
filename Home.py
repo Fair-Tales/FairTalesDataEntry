@@ -56,6 +56,10 @@ from data_structures import Author, Book
 
 # TODO: add 'help' instructions throughout
 
+# TODO: write and use 'user' data structure (to handle changing account details and updating db)
+# TODO: add option to enter book 'themes' (for later use: disability, race...)
+# TODO: double check add_author functionality (where is current_author added to session state?)
+
 
 def login():
     st.title("Login")
