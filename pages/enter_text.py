@@ -1,14 +1,23 @@
 import streamlit as st
-from utilities import hide, FormConfirmation
 from PIL import Image
 from streamlit_dimensions import st_dimensions
 import s3fs
+st.set_page_config(
+    # layout="wide",
+    initial_sidebar_state='collapsed'
+)
+from utilities import hide, FormConfirmation
+from data_structures import Page
+from text_content import EnterText
 
-# TODO: also set Book.page_count at the same time
-# TODO: get NUMBER_OF_PAGES from Book, get page contains story from Page
+
+# TODO: save page text to database
+# TODO: write character and alias data structures
+# (TODO: make forms work for c and a)
 # TODO: button to replace page text entry with character add form (write character data structure)
 # TODO: button to replace page text entry with alias add form (write alias data structure)
 # TODO: delete character or alias?
+# TODO: add splitlines and replace tabs to text entry
 
 hide()
 
@@ -18,14 +27,28 @@ fs = s3fs.S3FileSystem(
         secret=st.secrets['AWS_SECRET_ACCESS_KEY']
     )
 
+
+def create_current_page_from_db():
+    st.session_state.current_page = Page(
+        st.session_state.firestore.get_by_reference(
+            collection='pages',
+            document_ref=f"{st.session_state.current_book.document_id}_{st.session_state.current_page_number}"
+        ).to_dict()
+    )
+
+
 if 'current_page_number' not in st.session_state:
     st.session_state['current_page_number'] = 1
+if 'current_page' not in st.session_state:
+    create_current_page_from_db()
+if 'now_entering' not in st.session_state:
+    st.session_state['now_entering'] = 'text'
 
-st.header("Please enter the text for page:")
+st.header(EnterText.header)
+st.write(EnterText.instruction)
 
 
 def page_change(delta):
-
     st.session_state.current_page_number += delta
 
     if st.session_state.current_page_number < 1:
@@ -33,20 +56,23 @@ def page_change(delta):
     elif st.session_state.current_page_number > st.session_state.current_book.page_count:
         st.session_state['current_page_number'] = st.session_state.current_book.page_count
 
+    create_current_page_from_db()
+
 
 @st.cache_data(max_entries=3)
-def load_image():
+def load_image(page_number):
     return Image.open(fs.open(
-            f"sawimages/{st.session_state['current_book'].title}/page_{st.session_state.current_page_number}.jpg",
+            f"sawimages/{st.session_state['current_book'].title}/page_{page_number}.jpg",
             mode='rb'
         ))
 
 
 def display_image():
-    page_image = load_image()
+    page_image = load_image(st.session_state.current_page_number)
     w, h = page_image.size
 
-    container_width = st_dimensions(key="main")['width']
+    dimensions = st_dimensions(key="main")
+    container_width = dimensions['width'] if dimensions is not None else 10
     _image_width = int(container_width / 2)
 
     col1.write("# ")
@@ -67,23 +93,66 @@ if next_page:
 if previous_page:
     page_change(-1)
 
+
 col1.write(
     "Showing page %d of %d."
     % (st.session_state.current_page_number, st.session_state.current_book.page_count)
 )
-story_page = col2.checkbox(
-    "Does this page contain story text?",
-    value=False
-)
 image_height = display_image()
 
-page_text = col2.text_area(
-    "Enter page text",
-    height=image_height,
-    value="The Gruffalo looked angrily at the small mouse and thought to herself....",
-    disabled=not story_page
-)
 
+def adding_character():
+    st.session_state.now_entering = 'character'
+
+
+def adding_text():
+    st.session_state.now_entering = 'text'
+
+
+def adding_alias():
+    st.session_state.now_entering = 'alias'
+
+
+def text_entry(element, image_height, delta=50):
+    st.session_state.current_page.contains_story = element.checkbox(
+        "Does this page contain story text?",
+        value=st.session_state.current_page.contains_story
+    )
+    subcol1, subcol2 = element.columns(2)
+    subcol1.button("Add character", use_container_width=True, on_click=adding_character)
+    subcol2.button("Add alias", use_container_width=True, on_click=adding_alias)
+
+    height = max(image_height - delta, 10)
+    st.session_state.current_page.text = element.text_area(
+        "Enter page text",
+        height=height,
+        value="The Gruffalo looked angrily at the small mouse and thought to herself....",
+        disabled=not st.session_state.current_page.contains_story
+    )
+
+
+def character_entry(element):
+
+    with element.form('character'):
+        st.header("Character entry placeholder")
+        st.text_input("Something")
+        submitted = st.form_submit_button("Submit")
+
+    subcol1, subcol2 = element.columns(2)
+    subcol1.button('Save character', use_container_width=True)
+    subcol2.button('Cancel', use_container_width=True, on_click=adding_text)
+
+
+def user_entry_box(element, image_height, delta=50):
+    if st.session_state.now_entering == 'text':
+        text_entry(element, image_height, delta)
+    elif st.session_state.now_entering == 'character':
+        character_entry(element)
+    elif st.session_state.now_entering == 'alias':
+        st.write("alias")
+
+
+user_entry_box(col2, image_height)
 save_button = st.button("Save button")
 if save_button:
     st.warning("Not implemented yet!")

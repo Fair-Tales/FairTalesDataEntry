@@ -26,3 +26,14 @@ class AuthorForm:
         This author already exists in the database. Please either select them from the 
         dropdown menu above, or enter a unique name for your new author.
     """
+
+class EnterText:
+
+    header = "Please enter text and add characters"
+    instruction = """
+        - You only need to enter text for the pages that contain the story (or main content of the book).
+        - Please enter with spelling verbatim and use 'enter' for newlines. 
+        - When a linebreak appears to mark the end of a sentence please add a full stop. **This is very
+        important for our language analysis.**
+        - Please also add all characters and their aliases as you encounter them.
+    """

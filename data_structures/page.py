@@ -7,9 +7,9 @@ class Page(DataStructureBase):
 
     fields = {
         'is_registered': False,
-        'contains_story': False,
         'book': None,
         'page_number': -1,
+        'contains_story': False,
         'text': "",
         'datetime_created': -1,
         'entered_by': None,

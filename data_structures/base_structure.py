@@ -26,10 +26,11 @@ class Field:
 
         instance.__dict__[self._name] = value
 
-        instance.update_record(
-            field=self._name,
-            value=value
-        )
+        if not instance.reading_from_db:
+            instance.update_record(
+                field=self._name,
+                value=value
+            )
 
 
 class DataStructureBase(ABC):
@@ -44,14 +45,17 @@ class DataStructureBase(ABC):
 
     def __init__(self, collection, db_object=None):
         self.belongs_to_collection = collection
+        self.reading_from_db = False
 
         if db_object is None:
             for key in self.fields.keys():
                 setattr(self, key, self.fields[key])
 
         else:
+            self.reading_from_db = True
             for key in self.fields.keys():
                 setattr(self, key, self.safe_cast(db_object[key]))
+            self.reading_from_db = False
 
     @staticmethod
     def safe_cast(value):

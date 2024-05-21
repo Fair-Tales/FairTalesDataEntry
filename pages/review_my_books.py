@@ -1,4 +1,8 @@
 import streamlit as st
+st.set_page_config(
+    page_title="bde",
+    initial_sidebar_state="collapsed"
+)
 from utilities import hide
 from text_content import Instructions
 from data_structures import Book
