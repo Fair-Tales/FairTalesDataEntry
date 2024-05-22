@@ -20,8 +20,8 @@ class Book(DataStructureBase):
         'entry_status': 'started',
         'first_content_page': -1,
         'last_content_page': -1,
-        'illustrator': None,
-        'publisher': None,
+        'illustrator': "",
+        'publisher': "",
         'last_updated': -1,
         'published': 2012,
         'validated': False,
@@ -37,7 +37,9 @@ class Book(DataStructureBase):
     form_fields = {
         'title': 'Title',
         'published': 'Date published',
-        'author': 'Author'
+        'author': 'Author',
+        'publisher': 'Publisher',
+        'illustrator': 'Illustrator'
     }
 
     ref_fields = ['author', 'entered_by']  # Reference fields will display document ID for human consumption
@@ -73,19 +75,22 @@ class Book(DataStructureBase):
             index=author_index
         )
 
-# TODO: for publisher/illustrator as for author
-        self.publisher = st.selectbox(
-            "Select from existing publishers", options=["None of these (create a new publisher)."] + []
-        )
-        self.illustrator = st.selectbox(
-            "Select from existing illustrators", options=["None of these (create a new illustrator)."] + []
-        )
+        self.publisher = st.text_input("Publisher name", value=self.publisher)
+        self.illustrator = st.text_input("Illustrator name", value=self.illustrator)
+
         submitted = st.form_submit_button("Submit")
 
         if submitted:
+
             st.session_state['current_book'] = self
 
-            if self.author is None:
+            if st.session_state.firestore.document_exists(
+                collection='books',
+                doc_id=self.document_id
+            ):
+                st.warning(BookForm.book_exists)
+
+            elif self.author is None:
                 st.session_state['current_author'] = Author()
                 st.switch_page("./pages/add_author.py")
             else:

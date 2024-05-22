@@ -13,6 +13,12 @@ class GenderRegistration:
 
 class BookForm:
     header = "Please enter or review the details of this book."
+    cancel_text = "Cancel"
+    cancel_help = "Cancel entering or editing the data for this book."
+    book_exists = """
+        This book already exists in the database. You can use the `Book search` function on your 
+        homepage to check before entering a book.
+    """
 
 
 class AuthorForm:
@@ -49,6 +55,11 @@ class EnterText:
     alias_help = """
         Please record all of the alternative names that are used to refer to the same character
         or group of characters.  
+    """
+
+    save_help = """
+        The data you enter will save automatically as you work. This button finishes entering this book and returns
+        you to your homepage.
     """
 
 

@@ -161,7 +161,7 @@ def user_entry_box(element, image_height, delta=50):
 
 
 user_entry_box(col2, image_height)
-save_button = st.button("Save button")
+save_button = st.button("Finish entering book", help=EnterText.save_help, use_container_width=True)
 if save_button:
     st.warning("Not implemented yet!")
 
