@@ -39,6 +39,7 @@ cancel_button = st.button("Cancel editing books.")
 
 if edit_button:
     st.session_state['current_book'] = selected_book
+    st.session_state['current_book'].editing = True
     st.switch_page("./pages/add_book.py")
 
 if cancel_button:

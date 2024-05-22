@@ -46,6 +46,7 @@ class Book(DataStructureBase):
 
     def __init__(self, db_object=None):
         super().__init__(collection='books', db_object=db_object)
+        self.editing = False
 
     @property
     def document_id(self):
@@ -84,7 +85,7 @@ class Book(DataStructureBase):
 
             st.session_state['current_book'] = self
 
-            if st.session_state.firestore.document_exists(
+            if not self.editing and st.session_state.firestore.document_exists(
                 collection='books',
                 doc_id=self.document_id
             ):
@@ -94,6 +95,7 @@ class Book(DataStructureBase):
                 st.session_state['current_author'] = Author()
                 st.switch_page("./pages/add_author.py")
             else:
+                self.editing = False
                 if self.is_registered:
                     if st.session_state.current_book.photos_uploaded:
                         st.switch_page("./pages/enter_text.py")

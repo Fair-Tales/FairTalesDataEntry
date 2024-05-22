@@ -37,10 +37,11 @@ def create_current_page_from_db():
 
 if 'current_page_number' not in st.session_state:
     st.session_state['current_page_number'] = 1
-if 'current_page' not in st.session_state:
-    create_current_page_from_db()
+
 if 'now_entering' not in st.session_state:
     st.session_state['now_entering'] = 'text'
+
+create_current_page_from_db()
 
 st.header(EnterText.header)
 st.write(EnterText.instruction)
@@ -53,8 +54,6 @@ def page_change(delta):
         st.session_state['current_page_number'] = 1
     elif st.session_state.current_page_number > st.session_state.current_book.page_count:
         st.session_state['current_page_number'] = st.session_state.current_book.page_count
-
-    create_current_page_from_db()
 
 
 @st.cache_data(max_entries=3)
@@ -83,14 +82,8 @@ def display_image():
 
 
 col1, col2 = st.columns(2)
-previous_page = col1.button("Previous page", use_container_width=True, key='b1')
-next_page = col2.button("Next page", use_container_width=True, key='b2')
-
-if next_page:
-    page_change(1)
-if previous_page:
-    page_change(-1)
-
+previous_page = col1.button("Previous page", use_container_width=True, key='b1', on_click=page_change, args=(-1,))
+next_page = col2.button("Next page", use_container_width=True, key='b2', on_click=page_change, args=(1,))
 
 col1.write(
     "Showing page %d of %d."
@@ -124,7 +117,7 @@ def text_entry(element, image_height, delta=50):
     st.session_state.current_page.text = element.text_area(
         "Enter page text",
         height=height,
-        value="The Gruffalo looked angrily at the small mouse and thought to herself....",
+        value=st.session_state.current_page.text,
         disabled=not st.session_state.current_page.contains_story
     )
 
@@ -163,5 +156,5 @@ def user_entry_box(element, image_height, delta=50):
 user_entry_box(col2, image_height)
 save_button = st.button("Finish entering book", help=EnterText.save_help, use_container_width=True)
 if save_button:
-    st.warning("Not implemented yet!")
+    st.switch_page("./pages/user_home.py")
 
