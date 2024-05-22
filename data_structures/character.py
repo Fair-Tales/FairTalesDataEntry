@@ -39,7 +39,7 @@ class Character(DataStructureBase):
 
     @property
     def document_id(self):
-        return f"{self.book.get().id}_{self.name.lower()}"
+        return f"{self.book.get().id}_{self.name.replace(' ', '_').lower()}"
 
     def to_form(self):
 
@@ -84,5 +84,6 @@ class Character(DataStructureBase):
                 st.warning(CharacterForm.character_exists)
             else:
                 self.register()
+                st.session_state['character_dict'][self.name] = self.get_ref()
                 st.session_state['now_entering'] = 'text'
                 st.rerun()

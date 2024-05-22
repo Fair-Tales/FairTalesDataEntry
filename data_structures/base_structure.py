@@ -11,6 +11,7 @@ class Field:
     ref_field_setters = {
         'author': 'author_dict',
         'book': 'book_dict',
+        'character': 'character_dict',
     }
 
     def __set_name__(self, owner, name):

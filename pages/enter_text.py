@@ -7,7 +7,7 @@ st.set_page_config(
     initial_sidebar_state='collapsed'
 )
 from utilities import hide
-from data_structures import Page, Character
+from data_structures import Page, Character, Alias
 from text_content import EnterText
 
 
@@ -117,8 +117,8 @@ def text_entry(element, image_height, delta=50):
         value=st.session_state.current_page.contains_story
     )
     subcol1, subcol2 = element.columns(2)
-    subcol1.button("Add character", use_container_width=True, on_click=adding_character)
-    subcol2.button("Add alias", use_container_width=True, on_click=adding_alias)
+    subcol1.button("Add character", use_container_width=True, on_click=adding_character, help=EnterText.character_help)
+    subcol2.button("Add alias", use_container_width=True, on_click=adding_alias, help=EnterText.alias_help)
 
     height = max(image_height - delta, 10)
     st.session_state.current_page.text = element.text_area(
@@ -140,13 +140,24 @@ def character_entry(element):
     element.button('Cancel adding character', use_container_width=True, on_click=adding_text)
 
 
+def alias_entry(element):
+
+    st.session_state['current_alias'] = Alias(
+        book=st.session_state['current_book'].title
+    )
+    with element.form('alias'):
+        st.session_state['current_alias'].to_form()
+
+    element.button('Cancel adding alias', use_container_width=True, on_click=adding_text)
+
+
 def user_entry_box(element, image_height, delta=50):
     if st.session_state.now_entering == 'text':
         text_entry(element, image_height, delta)
     elif st.session_state.now_entering == 'character':
         character_entry(element)
     elif st.session_state.now_entering == 'alias':
-        st.write("alias")
+        alias_entry(element)
 
 
 user_entry_box(col2, image_height)

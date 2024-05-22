@@ -39,6 +39,18 @@ class EnterText:
         - Please also add all characters and their aliases as you encounter them.
     """
 
+    character_help = """
+        As you work through the pages, please enter all of the characters (or groups of characters) 
+        that you encounter. When different names refer to the same character, please just add the 
+        character once and then use `Add alias` to record all of the other names that are used to 
+        refer to them.
+    """
+
+    alias_help = """
+        Please record all of the alternative names that are used to refer to the same character
+        or group of characters.  
+    """
+
 
 class CharacterForm:
 
@@ -65,3 +77,11 @@ class CharacterForm:
     human_help = """
             Select if character is human (rather than non-human - animal, monster etc).
         """
+
+
+class AliasForm:
+
+    header = "Please select a character and enter their alias:"
+    character_exists = """
+            This alias already exists in the database.
+    """

@@ -60,6 +60,8 @@ from data_structures import Author, Book
 # TODO: add option to enter book 'themes' (for later use: disability, race...)
 # TODO: double check add_author functionality (where is current_author added to session state?)
 
+# TODO: optimise to reduce Firestore read/write. And profile to see what else is slowing it down.
+
 
 def login():
     st.title("Login")
@@ -100,6 +102,11 @@ def initialise():
         book.to_dict()['title']: book.reference
         for book in
         firestore.get_all_documents_stream(collection='books')
+    }
+    st.session_state['character_dict'] = {
+        character.to_dict()['name']: character.reference
+        for character in
+        firestore.get_all_documents_stream(collection='characters')
     }
 
 
