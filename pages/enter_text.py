@@ -57,15 +57,18 @@ def page_change(delta):
 
 
 @st.cache_data(max_entries=3)
-def load_image(page_number):
+def load_image(book, page_number):
     return Image.open(fs.open(
-            f"sawimages/{st.session_state['current_book'].title}/page_{page_number}.jpg",
+            f"sawimages/{book}/page_{page_number}.jpg",
             mode='rb'
         ))
 
 
 def display_image():
-    page_image = load_image(st.session_state.current_page_number)
+    page_image = load_image(
+        st.session_state['current_book'].title,
+        st.session_state.current_page_number
+    )
     w, h = page_image.size
 
     dimensions = st_dimensions(key="main")
