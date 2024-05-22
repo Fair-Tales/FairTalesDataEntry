@@ -33,10 +33,15 @@ from data_structures import Author, Book
 # TODO: remove navigation menu (use options_menu for login or register) and default to collapse menu on all pages
 # TODO: dynamically choose textt - whether to add or edit book, and 'cancel new' or 'cancel edit'
 # TODO: add splitlines and replace tab: do this when download tsv (otherwise want to preserve entry)
+# TODO: remove cookie secrets
+# TODO:
 
+## BEFORE STUDENTS:
+# TODO: check orientation of portrait images
 # TODO: schedule database backup
 # TODO: add data protection statement to T&Cs.
 # TODO: add QR code for photo upload?
+#   For now: redirect to qr_landing, load current_book, if photos already uploaded display message, else redirect to upload page,
 # TODO: update login so that it can redirect to a different page after success e.g. to upload photos on phone
 # TODO: add options menu when selected book to review/edit (edit photos, metadata, text, characters)
 # TODO: Fix results display for Search Books!
