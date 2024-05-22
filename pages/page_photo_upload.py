@@ -50,13 +50,15 @@ def upload_page_photos():
         st.session_state.current_book.page_count = len(uploaded_files)
 
         st.write("Page photo upload complete, you may continue.")
+        submit = st.button('Continue')
+
+        if submit:
+            st.switch_page("./pages/enter_text.py")
 
 
 upload_page_photos()
 
-submit = st.button('Continue')
 
-if submit:
-    st.switch_page("./pages/enter_text.py")
+
 
 
