@@ -30,7 +30,8 @@ def hide():
     hide_pages([
         'confirm', 'user_home', 'add_book', 'account_settings', 'confirm_entry',
         'add_character', 'add_author', 'book_data_entry', 'enter_text',
-        'register_user', 'register_user_done'
+        'register_user', 'register_user_done', 'review_my_books',
+        'page_photo_upload'
     ])
 
 
@@ -42,16 +43,25 @@ def check_user_exists(username):
     return len(docs) >= 1
 
 
-def authenticate_user(username, password):
+def get_user(username):
     db = FirestoreWrapper().connect(auth=False)
     users_ref = db.collection("users")
     query_ref = users_ref.where(filter=firestore.FieldFilter("username", "==", username))
     docs = query_ref.get()
     if len(docs) == 1:
-        if not docs[0].to_dict()['is_confirmed']:
+        return docs[0]
+    else:
+        return None
+
+
+def authenticate_user(username, password):
+
+    user = get_user(username)
+    if user is not None:
+        if not user.to_dict()['is_confirmed']:
             return False
 
-        stored_password = docs[0].to_dict()['password']
+        stored_password = user.to_dict()['password']
         return bcrypt.checkpw(
             password=password.encode('utf8'),
             hashed_password=stored_password.encode('utf8')
@@ -113,10 +123,13 @@ class FirestoreWrapper:
     Firestore database (searching, querying, entering new data).
     """
 
-    def __init__(self):
+    def __init__(self, auth=True):
+        self.auth = auth
         self.firestore_key = json.loads(st.secrets["firestore_key"])
 
-    def connect(self, auth=True):
+    def connect(self, auth=None):
+
+        auth = self.auth if auth is None else auth
         if is_authenticated() or not auth:
             creds = service_account.Credentials.from_service_account_info(self.firestore_key)
             return firestore.Client(credentials=creds, project="sawdataentry")
@@ -124,6 +137,7 @@ class FirestoreWrapper:
             return None
 
     def single_field_search(self, collection, field, contains_string):
+        """ Search for string withing field. """
         db = self.connect()
 
         results = (
@@ -132,6 +146,17 @@ class FirestoreWrapper:
                 .where(filter=FieldFilter(field, "<=", contains_string + 'z'))
                 .stream()
         )
+
+        results_dict = list(map(lambda x: x.to_dict(), results))
+        return pd.DataFrame(results_dict)
+
+    def get_by_field(self, collection, field, match):
+        """ Get exact match in field"""
+        db = self.connect()
+        results = db.collection(collection).where(
+            filter=FieldFilter(field, "==", match)
+        ).stream()
+        # return doc_ref.get()
 
         results_dict = list(map(lambda x: x.to_dict(), results))
         return pd.DataFrame(results_dict)
@@ -145,9 +170,21 @@ class FirestoreWrapper:
         db = self.connect()
         return db.collection(collection).stream()
 
+    def username_to_doc_ref(self, username):
+        return self.connect().collection('users').document(username)
+
+    def document_exists(self, collection, doc_id):
+        db = self.connect()
+        doc = db.collection(collection).document(doc_id).get()
+        return doc.exists
+
+    def update_field(self, collection, document, field, value):
+        db = self.connect()
+        doc_ref = db.collection(collection).document(document)
+        doc_ref.update({field: value})
+
 
 # TODO: check that required fields (e.g. book title) are not blank
-# TODO: populate form with current metadata/previoulsy entered form data f select edit
 # TODO: fix warnings in table display (arrows?)
 class FormConfirmation:
     """
@@ -162,9 +199,9 @@ class FormConfirmation:
     }
 
     @classmethod
-    def display_confirmation(cls, session_metadata):
+    def display_confirmation(cls, data):
 
-        st.dataframe(st.session_state[session_metadata], use_container_width=True)
+        st.dataframe(data, use_container_width=True)
         col1, col2 = st.columns(2)
         confirm_button = col1.button("Confirm")
         edit_button = col2.button("Edit")
@@ -173,26 +210,50 @@ class FormConfirmation:
 
     @classmethod
     def confirm_new_book(cls):
-        confirm_button, edit_button = cls.display_confirmation('book_metadata')
+        confirm_button, edit_button = cls.display_confirmation(
+            st.session_state['current_book'].to_dict(
+                form_fields_only=True,
+                convert_ref_fields_to_ids=True
+            )
+        )
 
         if confirm_button:
-            if st.session_state.book_metadata['author'] == "None of these (create a new author).":
+            if st.session_state['current_book'].author == "None of these (create a new author).":
                 st.switch_page("./pages/add_author.py")
 
             else:
-                st.switch_page("./pages/book_data_entry.py")
-            # if st.session_state.book_metadata['publisher'] == "None of these (create a new publisher).":
-            #     st.warning("Publisher creation not implemented yet!")
+                st.session_state['current_book'].register()
+                st.session_state['book_dict'][
+                    st.session_state['current_book'].title
+                ] = st.session_state['current_book'].get_ref()
+
+                if st.session_state.current_book.photos_uploaded:
+                    st.switch_page("./pages/enter_text.py")
+                else:
+                    st.switch_page("./pages/page_photo_upload.py")
 
         if edit_button:
             st.switch_page("./pages/add_book.py")
 
     @classmethod
     def confirm_new_author(cls):
-        confirm_button, edit_button = cls.display_confirmation('author_details')
+        confirm_button, edit_button = cls.display_confirmation(
+            st.session_state['current_author'].to_dict(
+                form_fields_only=True,
+                convert_ref_fields_to_ids=True
+            )
+        )
 
         if confirm_button:
-            st.switch_page("./pages/book_data_entry.py")
+            st.session_state['current_author'].register()
+            st.session_state['author_dict'][
+                st.session_state['current_author'].name
+            ] = st.session_state['current_author'].get_ref()
+
+            st.session_state['current_book'].author = (
+                st.session_state['current_author'].name
+            )
+            st.switch_page("./pages/add_book.py")
 
         if edit_button:
             st.switch_page("./pages/add_author.py")

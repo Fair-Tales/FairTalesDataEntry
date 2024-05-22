@@ -1,13 +1,18 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
+st.set_page_config(
+    page_title="bde",
+    initial_sidebar_state="collapsed"
+)
 from utilities import hide
 from text_content import Instructions
 
 hide()
 st.title(
-    f"Enter book data: {st.session_state.book_metadata['title']}"
+    f"Enter book data: {st.session_state.current_book.title}"
 )
-st.write(Instructions.data_entry_instructions)
+st.header(Instructions.photo_upload_header)
+st.write(Instructions.photo_upload_instructions)
 
 selected_option = option_menu(
     None, ["Upload page photos", "Enter text", "Add a Character"],

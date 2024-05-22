@@ -2,6 +2,7 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 from text_content import Alerts, Instructions
 from utilities import check_authentication_status, hide
+from data_structures import Book
 
 
 hide()
@@ -13,11 +14,15 @@ st.write(Instructions.home_intro)
 st.write(Instructions.advise_to_search)
 
 selected_option = option_menu(
-    None, ["Search Books", "Search Authors", "Add a Book"],
+    None, ["Search Books", "Search Authors", "Add a Book", "Edit my Books"],
     default_index=0,
-    icons=['search', 'search', 'database-add'],
+    icons=['search', 'search', 'database-add', 'pencil-square'],
     menu_icon="cast", orientation="horizontal",
-    key="user_option_menu"
+    key="user_option_menu",
+    styles={
+        "nav-link": {"font-size": "15px", "text-align": "left", "margin": "0px", "--hover-color": "#eee"},
+        "nav-link-selected": {"background-color": "green"},
+    }
 )
 
 
@@ -57,15 +62,20 @@ def author_search():
     st.warning("Not implemented yet!")
 
 
-# TODO: wire this up to store new book in Firestore!
 def add_book():
+    st.session_state['current_book'] = Book()
     st.switch_page("./pages/add_book.py")
+
+
+def review_my_books():
+    st.switch_page("./pages/review_my_books.py")
 
 
 navigation_dict = {
     "Search Books": book_search,
     "Search Authors": author_search,
-    "Add a Book": add_book
+    "Add a Book": add_book,
+    "Edit my Books": review_my_books
 }
 
 navigation_dict[selected_option]()
