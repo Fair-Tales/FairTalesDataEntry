@@ -126,7 +126,7 @@ def text_entry(element, image_height, delta=50):
             disabled=not st.session_state.current_page.contains_story
         )
 
-        submitted = st.form_submit_button("Save page")
+        submitted = element.form_submit_button("Save page")
         if submitted:
             st.session_state.current_page.text = _page_text
 
