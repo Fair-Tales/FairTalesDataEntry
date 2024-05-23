@@ -45,6 +45,7 @@ from data_structures import Author, Book
 # TODO: update login so that it can redirect to a different page after success e.g. to upload photos on phone
 # TODO: add options menu when selected book to review/edit (edit photos, metadata, text, characters)
 # TODO: Fix results display for Search Books!
+# TODO: adding alias form did not clear.
 
 
 
