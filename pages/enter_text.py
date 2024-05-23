@@ -55,8 +55,6 @@ def page_change(delta):
     elif st.session_state.current_page_number > st.session_state.current_book.page_count:
         st.session_state['current_page_number'] = st.session_state.current_book.page_count
 
-    st.rerun()
-
 
 @st.cache_data(max_entries=3)
 def load_image(book, page_number):
@@ -119,12 +117,18 @@ def text_entry(element, image_height, delta=50):
     subcol2.button("Add alias", use_container_width=True, on_click=adding_alias, help=EnterText.alias_help)
 
     height = max(image_height - delta, 10)
-    st.session_state.current_page.text = element.text_area(
-        "Enter page text",
-        height=height,
-        value=st.session_state.current_page.text,
-        disabled=not st.session_state.current_page.contains_story
-    )
+
+    with st.form('page_text'):
+        _page_text = element.text_area(
+            "Enter page text",
+            height=height,
+            value=st.session_state.current_page.text,
+            disabled=not st.session_state.current_page.contains_story
+        )
+
+        submitted = st.form_submit_button("Save page")
+        if submitted:
+            st.session_state.current_page.text = _page_text
 
 
 def character_entry(element):
