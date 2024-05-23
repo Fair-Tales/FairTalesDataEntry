@@ -119,14 +119,14 @@ def text_entry(element, image_height, delta=50):
     height = max(image_height - delta, 10)
 
     with element.form('page_text'):
-        _page_text = element.text_area(
+        _page_text = st.text_area(
             "Enter page text",
             height=height,
             value=st.session_state.current_page.text,
             disabled=not st.session_state.current_page.contains_story
         )
 
-        submitted = element.form_submit_button("Save page")
+        submitted = st.form_submit_button("Save page")
         if submitted:
             st.session_state.current_page.text = _page_text
 
