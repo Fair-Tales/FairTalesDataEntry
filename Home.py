@@ -28,7 +28,7 @@ from data_structures import Author, Book
 # TODO: write and use 'user' data structure (to handle changing account details and updating db)
 # TODO: add option to enter book 'themes' (for later use: disability, race...). Also allow comment on book?
 # TODO: double check add_author functionality (where is current_author added to session state?)
-# TODO: optimise to reduce Firestore read/write. And profile to see what else is slowing it down.
+# TODO: optimise to reduce Firestore read/write. And profile to see what else is slowing it down. (See Book form - updated)
 # TODO: change publisher and illustrator to be data_structures/firestore docs?
 # TODO: remove navigation menu (use options_menu for login or register) and default to collapse menu on all pages
 # TODO: dynamically choose textt - whether to add or edit book, and 'cancel new' or 'cancel edit'
