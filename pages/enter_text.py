@@ -55,6 +55,8 @@ def page_change(delta):
     elif st.session_state.current_page_number > st.session_state.current_book.page_count:
         st.session_state['current_page_number'] = st.session_state.current_book.page_count
 
+    st.rerun()
+
 
 @st.cache_data(max_entries=3)
 def load_image(book, page_number):

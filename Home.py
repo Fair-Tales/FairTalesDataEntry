@@ -34,7 +34,7 @@ from data_structures import Author, Book
 # TODO: dynamically choose textt - whether to add or edit book, and 'cancel new' or 'cancel edit'
 # TODO: add splitlines and replace tab: do this when download tsv (otherwise want to preserve entry)
 # TODO: remove cookie secrets
-# TODO:
+# TODO: why so slow after page upload complete?
 
 ## BEFORE STUDENTS:
 # TODO: check orientation of portrait images
