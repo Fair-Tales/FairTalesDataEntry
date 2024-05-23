@@ -55,8 +55,8 @@ class Book(DataStructureBase):
     def to_form(self):
         st.header(BookForm.header)
 
-        self.title = st.text_input("Title", value=self.title)
-        self.published = st.number_input(
+        _title = st.text_input("Title", value=self.title)
+        _published = st.number_input(
             "Date published", min_value=1900, max_value=2024, value=self.published
         )
         st.write(Instructions.author_publisher_illustrator_select)
@@ -70,20 +70,25 @@ class Book(DataStructureBase):
             else 0
         )
 
-        self.author = st.selectbox(
+        _author = st.selectbox(
             "Select from existing authors",
             options=author_options,
             index=author_index
         )
 
-        self.publisher = st.text_input("Publisher name", value=self.publisher)
-        self.illustrator = st.text_input("Illustrator name", value=self.illustrator)
+        _publisher = st.text_input("Publisher name", value=self.publisher)
+        _illustrator = st.text_input("Illustrator name", value=self.illustrator)
 
         submitted = st.form_submit_button("Submit")
 
         if submitted:
 
             st.session_state['current_book'] = self
+            self.title = _title
+            self.published = _published
+            self.author = _author
+            self.publisher = _publisher
+            self.illustrator = _illustrator
 
             if not self.editing and st.session_state.firestore.document_exists(
                 collection='books',
