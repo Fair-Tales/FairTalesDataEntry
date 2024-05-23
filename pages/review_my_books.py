@@ -30,9 +30,9 @@ selected_title = st.selectbox(
 selected_book = Book(
     my_books[my_books.title == selected_title].iloc[0]
 )
-st.write(
-    selected_book.to_dict(convert_ref_fields_to_ids=True, form_fields_only=True)
-)
+# st.write(
+#     selected_book.to_dict(convert_ref_fields_to_ids=True, form_fields_only=True)
+# )
 
 edit_button = st.button("Edit this book.")
 cancel_button = st.button("Cancel editing books.")

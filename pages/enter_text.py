@@ -118,7 +118,7 @@ def text_entry(element, image_height, delta=50):
 
     height = max(image_height - delta, 10)
 
-    with st.form('page_text'):
+    with element.form('page_text'):
         _page_text = element.text_area(
             "Enter page text",
             height=height,
