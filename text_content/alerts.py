@@ -26,3 +26,7 @@ class Alerts:
     invalid_email = "Please enter a valid email address."
 
     not_implemented = "This feature is not implemented yet! Please check back soon."
+
+    please_uploaded_photos = """
+        Please upload photos of the book pages first!
+    """

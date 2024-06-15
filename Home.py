@@ -35,17 +35,18 @@ from data_structures import Author, Book
 # TODO: add splitlines and replace tab: do this when download tsv (otherwise want to preserve entry)
 # TODO: remove cookie secrets
 # TODO: why so slow after page upload complete?
+# TODO: add edits characters and aliases to book edit options menu...
 
 ## BEFORE STUDENTS:
 # TODO: "finish entering book" -> mark book as complete and save time.
-# TODO: check orientation of portrait images - not working atm.
-# TODO: make user id lower case (and match case insensitive)
 # TODO: add QR code for photo upload?
 #   For now: redirect to qr_landing, load current_book, if photos already uploaded display message, else redirect to upload page,
 # TODO: update login so that it can redirect to a different page after success e.g. to upload photos on phone
-# TODO: add options menu when selected book to review/edit (edit/add photos, metadata, text, characters)
 # TODO: Fix results display for Search Books!
 # TODO: fix page text carry over to next page (create all pages at once in dict)
+# TODO: add cancel or back button on page photo upload. (add previous_page to session state?)
+# TODO: add #'return home' button to book editing page options menu.
+# TODO: use photos uploaded flag?
 
 # TODO: add 'initialise_session_state' function and if something (like current_book) is not present, redirect to user_home.
 # TODO: adding alias form did not clear.
@@ -53,6 +54,7 @@ from data_structures import Author, Book
 # TODO: schedule database backup
 # TODO: add data protection statement to T&Cs.
 # TODO: add diagram of how to take photos
+# TODO: check orientation of portrait images - not working atm.
 
 
 def login():

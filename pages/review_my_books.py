@@ -30,9 +30,6 @@ selected_title = st.selectbox(
 selected_book = Book(
     my_books[my_books.title == selected_title].iloc[0]
 )
-# st.write(
-#     selected_book.to_dict(convert_ref_fields_to_ids=True, form_fields_only=True)
-# )
 
 edit_button = st.button("Edit this book.")
 cancel_button = st.button("Cancel editing books.")
@@ -40,7 +37,7 @@ cancel_button = st.button("Cancel editing books.")
 if edit_button:
     st.session_state['current_book'] = selected_book
     st.session_state['current_book'].editing = True
-    st.switch_page("./pages/add_book.py")
+    st.switch_page("./pages/book_edit_home.py")
 
 if cancel_button:
     st.switch_page("./pages/user_home.py")

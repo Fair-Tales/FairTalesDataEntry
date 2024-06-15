@@ -14,18 +14,27 @@ class Instructions:
     """
     photo_upload_instructions = """
         The next step is for you to take and upload photos of each page of the book. This is easiest on a 
-        mobile device with a camera such as a smart phone. Once you have taken the photos, you should log 
-        into this app on your mobile device and return to this page by selecting `Edit my books` in the 
-        options menu on your homepage, and selecting this book.
-        
+        mobile device with a camera such as a smart phone. 
         
         Instructions for taking the photos:
         - Please take clear and high resolution images (the clearer the better!).
-        - Either take a photo of a single page or the whole double-page spread, depending on the flow of the text. 
-        See the diagram below.
+        - Take a photos of the whole double-page spreads (front and rear cover can be separate photos) 
+        - Take photos in order, starting with the front cover.
         - Ensure you get the whole page in the photo, including the corners and edges.
         - Ensure good lighting and try to reduce glare.
         - Try to hold the book flat - you can use your thumb or finger.  
+    """
+    go_to_phone_instructions = """
+        First take the photos on your phone. 
+        Then scan the QR code below, which will take you to the upload page.
+        (If this does not work, you can also log into this app on your mobile device and go via 
+        the `Edit my books` option on your homepage).
+    """
+
+    upload_here_instructions = """
+        Or you can upload the photos here, if you prefer.
+        
+        Transfer the photos to this device and then upload then using the widget below.
     """
 
     data_entry_instructions = """
@@ -51,3 +60,11 @@ class Instructions:
         If not listed, please select `None of these` and you will be guided 
         to enter these details on the next steps.
     """
+
+    book_edit_home_intro = """
+        Please make sure that you have uploaded photos of the book pages before you try to enter text!
+    """
+
+    book_edit_home_instructions = """
+            More instructions to follow...
+        """
