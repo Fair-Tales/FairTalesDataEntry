@@ -75,7 +75,7 @@ def validate_user_details(_username, _name, _password, _gender, _gender_custom, 
 
 with st.form('registration_form'):
     st.title("User Registration")
-    username = st.text_input("Email", value="", key='register_email')
+    username = st.text_input("Email", value="", key='register_email').lower()
     name = st.text_input("Name", value="", key='name_of_user')
     password = st.text_input("Password", type="password", value="", key='register_password')
     gender = st.selectbox(
