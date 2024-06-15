@@ -31,7 +31,7 @@ def hide():
         'confirm', 'user_home', 'add_book', 'account_settings', 'confirm_entry',
         'add_character', 'add_author', 'book_data_entry', 'enter_text',
         'register_user', 'register_user_done', 'review_my_books',
-        'page_photo_upload', 'qr_landing', 'book_edit_home'
+        'page_photo_upload', 'qr_landing', 'book_edit_home', 'uploader'
     ])
 
 

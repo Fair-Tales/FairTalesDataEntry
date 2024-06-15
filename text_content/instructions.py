@@ -23,6 +23,7 @@ class Instructions:
         - Ensure you get the whole page in the photo, including the corners and edges.
         - Ensure good lighting and try to reduce glare.
         - Try to hold the book flat - you can use your thumb or finger.  
+        - Please upload all photos in one batch.
     """
     go_to_phone_instructions = """
         First take the photos on your phone. 
