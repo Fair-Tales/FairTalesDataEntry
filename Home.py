@@ -39,9 +39,6 @@ from data_structures import Author, Book
 
 ## BEFORE STUDENTS:
 # TODO: "finish entering book" -> mark book as complete and save time.
-# TODO: add QR code for photo upload?
-#   For now: redirect to qr_landing, load current_book, if photos already uploaded display message, else redirect to upload page,
-# TODO: update login so that it can redirect to a different page after success e.g. to upload photos on phone
 # TODO: Fix results display for Search Books!
 # TODO: fix page text carry over to next page (create all pages at once in dict)
 # TODO: add cancel or back button on page photo upload. (add previous_page to session state?)
