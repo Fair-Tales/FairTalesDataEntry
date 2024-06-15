@@ -20,6 +20,7 @@ my_books = st.session_state.firestore.get_by_field(
     field="entered_by",
     match=user_ref
 )
+my_books = my_books.loc[my_books.entry_status=='started']
 st.header("Review my books")
 st.write(Instructions.review_my_books)
 selected_title = st.selectbox(

@@ -165,5 +165,6 @@ def user_entry_box(element, image_height, delta=50):
 user_entry_box(col2, image_height)
 save_button = st.button("Finish entering book", help=EnterText.save_help, use_container_width=True)
 if save_button:
+    st.session_state.current_book.entry_status = 'completed'
     st.switch_page("./pages/user_home.py")
 
