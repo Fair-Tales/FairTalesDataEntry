@@ -1,11 +1,6 @@
 import streamlit as st
-from datetime import datetime
-import bcrypt
-from utilities import (
-    hide, hash_password, check_user_exists,
-    send_confirmation_email, FirestoreWrapper
-)
-from text_content import Alerts, GenderRegistration
+from utilities import hide
+from text_content import Alerts
 
 hide()
 

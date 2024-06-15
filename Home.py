@@ -37,28 +37,27 @@ from data_structures import Author, Book
 # TODO: why so slow after page upload complete?
 
 ## BEFORE STUDENTS:
-# TODO: check orientation of portrait images
-# TODO: schedule database backup
-# TODO: add data protection statement to T&Cs.
+# TODO: "finish entering book" -> mark book as complete and save time.
+# TODO: check orientation of portrait images - not working atm.
+# TODO: make user id lower case (and match case insensitive)
 # TODO: add QR code for photo upload?
 #   For now: redirect to qr_landing, load current_book, if photos already uploaded display message, else redirect to upload page,
 # TODO: update login so that it can redirect to a different page after success e.g. to upload photos on phone
-# TODO: add options menu when selected book to review/edit (edit photos, metadata, text, characters)
+# TODO: add options menu when selected book to review/edit (edit/add photos, metadata, text, characters)
 # TODO: Fix results display for Search Books!
+# TODO: fix page text carry over to next page (create all pages at once in dict)
+
+# TODO: add 'initialise_session_state' function and if something (like current_book) is not present, redirect to user_home.
 # TODO: adding alias form did not clear.
-
-
-
-
-
-
-
-
+# TODO: edit character? (e.g. if they got gender wrong)
+# TODO: schedule database backup
+# TODO: add data protection statement to T&Cs.
+# TODO: add diagram of how to take photos
 
 
 def login():
     st.title("Login")
-    username = st.text_input("Email", value="", key='login_email')
+    username = st.text_input("Email", value="", key='login_email').lower()
     password = st.text_input("Password", type="password", value="", key='login_password')
     if st.button("Login"):
         if authenticate_user(username, password):
