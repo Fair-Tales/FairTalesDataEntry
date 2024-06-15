@@ -68,3 +68,8 @@ class Instructions:
     book_edit_home_instructions = """
             More instructions to follow...
         """
+
+    upload_success_return = """
+        Page photo upload was successful!
+        You can now close this window and return to enter the book text on your other device.
+    """

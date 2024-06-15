@@ -10,6 +10,7 @@ st.set_page_config(
 from utilities import hide
 from text_content import Instructions
 from data_structures import Page
+from pages.uploader import upload_widget
 import qrcode
 from requests.models import PreparedRequest
 
@@ -44,10 +45,12 @@ def go_to_phone():
         border=4,
     )
     url = f"{st.secrets.app_url}qr_landing"
+    user = st.session_state.username
+    token = st.session_state.firestore.username_to_doc_ref(user).get().to_dict()['confirmation_token']
     params = {
         'user': st.session_state.username,
-        'token': 42,
-        'book': 'test'
+        'token': token,
+        'book': st.session_state.current_book.document_id
     }
     req = PreparedRequest()
     req.prepare_url(url, params)
@@ -62,46 +65,7 @@ def go_to_phone():
 
 def upload_here():
     st.write(Instructions.upload_here_instructions)
-    fs = s3fs.S3FileSystem(
-        anon=False,
-        key=st.secrets['AWS_ACCESS_KEY_ID'],
-        secret=st.secrets['AWS_SECRET_ACCESS_KEY']
-    )
-
-    # TODO: change per file size limit?!
-    # TODO: set file order (sort ascending? time modified? https://stackoverflow.com/questions/31588543/how-to-change-order-of-files-in-multiple-file-input)
-    def upload_page_photos():
-        uploaded_files = st.file_uploader("Select page photos to upload", accept_multiple_files=True)
-
-        if uploaded_files:
-            st.write("Saving page photos to the database, please stay on this page...")
-            photos_url = f"sawimages/{st.session_state['current_book'].title}"
-
-            for fi, uploaded_file in enumerate(uploaded_files):
-                page_number = fi + 1
-                with fs.open(
-                        photos_url + f"/page_{page_number}.jpg",
-                        'wb'
-                ) as out_file:
-                    out_file.write(uploaded_file.read())
-
-                page = Page(
-                    page_number=page_number,
-                    book=st.session_state['current_book'].title
-                )
-                page.register()
-
-            st.session_state.current_book.photos_uploaded = True
-            st.session_state.current_book.photos_url = photos_url
-            st.session_state.current_book.page_count = len(uploaded_files)
-
-            st.write("Page photo upload complete, you may continue.")
-            submit = st.button('Continue')
-
-            if submit:
-                st.switch_page("./pages/enter_text.py")
-
-    upload_page_photos()
+    upload_widget()
 
 
 navigation_dict = {
