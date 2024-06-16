@@ -26,12 +26,13 @@ def upload_widget(on_submit='enter_text'):
                 file.name: file
                 for file in uploaded_files
             }
-
+            sort_file_names = natsort.natsorted(list(file_dict.keys()), reverse=False)
 
             st.write("Saving page photos to the database, please stay on this page...")
             photos_url = f"sawimages/{st.session_state['current_book'].title}"
 
-            for fi, uploaded_file in enumerate(uploaded_files):
+            for fi, name in enumerate(sort_file_names):
+                uploaded_file = file_dict[name]
                 page_number = fi + 1
                 with fs.open(
                         photos_url + f"/page_{page_number}.jpg",
