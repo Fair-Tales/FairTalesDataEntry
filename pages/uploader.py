@@ -1,7 +1,9 @@
 import s3fs
+import natsort
 import streamlit as st
 from data_structures import Page
 from text_content import Instructions
+
 
 def upload_widget(on_submit='enter_text'):
 
@@ -11,12 +13,21 @@ def upload_widget(on_submit='enter_text'):
         secret=st.secrets['AWS_SECRET_ACCESS_KEY']
     )
 
-    # TODO: change per file size limit?!
     # TODO: set file order (sort ascending? time modified? https://stackoverflow.com/questions/31588543/how-to-change-order-of-files-in-multiple-file-input)
     def upload_page_photos():
-        uploaded_files = st.file_uploader("Select page photos to upload", accept_multiple_files=True)
+        uploaded_files = st.file_uploader(
+            "Select page photos to upload",
+            accept_multiple_files=True,
+
+        )
 
         if uploaded_files:
+            file_dict = {
+                file.name: file
+                for file in uploaded_files
+            }
+
+
             st.write("Saving page photos to the database, please stay on this page...")
             photos_url = f"sawimages/{st.session_state['current_book'].title}"
 

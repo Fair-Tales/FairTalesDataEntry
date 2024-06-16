@@ -38,7 +38,7 @@ from data_structures import Author, Book
 # TODO: add edits characters and aliases to book edit options menu...
 
 ## BEFORE STUDENTS:
-# TODO: "finish entering book" -> mark book as complete and save time.
+# TODO: add submit button to complete book (to options menu?) and check/confirm before actioning.
 # TODO: Fix results display for Search Books!
 # TODO: fix page text carry over to next page (create all pages at once in dict)
 # TODO: add cancel or back button on page photo upload. (add previous_page to session state?)
