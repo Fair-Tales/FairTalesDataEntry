@@ -15,9 +15,34 @@ class BookForm:
     header = "Please enter or review the details of this book."
     cancel_text = "Cancel"
     cancel_help = "Cancel entering or editing the data for this book."
+    author_help = """
+        Please select author from the list. If the author is not listed, please select `None of these`
+        and you will be guided to create a new author on the next step.
+    """
     book_exists = """
         This book already exists in the database. You can use the `Book search` function on your 
         homepage to check before entering a book.
+    """
+    theme_options = {
+        'disability': 'Disability',
+        'race_ethnicity': 'Race/Ethnicity',
+        'sexuality': 'Sexuality',
+        'religion_spirituality': 'Religion/Spirituality',
+        'gender': 'Gender',
+        'social_class': 'Social class',
+        'age': 'Age'
+    }
+    themes_help = """
+        Please select all themes that you feel are explicitly represented in this book. You may want to 
+        return to revise your selection after you have entered the book text. You can do this at any time
+        by selection `Edit metadata` from the options menu. 
+        
+        Note: you may not like or agree with the way that a theme is represented. For our analysis, 
+        we just need to know if it is represented or not. You are also able to add a comment in the 
+        box below.   
+    """
+    comment_help = """
+        You can add a comment with any thoughts you have about this book.
     """
 
 

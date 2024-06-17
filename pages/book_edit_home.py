@@ -28,6 +28,7 @@ def instructions():
 
 
 def edit_book_details():
+    st.session_state.current_book.editing = True
     st.switch_page("./pages/add_book.py")
 
 

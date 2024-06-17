@@ -45,7 +45,6 @@ from data_structures import Author, Book
 # TODO: Fix results display for Search Books! And add auhtor search
 # TODO: use photos uploaded flag?
 # TODO: add timeout to QR link?
-# TODO: add themes selection?
 # TODO: add our previous book titles (and collections?)
 
 # TODO: add 'initialise_session_state' function and if something (like current_book) is not present, redirect to user_home.
