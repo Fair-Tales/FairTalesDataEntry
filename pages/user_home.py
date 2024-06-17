@@ -1,6 +1,6 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
-from text_content import Alerts, Instructions
+from text_content import Alerts, Instructions, old_books
 from utilities import check_authentication_status, hide
 from data_structures import Book
 import pandas as pd
@@ -39,45 +39,54 @@ def book_search():
         help="You can enter either all or part of the title."
     )
     if len(book_search_string) > 0:
-        titles = [
-            title for title in st.session_state.book_dict.keys()
+
+        old_titles = [
+            title for title in old_books
             if book_search_string.lower() in title.lower()
         ]
-        books = [
-            st.session_state.firestore.get_by_field(
-                'books', 'title', title
-            )
-            for title in titles
-        ]
+        if len(old_titles) > 0:
+            st.write(f"These titles were found from the original dataset: {old_titles}")
 
-        if len(books) > 0:
-            books = pd.concat(books)
-            books.author = [
-                ' '.join([
-                    a.get().to_dict()['forename'],
-                    a.get().to_dict()['surname']
-                ])
-                for a in books.author
-            ]
-            st.write('Results:')
-            st.write(books[['title', 'author', 'publisher']])
         else:
-            st.warning(Alerts.no_matching_book)
-        # books = st.session_state.firestore.single_field_search(
-        #     collection="books",
-        #     field="title",
-        #     contains_string=book_search_string
-        # )
-        # # TODO: combine author names...
-        # if len(books) > 0:
-        #     books.author = [
-        #         a.get().to_dict()['surname']
-        #         for a in books.author
-        #     ]
-        #
-        #     st.write("Results:")
-        #     st.write(books)
-        #
+            titles = [
+                title for title in st.session_state.book_dict.keys()
+                if book_search_string.lower() in title.lower()
+            ]
+            books = [
+                st.session_state.firestore.get_by_field(
+                    'books', 'title', title
+                )
+                for title in titles
+            ]
+
+            if len(books) > 0:
+                books = pd.concat(books)
+                books.author = [
+                    ' '.join([
+                        a.get().to_dict()['forename'],
+                        a.get().to_dict()['surname']
+                    ])
+                    for a in books.author
+                ]
+                st.write('Results:')
+                st.write(books[['title', 'author', 'publisher']])
+            else:
+                st.warning(Alerts.no_matching_book)
+            # books = st.session_state.firestore.single_field_search(
+            #     collection="books",
+            #     field="title",
+            #     contains_string=book_search_string
+            # )
+            # # TODO: combine author names...
+            # if len(books) > 0:
+            #     books.author = [
+            #         a.get().to_dict()['surname']
+            #         for a in books.author
+            #     ]
+            #
+            #     st.write("Results:")
+            #     st.write(books)
+            #
 
 
 def author_search():

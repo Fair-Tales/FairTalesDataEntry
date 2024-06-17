@@ -40,13 +40,14 @@ from data_structures import Author, Book
 # TODO: (add previous_page to session state?) so that we can use an in-app  back button
 # TODO: delete character or alias
 # TODO: refactor base data structure so that it doesn't use 'db_object'
+# TODO: updated computer page once phone photos uploaded?
 
 ## BEFORE STUDENTS:
 # TODO: add author search
 # TODO: use photos uploaded flag?
 # TODO: add timeout to QR link?
 # TODO: add our previous book titles (and collections?)
-# TODO: delete junk form databases!!
+# TODO: delete junk from databases!!
 
 # TODO: add 'initialise_session_state' function and if something (like current_book) is not present, redirect to user_home.
 # TODO: adding alias form did not clear.
