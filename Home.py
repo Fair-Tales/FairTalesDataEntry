@@ -46,6 +46,8 @@ from data_structures import Author, Book
 # TODO: use photos uploaded flag?
 # TODO: add timeout to QR link?
 # TODO: add our previous book titles (and collections?)
+# TODO: add time submitted
+# TODO: delete junk form databases!!
 
 # TODO: add 'initialise_session_state' function and if something (like current_book) is not present, redirect to user_home.
 # TODO: adding alias form did not clear.

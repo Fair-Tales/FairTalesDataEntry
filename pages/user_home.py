@@ -3,7 +3,7 @@ from streamlit_option_menu import option_menu
 from text_content import Alerts, Instructions
 from utilities import check_authentication_status, hide
 from data_structures import Book
-
+import pandas as pd
 
 hide()
 st.title("SAW data entry tool")
@@ -39,23 +39,46 @@ def book_search():
         help="You can enter either all or part of the title."
     )
     if len(book_search_string) > 0:
-        books = st.session_state.firestore.single_field_search(
-            collection="books",
-            field="title",
-            contains_string=book_search_string
-        )
-        # TODO: combine author names...
+        titles = [
+            title for title in st.session_state.book_dict.keys()
+            if book_search_string.lower() in title.lower()
+        ]
+        print(titles)
+        books = [
+            st.session_state.firestore.get_by_field(
+                'books', 'title', title
+            )
+            for title in titles
+        ]
+
         if len(books) > 0:
+            books = pd.concat(books)
             books.author = [
-                a.get().to_dict()['surname']
+                ' '.join([
+                    a.get().to_dict()['forename'],
+                    a.get().to_dict()['surname']
+                ])
                 for a in books.author
             ]
-
-            st.write("Results:")
-            st.write(books)
-
+            st.write('Results:')
+            st.write(books[['title', 'author', 'publisher']])
         else:
             st.warning(Alerts.no_matching_book)
+        # books = st.session_state.firestore.single_field_search(
+        #     collection="books",
+        #     field="title",
+        #     contains_string=book_search_string
+        # )
+        # # TODO: combine author names...
+        # if len(books) > 0:
+        #     books.author = [
+        #         a.get().to_dict()['surname']
+        #         for a in books.author
+        #     ]
+        #
+        #     st.write("Results:")
+        #     st.write(books)
+        #
 
 
 def author_search():
