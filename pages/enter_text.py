@@ -11,12 +11,6 @@ from data_structures import Page, Character, Alias
 from text_content import EnterText
 
 
-# TODO: write character and alias data structures
-# (TODO: make forms work for c and a)
-# TODO: button to replace page text entry with alias add form (write alias data structure)
-# TODO: delete character or alias?
-# TODO: add splitlines and replace tabs to text entry
-
 hide()
 
 fs = s3fs.S3FileSystem(
@@ -26,14 +20,29 @@ fs = s3fs.S3FileSystem(
     )
 
 
-def create_current_page_from_db():
-    st.session_state.current_page = Page(
-        st.session_state.firestore.get_by_reference(
-            collection='pages',
-            document_ref=f"{st.session_state.current_book.document_id}_{st.session_state.current_page_number}"
-        ).to_dict()
-    )
+# def create_current_page_from_db():
+#     st.session_state.current_page = Page(
+#         st.session_state.firestore.get_by_reference(
+#             collection='pages',
+#             document_ref=f"{st.session_state.current_book.document_id}_{st.session_state.current_page_number}"
+#         ).to_dict()
+#     )
 
+def create_page_dict_from_db():
+
+    st.session_state['book_pages_dict'] = {
+        page_num: Page(
+            st.session_state.firestore.get_by_reference(
+                collection='pages',
+                document_ref=f"{st.session_state.current_book.document_id}_{page_num}"
+            ).to_dict()
+        )
+        for page_num in range(1, st.session_state.current_book.page_count + 1)
+    }
+
+
+if 'book_pages_dict' not in st.session_state:
+    create_page_dict_from_db()
 
 if 'current_page_number' not in st.session_state:
     st.session_state['current_page_number'] = 1
@@ -41,7 +50,10 @@ if 'current_page_number' not in st.session_state:
 if 'now_entering' not in st.session_state:
     st.session_state['now_entering'] = 'text'
 
-create_current_page_from_db()
+# create_current_page_from_db()
+st.session_state.current_page = st.session_state.book_pages_dict[
+    st.session_state.current_page_number
+]
 
 st.header(EnterText.header)
 st.write(EnterText.instruction)

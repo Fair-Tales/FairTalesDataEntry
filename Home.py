@@ -38,13 +38,16 @@ from data_structures import Author, Book
 # TODO: add edits characters and aliases to book edit options menu...
 # TODO: change formatting for hover instructions (so they stand out better)
 # TODO: (add previous_page to session state?) so that we can use an in-app  back button
+# TODO: delete character or alias
+# TODO: refactor base data structure so that it doesn't use 'db_object'
 
 ## BEFORE STUDENTS:
 # TODO: add submit button to complete book (to options menu?) and check/confirm before actioning.
-# TODO: Fix results display for Search Books!
-# TODO: fix page text carry over to next page (create all pages at once in dict)
+# TODO: Fix results display for Search Books! And add auhtor search
 # TODO: use photos uploaded flag?
 # TODO: add timeout to QR link?
+# TODO: add themes selection?
+# TODO: add our previous book titles (and collections?)
 
 # TODO: add 'initialise_session_state' function and if something (like current_book) is not present, redirect to user_home.
 # TODO: adding alias form did not clear.

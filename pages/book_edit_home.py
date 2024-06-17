@@ -38,6 +38,7 @@ def add_photos():
 
 def enter_text():
     if st.session_state.current_book.photos_uploaded:
+        st.session_state['current_page_number'] = 1
         st.switch_page("./pages/enter_text.py")
     else:
         st.warning(Alerts.please_uploaded_photos)
