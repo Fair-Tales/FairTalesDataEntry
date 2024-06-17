@@ -43,7 +43,6 @@ def book_search():
             title for title in st.session_state.book_dict.keys()
             if book_search_string.lower() in title.lower()
         ]
-        print(titles)
         books = [
             st.session_state.firestore.get_by_field(
                 'books', 'title', title

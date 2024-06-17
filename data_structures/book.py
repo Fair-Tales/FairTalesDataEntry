@@ -28,7 +28,8 @@ class Book(DataStructureBase):
         'validated_by': None,
         'photos_uploaded': False,
         'photos_url': "",
-        'comment': ""
+        'comment': "",
+        'datetime_submitted': -1
     }
     fields.update({
         theme: False

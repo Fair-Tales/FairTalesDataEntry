@@ -8,6 +8,7 @@ import json
 import bcrypt
 import smtplib
 from email.mime.text import MIMEText
+from datetime import datetime, timezone
 
 
 def is_authenticated():
@@ -201,7 +202,8 @@ class FormConfirmation:
     @classmethod
     def display_confirmation(cls, data):
 
-        st.dataframe(data, use_container_width=True)
+        # st.dataframe(data, use_container_width=True)
+        st.table(data)
         col1, col2 = st.columns(2)
         confirm_button = col1.button("Confirm")
         edit_button = col2.button("Edit")
@@ -279,6 +281,7 @@ def confirm_submit():
     )
     if st.button("Confirm"):
         st.session_state.current_book.entry_status = 'completed'
+        st.session_state.current_book.datetime_submitted = datetime.now(timezone.utc)
         st.switch_page("./pages/user_home.py")
     if st.button("Cancel"):
         st.rerun()

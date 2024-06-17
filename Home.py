@@ -42,7 +42,7 @@ from data_structures import Author, Book
 # TODO: refactor base data structure so that it doesn't use 'db_object'
 
 ## BEFORE STUDENTS:
-# TODO: Fix results display for Search Books! And add auhtor search
+# TODO: add author search
 # TODO: use photos uploaded flag?
 # TODO: add timeout to QR link?
 # TODO: add our previous book titles (and collections?)
