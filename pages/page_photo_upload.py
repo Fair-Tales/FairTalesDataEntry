@@ -75,6 +75,12 @@ navigation_dict = {
 
 navigation_dict[selected_option]()
 
+if st.button("When you have finished you can click here to go back."):
+    st.switch_page("./pages/book_edit_home.py")
+
+
+
+
 
 
 

@@ -36,14 +36,15 @@ from data_structures import Author, Book
 # TODO: remove cookie secrets
 # TODO: why so slow after page upload complete?
 # TODO: add edits characters and aliases to book edit options menu...
+# TODO: change formatting for hover instructions (so they stand out better)
+# TODO: (add previous_page to session state?) so that we can use an in-app  back button
 
 ## BEFORE STUDENTS:
 # TODO: add submit button to complete book (to options menu?) and check/confirm before actioning.
 # TODO: Fix results display for Search Books!
 # TODO: fix page text carry over to next page (create all pages at once in dict)
-# TODO: add cancel or back button on page photo upload. (add previous_page to session state?)
-# TODO: add #'return home' button to book editing page options menu.
 # TODO: use photos uploaded flag?
+# TODO: add timeout to QR link?
 
 # TODO: add 'initialise_session_state' function and if something (like current_book) is not present, redirect to user_home.
 # TODO: adding alias form did not clear.

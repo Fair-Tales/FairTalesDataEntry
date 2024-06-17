@@ -18,7 +18,7 @@ class Instructions:
         
         Instructions for taking the photos:
         - Please take clear and high resolution images (the clearer the better!).
-        - Take a photos of the whole double-page spreads (front and rear cover can be separate photos) 
+        - Take landscape photos of the whole double-page spreads (except front and rear covers, these should be separate portrait photos). 
         - Take photos in order, starting with the front cover.
         - Ensure you get the whole page in the photo, including the corners and edges.
         - Ensure good lighting and try to reduce glare.

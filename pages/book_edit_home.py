@@ -51,3 +51,8 @@ edit_navigation_dict = {
 }
 
 edit_navigation_dict[edit_option]()
+
+if st.button("Back to home menu."):
+    st.switch_page("./pages/user_home.py")
+
+

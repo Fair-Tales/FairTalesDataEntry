@@ -42,19 +42,23 @@ class EnterText:
         - Please enter with spelling verbatim and use 'enter' for newlines. 
         - When a linebreak appears to mark the end of a sentence please add a full stop. **This is very
         important for our language analysis.**
-        - Please also add all characters and their aliases as you encounter them.
+        - Please add all characters and their aliases (other names used to refer to them). You only need to 
+        enter each character once and it doesn't matter when you enter them or which of their names you 
+        use for their 'main' name, as long as you record all the other names as aliases.
     """
 
     character_help = """
         As you work through the pages, please enter all of the characters (or groups of characters) 
-        that you encounter. When different names refer to the same character, please just add the 
+        that you encounter. You can enter a character at any time but only need to do it once.
+        When different names refer to the same character, please just add the 
         character once and then use `Add alias` to record all of the other names that are used to 
-        refer to them.
+        refer to them. This is essential for our language analysis, so that we can reliably identify 
+        each time the same character appears in the book.
     """
 
     alias_help = """
         Please record all of the alternative names that are used to refer to the same character
-        or group of characters.  
+        or group of characters. You can add an alias at any time after you have created the character.  
     """
 
     save_help = """
