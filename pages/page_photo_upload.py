@@ -61,6 +61,8 @@ def go_to_phone():
     img.save(temp)
     st.image(temp.getvalue())
     st.write("Or you can use the following link: [%s](%s)" % (req.url, req.url))
+    if st.button("When you have finished you can click here to go back."):
+        st.switch_page("./pages/book_edit_home.py")
 
 
 def upload_here():
@@ -75,8 +77,7 @@ navigation_dict = {
 
 navigation_dict[selected_option]()
 
-if st.button("When you have finished you can click here to go back."):
-    st.switch_page("./pages/book_edit_home.py")
+
 
 
 

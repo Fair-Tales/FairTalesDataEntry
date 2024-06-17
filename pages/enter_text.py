@@ -176,8 +176,13 @@ def user_entry_box(element, image_height, delta=50):
 
 user_entry_box(col2, image_height)
 
+butcol1, butcol2 = st.columns(2)
+return_button = butcol1.button("Back to menu", use_container_width=True)
+save_button = butcol2.button("Finish and submit book", help=EnterText.save_help, use_container_width=True)
 
-save_button = st.button("Finish and submit book", help=EnterText.save_help, use_container_width=True)
+if return_button:
+    st.switch_page("./pages/book_edit_home.py")
+
 if save_button:
     confirm_submit()
 
