@@ -46,7 +46,6 @@ from data_structures import Author, Book
 # TODO: use photos uploaded flag?
 # TODO: add timeout to QR link?
 # TODO: add our previous book titles (and collections?)
-# TODO: add time submitted
 # TODO: delete junk form databases!!
 
 # TODO: add 'initialise_session_state' function and if something (like current_book) is not present, redirect to user_home.
@@ -56,6 +55,7 @@ from data_structures import Author, Book
 # TODO: add data protection statement to T&Cs.
 # TODO: add diagram of how to take photos
 # TODO: check orientation of portrait images - not working atm.
+# TODO: change register/login menu
 
 
 def login():

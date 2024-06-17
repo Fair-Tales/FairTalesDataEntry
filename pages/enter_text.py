@@ -106,8 +106,13 @@ col1.write(
 )
 image_height = display_image()
 
+if '_page_text_editing' not in st.session_state:
+    st.session_state['_page_text_editing'] = None
+
 
 def adding_character():
+    if st.session_state['_page_text_editing'] is not None:
+        st.session_state.current_page.text = st.session_state['_page_text_editing']
     st.session_state.now_entering = 'character'
 
 
@@ -116,6 +121,8 @@ def adding_text():
 
 
 def adding_alias():
+    if st.session_state['_page_text_editing'] is not None:
+        st.session_state.current_page.text = st.session_state['_page_text_editing']
     st.session_state.now_entering = 'alias'
 
 
@@ -131,7 +138,7 @@ def text_entry(element, image_height, delta=50):
     height = max(image_height - delta, 10)
 
     with element.form('page_text'):
-        _page_text = st.text_area(
+        st.session_state['_page_text_editing'] = st.text_area(
             "Enter page text",
             height=height,
             value=st.session_state.current_page.text,
@@ -140,7 +147,7 @@ def text_entry(element, image_height, delta=50):
 
         submitted = st.form_submit_button("Save page")
         if submitted:
-            st.session_state.current_page.text = _page_text
+            st.session_state.current_page.text = st.session_state['_page_text_editing']
 
 
 def character_entry(element):
