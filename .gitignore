@@ -162,7 +162,7 @@ cython_debug/
 ########################################################################
 # Streamlit
 ########################################################################
-.streamlit/
+.streamlit/*secrets*
 lib/streamlit/static
 streamlit-storage
 

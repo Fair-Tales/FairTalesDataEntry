@@ -1,12 +1,11 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
 from text_content import Alerts, Instructions
-from utilities import check_authentication_status, hide
-from data_structures import Book
+from utilities import check_authentication_status, hide, confirm_submit
 
 
 hide()
-st.title("Book editing.")
+st.title(f"Editing book: {st.session_state.current_book.title}")
 
 check_authentication_status()
 
@@ -29,6 +28,7 @@ def instructions():
 
 
 def edit_book_details():
+    st.session_state.current_book.editing = True
     st.switch_page("./pages/add_book.py")
 
 
@@ -38,6 +38,7 @@ def add_photos():
 
 def enter_text():
     if st.session_state.current_book.photos_uploaded:
+        st.session_state['current_page_number'] = 1
         st.switch_page("./pages/enter_text.py")
     else:
         st.warning(Alerts.please_uploaded_photos)
@@ -51,3 +52,11 @@ edit_navigation_dict = {
 }
 
 edit_navigation_dict[edit_option]()
+
+if st.button("Back to home menu."):
+    st.switch_page("./pages/user_home.py")
+
+if st.button("Finish and submit book"):
+    confirm_submit()
+
+

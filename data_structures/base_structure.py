@@ -1,5 +1,5 @@
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timezone
 import numpy as np
 from abc import ABC, abstractmethod
 
@@ -36,7 +36,7 @@ class Field:
 
 class DataStructureBase(ABC):
     """
-    Note: is_registered is special attribute to flags if object has been saved to the database.
+    Note: is_registered is special attribute to flag if object has been saved to the database.
     All other attributes are handled by the Field descriptor and update the database
     on __set__ if is_registered is True.
     """
@@ -105,7 +105,7 @@ class DataStructureBase(ABC):
                 value=value
             )
             if field != 'last_updated':
-                self.last_updated = datetime.now()
+                self.last_updated = datetime.now(timezone.utc)
 
     def get_ref(self):
         db = st.session_state.firestore.connect()
@@ -117,7 +117,7 @@ class DataStructureBase(ABC):
             self.entered_by = st.session_state['firestore'].username_to_doc_ref(
                 st.session_state['username']
             )
-            self.datetime_created = datetime.now()
+            self.datetime_created = datetime.now(timezone.utc)
             self.is_registered = True
             self.save_to_db()
 

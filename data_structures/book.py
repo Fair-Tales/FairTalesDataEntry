@@ -27,8 +27,14 @@ class Book(DataStructureBase):
         'validated': False,
         'validated_by': None,
         'photos_uploaded': False,
-        'photos_url': ""
+        'photos_url': "",
+        'comment': "",
+        'datetime_submitted': -1
     }
+    fields.update({
+        theme: False
+        for theme in BookForm.theme_options.keys()
+    })
 
     for field in fields.keys():
         if field not in [DataStructureBase.base_class_fields] + ['is_registered']:
@@ -39,8 +45,10 @@ class Book(DataStructureBase):
         'published': 'Date published',
         'author': 'Author',
         'publisher': 'Publisher',
-        'illustrator': 'Illustrator'
+        'illustrator': 'Illustrator',
+        'comment': 'Comment'
     }
+    form_fields.update(BookForm.theme_options)
 
     ref_fields = ['author', 'entered_by']  # Reference fields will display document ID for human consumption
 
@@ -73,11 +81,25 @@ class Book(DataStructureBase):
         _author = st.selectbox(
             "Select from existing authors",
             options=author_options,
-            index=author_index
+            index=author_index,
+            help=BookForm.author_help
         )
 
         _publisher = st.text_input("Publisher name", value=self.publisher)
         _illustrator = st.text_input("Illustrator name", value=self.illustrator)
+
+        values = [
+            BookForm.theme_options[theme]
+            for theme in BookForm.theme_options.keys()
+            if getattr(self, theme)
+        ]
+        _themes = st.multiselect(
+            "Select themes",
+            options=BookForm.theme_options.values(), help=BookForm.themes_help,
+            default=values
+        )
+
+        _comment = st.text_input("Comment", value=self.comment, help=BookForm.comment_help)
 
         submitted = st.form_submit_button("Submit")
 
@@ -89,6 +111,10 @@ class Book(DataStructureBase):
             self.author = _author
             self.publisher = _publisher
             self.illustrator = _illustrator
+            self.comment = _comment
+
+            for theme, theme_string in BookForm.theme_options.items():
+                setattr(self, theme, theme_string in _themes)
 
             if not self.editing and st.session_state.firestore.document_exists(
                 collection='books',
