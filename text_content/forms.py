@@ -62,8 +62,8 @@ class EnterText:
     """
 
     save_help = """
-        The data you enter will save automatically as you work. This button finishes entering this book and returns
-        you to your homepage.
+        The data you enter will save automatically as you work. This button finishes entering this book. 
+        You will not be able to edit it again after this.
     """
 
 

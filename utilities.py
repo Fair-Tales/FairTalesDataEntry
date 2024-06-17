@@ -267,3 +267,18 @@ class FormConfirmation:
 
         if edit_button:
             st.switch_page("./pages/add_character.py")
+
+
+@st.experimental_dialog("Are you sure?")
+def confirm_submit():
+    st.write(
+        """
+        Are you sure you want to submit this book? You will not be able to edit it again after submission,
+        so please only submit once you are confident that everything is correct and complete.
+        """
+    )
+    if st.button("Confirm"):
+        st.session_state.current_book.entry_status = 'completed'
+        st.switch_page("./pages/user_home.py")
+    if st.button("Cancel"):
+        st.rerun()

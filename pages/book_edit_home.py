@@ -1,12 +1,11 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
 from text_content import Alerts, Instructions
-from utilities import check_authentication_status, hide
-from data_structures import Book
+from utilities import check_authentication_status, hide, confirm_submit
 
 
 hide()
-st.title("Book editing.")
+st.title(f"Editing book: {st.session_state.current_book.title}")
 
 check_authentication_status()
 
@@ -55,5 +54,8 @@ edit_navigation_dict[edit_option]()
 
 if st.button("Back to home menu."):
     st.switch_page("./pages/user_home.py")
+
+if st.button("Finish and submit book"):
+    confirm_submit()
 
 
