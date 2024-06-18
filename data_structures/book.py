@@ -42,7 +42,7 @@ class Book(DataStructureBase):
 
     form_fields = {
         'title': 'Title',
-        'published': 'Date published',
+        'published': 'Date first published',
         'author': 'Author',
         'publisher': 'Publisher',
         'illustrator': 'Illustrator',
@@ -65,7 +65,7 @@ class Book(DataStructureBase):
 
         _title = st.text_input("Title", value=self.title)
         _published = st.number_input(
-            "Date published", min_value=1900, max_value=2024, value=self.published
+            "Date first published", min_value=1900, max_value=2024, value=self.published
         )
         st.write(Instructions.author_publisher_illustrator_select)
 

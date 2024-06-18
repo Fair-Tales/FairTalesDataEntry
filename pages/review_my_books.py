@@ -44,6 +44,5 @@ else:
 
 cancel_button = st.button("Cancel editing books.")
 
-
 if cancel_button:
     st.switch_page("./pages/user_home.py")
