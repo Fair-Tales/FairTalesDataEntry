@@ -4,7 +4,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 from utilities import hide
-from text_content import Instructions
+from text_content import Instructions, Alerts
 from data_structures import Book
 
 hide()
@@ -20,25 +20,30 @@ my_books = st.session_state.firestore.get_by_field(
     field="entered_by",
     match=user_ref
 )
-my_books = my_books.loc[my_books.entry_status=='started']
-st.header("Review my books")
-st.write(Instructions.review_my_books)
-selected_title = st.selectbox(
-    label="My entered books:",
-    options=my_books.title
-)
 
-selected_book = Book(
-    my_books[my_books.title == selected_title].iloc[0]
-)
+if len(my_books) == 0:
+    st.warning(Alerts.no_user_books)
+else:
+    my_books = my_books.loc[my_books.entry_status == 'started']
+    st.header("Review my books")
+    st.write(Instructions.review_my_books)
+    selected_title = st.selectbox(
+        label="My entered books:",
+        options=my_books.title
+    )
 
-edit_button = st.button("Edit this book.")
+    selected_book = Book(
+        my_books[my_books.title == selected_title].iloc[0]
+    )
+
+    edit_button = st.button("Edit this book.")
+    if edit_button:
+        st.session_state['current_book'] = selected_book
+        st.session_state['current_book'].editing = True
+        st.switch_page("./pages/book_edit_home.py")
+
 cancel_button = st.button("Cancel editing books.")
 
-if edit_button:
-    st.session_state['current_book'] = selected_book
-    st.session_state['current_book'].editing = True
-    st.switch_page("./pages/book_edit_home.py")
 
 if cancel_button:
     st.switch_page("./pages/user_home.py")

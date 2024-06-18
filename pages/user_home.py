@@ -26,12 +26,7 @@ selected_option = option_menu(
 )
 
 
-# TODO: fix handling of empty results...
-# TODO: fix search for contains (crrently not robus because not supported by Firestore!!)
-#    try another search option like Algolia: https://firebase.google.com/docs/firestore/solutions/search
-#    https://www.algolia.com/pricing/
-# TODO: get author from reference (see here: https://stackoverflow.com/questions/46878913/cloud-firestore-how-to-fetch-a-document-reference-inside-my-collection-query-an)
-# TODO: also currently case sensitive! Algolia will fix...
+# TODO: migrate to a proper search service like Algolia?
 def book_search():
     book_search_string = st.text_input(
         "Search our database by book title.",

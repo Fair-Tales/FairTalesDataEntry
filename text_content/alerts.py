@@ -30,3 +30,8 @@ class Alerts:
     please_uploaded_photos = """
         Please upload photos of the book pages first!
     """
+
+    no_user_books = """
+        You currently have no books to edit! Please use the `Add a Book` option from the menu to start
+        entering a book.
+    """
