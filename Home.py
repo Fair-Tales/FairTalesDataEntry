@@ -41,7 +41,9 @@ from data_structures import Author, Book
 # TODO: delete character or alias
 # TODO: refactor base data structure so that it doesn't use 'db_object'
 # TODO: updated computer page once phone photos uploaded?
-# TODO: da
+# TODO: add example page photos to instructions
+# TODO: add back button
+# TODO: add view ad edit characters/aliases
 
 ## BEFORE STUDENTS:
 # TODO: add author search
