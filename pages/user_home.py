@@ -6,7 +6,7 @@ from data_structures import Book
 import pandas as pd
 
 hide()
-st.title("SAW data entry tool")
+st.title("Fair Tales Data Entry Tool")
 
 check_authentication_status()
 
