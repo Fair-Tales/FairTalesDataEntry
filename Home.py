@@ -52,6 +52,7 @@ from data_structures import Author, Book
 # TODO: add our previous book titles (and collections?)
 # TODO: delete junk from databases!!
 
+# TODO: add whitespace striping from names entered?
 # TODO: add 'initialise_session_state' function and if something (like current_book) is not present, redirect to user_home.
 # TODO: adding alias form did not clear.
 # TODO: edit character? (e.g. if they got gender wrong)
