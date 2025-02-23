@@ -1,4 +1,4 @@
-# SAWDataEntry
+# Fair Tales Data Entry
 Data entry tool for SAW project.
 
-Documentation and user flow dioagram to follow...
+
