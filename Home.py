@@ -52,6 +52,8 @@ from data_structures import Author, Book
 # TODO: add our previous book titles (and collections?)
 # TODO: delete junk from databases!!
 
+# TODO: Add Alias lets you select from all characters not just book ones!
+
 # TODO: add whitespace striping from names entered?
 # TODO: add 'initialise_session_state' function and if something (like current_book) is not present, redirect to user_home.
 # TODO: adding alias form did not clear.
