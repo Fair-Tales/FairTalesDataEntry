@@ -1,5 +1,5 @@
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, date
 import bcrypt
 st.set_page_config(
     initial_sidebar_state="auto"
@@ -86,7 +86,11 @@ with st.form('registration_form'):
     )
     gender_custom = st.text_input(label=GenderRegistration.manual_input_prompt, value="")
 
-    user_birth_year = st.number_input("Birth year", min_value=1900, max_value=2030, value=1980)
+    user_birth_year = int(st.selectbox(
+        "What is your birth year?",
+        (x for x in range(1900, (date.today().year + 1))),
+        placeholder="Select year of birth",
+        ))
     registered = st.form_submit_button("Register")
 
     if registered:
