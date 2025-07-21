@@ -10,7 +10,6 @@ import smtplib
 from email.mime.text import MIMEText
 from datetime import datetime, timezone
 
-
 def is_authenticated():
     if 'authentication_status' not in st.session_state:
         st.session_state['authentication_status'] = False
@@ -23,12 +22,20 @@ def check_authentication_status():
         st.session_state['authentication_status'] = False
 
     if not is_authenticated():
-        st.info("Please login.")
-        st.stop()
+        #st.info("Please login.")
+        st.switch_page("./pages/login.py")
 
+def page_layout():
+    #with st.sidebar:
+    #    add_radio = st.radio('Menu', ('login', 'user_home'))
+    st.set_page_config(
+        #page_title="bde",
+        initial_sidebar_state="collapsed"
+    )
+    hide()
 
 def hide():
-    hide_pages([
+    return hide_pages([
         'confirm', 'user_home', 'add_book', 'account_settings', 'confirm_entry',
         'add_character', 'add_author', 'book_data_entry', 'enter_text',
         'register_user', 'register_user_done', 'review_my_books',
@@ -37,7 +44,7 @@ def hide():
 
 
 def check_user_exists(username):
-    db = FirestoreWrapper().connect(auth=False)
+    db = FirestoreWrapper().connect_user(auth=False)
     users_ref = db.collection("users")
     query_ref = users_ref.where(filter=firestore.FieldFilter("username", "==", username))
     docs = query_ref.get()
@@ -45,7 +52,7 @@ def check_user_exists(username):
 
 
 def get_user(username):
-    db = FirestoreWrapper().connect(auth=False)
+    db = FirestoreWrapper().connect_user(auth=False)
     users_ref = db.collection("users")
     query_ref = users_ref.where(filter=firestore.FieldFilter("username", "==", username))
     docs = query_ref.get()
@@ -126,20 +133,30 @@ class FirestoreWrapper:
 
     def __init__(self, auth=True):
         self.auth = auth
-        self.firestore_key = json.loads(st.secrets["firestore_key"])
+        #print(st.secrets["firestore_key"])
+        self.firestore_key = json.loads(st.secrets["firestore_key"], strict=False)
 
-    def connect(self, auth=None):
+    def connect_book(self, auth=None):
 
         auth = self.auth if auth is None else auth
         if is_authenticated() or not auth:
             creds = service_account.Credentials.from_service_account_info(self.firestore_key)
-            return firestore.Client(credentials=creds, project="sawdataentry")
+            return firestore.Client(credentials=creds, project="coherent-coder-464610-s2", database = "fair-tales")
+        else:
+            return None
+        
+    def connect_user(self, auth=None):
+
+        auth = self.auth if auth is None else auth
+        if is_authenticated() or not auth:
+            creds = service_account.Credentials.from_service_account_info(self.firestore_key)
+            return firestore.Client(credentials=creds, project="coherent-coder-464610-s2", database = "data-entry-users")
         else:
             return None
 
     def single_field_search(self, collection, field, contains_string):
         """ Search for string withing field. """
-        db = self.connect()
+        db = self.connect_book()
 
         results = (
             db.collection(collection)
@@ -153,7 +170,7 @@ class FirestoreWrapper:
 
     def get_by_field(self, collection, field, match):
         """ Get exact match in field"""
-        db = self.connect()
+        db = self.connect_book()
         results = db.collection(collection).where(
             filter=FieldFilter(field, "==", match)
         ).stream()
@@ -163,24 +180,24 @@ class FirestoreWrapper:
         return pd.DataFrame(results_dict)
 
     def get_by_reference(self, collection, document_ref):
-        db = self.connect()
+        db = self.connect_book()
         doc_ref = db.collection(collection).document(document_ref)
         return doc_ref.get()
 
     def get_all_documents_stream(self, collection):
-        db = self.connect()
+        db = self.connect_book()
         return db.collection(collection).stream()
 
     def username_to_doc_ref(self, username):
-        return self.connect().collection('users').document(username)
+        return self.connect_book().collection('users').document(username)
 
     def document_exists(self, collection, doc_id):
-        db = self.connect()
+        db = self.connect_book()
         doc = db.collection(collection).document(doc_id).get()
         return doc.exists
 
     def update_field(self, collection, document, field, value):
-        db = self.connect()
+        db = self.connect_book()
         doc_ref = db.collection(collection).document(document)
         doc_ref.update({field: value})
 

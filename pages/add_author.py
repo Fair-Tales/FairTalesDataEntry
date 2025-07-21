@@ -1,7 +1,8 @@
 import streamlit as st
-from utilities import hide
+from utilities import page_layout, check_authentication_status
 
-hide()
+check_authentication_status()
+page_layout()
 
 
 with st.form("new_author"):

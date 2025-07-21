@@ -1,7 +1,8 @@
 import streamlit as st
-from utilities import hide, FormConfirmation
+from utilities import page_layout, FormConfirmation, check_authentication_status
 
-hide()
+check_authentication_status()
+page_layout()
 
 st.write(
     """

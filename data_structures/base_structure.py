@@ -108,7 +108,7 @@ class DataStructureBase(ABC):
                 self.last_updated = datetime.now(timezone.utc)
 
     def get_ref(self):
-        db = st.session_state.firestore.connect()
+        db = st.session_state.firestore.connect_book()
         return db.collection(self.belongs_to_collection).document(self.document_id)
 
     def register(self):
@@ -122,7 +122,7 @@ class DataStructureBase(ABC):
             self.save_to_db()
 
     def save_to_db(self):
-        db = st.session_state['firestore'].connect()
+        db = st.session_state['firestore'].connect_user()
         db.collection(
             self.belongs_to_collection
         ).document(self.document_id).set(self.to_dict(), merge=True)

@@ -10,7 +10,6 @@ class GenderRegistration:
         calculate aggregate statistics. Your personal information will be kept private.   
     """
 
-
 class BookForm:
     header = "Please enter or review the details of this book."
     cancel_text = "Cancel"

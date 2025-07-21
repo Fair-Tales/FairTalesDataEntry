@@ -1,27 +1,9 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
-st.set_page_config(
-    page_title="bde",
-    initial_sidebar_state="collapsed"
-)
-from utilities import hide
+from utilities import page_layout, check_authentication_status
 from text_content import Instructions
 
-hide()
-st.title(
-    f"Enter book data: {st.session_state.current_book.title}"
-)
-st.header(Instructions.photo_upload_header)
-st.write(Instructions.photo_upload_instructions)
-
-selected_option = option_menu(
-    None, ["Upload page photos", "Enter text", "Add a Character"],
-    default_index=0,
-    icons=['search', 'search', 'database-add'],
-    menu_icon="cast", orientation="horizontal",
-    key="user_option_menu"
-)
-
+check_authentication_status()
 
 # TODO: change per file size limit?!
 # TODO: set file order (sort ascending? time modified? https://stackoverflow.com/questions/31588543/how-to-change-order-of-files-in-multiple-file-input)
@@ -41,6 +23,22 @@ def add_character():
     st.switch_page("./pages/add_character.py")
 
 
+page_layout()
+
+st.title(
+    f"Enter book data: {st.session_state.current_book.title}"
+)
+st.header(Instructions.photo_upload_header)
+st.write(Instructions.photo_upload_instructions)
+
+selected_option = option_menu(
+    None, ["Upload page photos", "Enter text", "Add a Character"],
+    default_index=0,
+    icons=['search', 'search', 'database-add'],
+    menu_icon="cast", orientation="horizontal",
+    key="user_option_menu"
+)
+
 navigation_dict = {
     "Upload page photos": upload_page_photos,
     "Enter text": enter_text,
@@ -48,7 +46,6 @@ navigation_dict = {
 }
 
 navigation_dict[selected_option]()
-
 
 save_button = st.button('Save')
 

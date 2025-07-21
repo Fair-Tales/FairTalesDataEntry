@@ -1,26 +1,9 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
 from text_content import Alerts, Instructions
-from utilities import check_authentication_status, hide, confirm_submit
-
-
-hide()
-st.title(f"Editing book: {st.session_state.current_book.title}")
+from utilities import check_authentication_status, page_layout, confirm_submit, check_authentication_status
 
 check_authentication_status()
-
-edit_option = option_menu(
-    None, ["Instructions", "Edit metadata", "Upload photos", "Enter text"],
-    default_index=0,
-    icons=['info-circle', 'list-stars', 'image', 'pencil-square'],
-    menu_icon="cast", orientation="horizontal",
-    key="book_edit_option_menu",
-    styles={
-        "nav-link": {"font-size": "15px", "text-align": "left", "margin": "0px", "--hover-color": "#eee"},
-        "nav-link-selected": {"background-color": "green"},
-    }
-)
-
 
 def instructions():
     st.write(Instructions.book_edit_home_intro)
@@ -43,6 +26,24 @@ def enter_text():
     else:
         st.warning(Alerts.please_uploaded_photos)
 
+
+page_layout()
+
+st.title(f"Editing book: {st.session_state.current_book.title}")
+
+check_authentication_status()
+
+edit_option = option_menu(
+    None, ["Instructions", "Edit metadata", "Upload photos", "Enter text"],
+    default_index=0,
+    icons=['info-circle', 'list-stars', 'image', 'pencil-square'],
+    menu_icon="cast", orientation="horizontal",
+    key="book_edit_option_menu",
+    styles={
+        "nav-link": {"font-size": "15px", "text-align": "left", "margin": "0px", "--hover-color": "#eee"},
+        "nav-link-selected": {"background-color": "green"},
+    }
+)
 
 edit_navigation_dict = {
     "Instructions": instructions,

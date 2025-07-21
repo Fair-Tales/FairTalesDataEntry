@@ -1,16 +1,10 @@
 import streamlit as st
 from datetime import datetime, date
 import bcrypt
-st.set_page_config(
-    initial_sidebar_state="auto"
-)
 from utilities import (
-    hide, hash_password, check_user_exists,
-    send_confirmation_email, FirestoreWrapper
+    page_layout, hash_password, check_user_exists, send_confirmation_email, FirestoreWrapper, check_authentication_status
 )
 from text_content import Alerts, GenderRegistration
-
-hide()
 
 
 def register_user(_username, _name, _password, _gender, _birth_year):
@@ -33,9 +27,9 @@ def register_user(_username, _name, _password, _gender, _birth_year):
     if check_user_exists(_username):
         st.warning(Alerts.user_exists)
     else:
-        db = FirestoreWrapper().connect(auth=False)
+        db = FirestoreWrapper().connect_user(auth=False)
         db.collection("users").document(username).set(user_data)
-        send_confirmation_email(username, username, confirmation_token, _name)
+        #send_confirmation_email(username, username, confirmation_token, _name)
         st.switch_page("./pages/register_user_done.py")
 
 
@@ -72,6 +66,8 @@ def validate_user_details(_username, _name, _password, _gender, _gender_custom, 
 
     return True
 
+
+page_layout()
 
 with st.form('registration_form'):
     st.title("User Registration")

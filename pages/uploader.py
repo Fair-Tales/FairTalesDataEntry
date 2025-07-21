@@ -3,7 +3,9 @@ import natsort
 import streamlit as st
 from data_structures import Page
 from text_content import Instructions
+from utilities import page_layout, check_authentication_status
 
+check_authentication_status()
 
 def upload_widget(on_submit='enter_text'):
 
@@ -61,5 +63,6 @@ def upload_widget(on_submit='enter_text'):
 
     upload_page_photos()
 
+page_layout()
 
 

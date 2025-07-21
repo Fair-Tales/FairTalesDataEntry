@@ -1,8 +1,8 @@
 import streamlit as st
-from utilities import hide
+from utilities import page_layout, check_authentication_status
 from text_content import Alerts
 
-hide()
+page_layout()
 
 
 with st.form('registration_form'):

@@ -3,38 +3,14 @@ import streamlit as st
 from six import BytesIO
 from streamlit_option_menu import option_menu
 from text_content import Alerts
-
-st.set_page_config(
-    page_title="bde",
-    initial_sidebar_state="collapsed"
-)
-from utilities import hide
+from utilities import page_layout, check_authentication_status
 from text_content import Instructions
 from data_structures import Page
 from pages.uploader import upload_widget
 import qrcode
 from requests.models import PreparedRequest
 
-
-hide()
-st.title(
-    f"Enter book data: {st.session_state.current_book.title}"
-)
-st.header(Instructions.photo_upload_header)
-st.write(Instructions.photo_upload_instructions)
-
-selected_option = option_menu(
-    None, ["Go to phone", "Upload here"],
-    default_index=0,
-    icons=['phone', 'laptop'],
-    menu_icon="cast", orientation="horizontal",
-    key="upload_menu",
-    styles={
-        "nav-link": {"font-size": "15px", "text-align": "left", "margin": "0px", "--hover-color": "#eee"},
-        "nav-link-selected": {"background-color": "green"},
-    }
-)
-
+check_authentication_status()
 
 def go_to_phone():
     st.write(Instructions.go_to_phone_instructions)
@@ -80,6 +56,26 @@ def upload_here():
     st.write(Instructions.upload_here_instructions)
     upload_widget()
 
+
+page_layout()
+
+st.title(
+    f"Enter book data: {st.session_state.current_book.title}"
+)
+st.header(Instructions.photo_upload_header)
+st.write(Instructions.photo_upload_instructions)
+
+selected_option = option_menu(
+    None, ["Go to phone", "Upload here"],
+    default_index=0,
+    icons=['phone', 'laptop'],
+    menu_icon="cast", orientation="horizontal",
+    key="upload_menu",
+    styles={
+        "nav-link": {"font-size": "15px", "text-align": "left", "margin": "0px", "--hover-color": "#eee"},
+        "nav-link-selected": {"background-color": "green"},
+    }
+)
 
 navigation_dict = {
     "Go to phone": go_to_phone,
