@@ -41,7 +41,7 @@ def book_search():
 
         if len(books) > 0:
             books = pd.concat(books)
-            books.author = ['author']
+            #books.author = ['author']
                 #' '.join([
                 #    a.get().to_dict()['forename'],
                 #    a.get().to_dict()['surname']
@@ -52,11 +52,6 @@ def book_search():
             st.write(books[['title', 'author', 'publisher']])
         else:
             st.warning(Alerts.no_matching_book)
-        # books = st.session_state.firestore.single_field_search(
-        #     collection="books",
-        #     field="title",
-        #     contains_string=book_search_string
-        # )
         # # TODO: combine author names...
         # if len(books) > 0:
         #     books.author = [
@@ -66,11 +61,71 @@ def book_search():
         #
         #     st.write("Results:")
         #     st.write(books)
-        #
+
+def author_books(author):
+
+    db = FirestoreWrapper().connect_book(auth=False)
+    book_stream = (
+        db.collection('Book')
+        .where('author', '==', author[0] + '_' + author[1])
+        .stream()
+    )
+
+    books = []
+
+    for book in book_stream:
+        books.append([book.to_dict()['title'], book.to_dict()['publisher']])
+
+    if books == []:
+        st.warning(Alerts.no_matching_book)
+    else:
+        st.subheader('Books written by ' + author[0].capitalize() + ' ' + author[1].capitalize() + ':')
+        st.dataframe(books, column_config={1: 'title', 2: 'publisher'})
+        
+        clear = st.button('clear')
+        if clear:
+            del st.session_state['author_df']
 
 
 def author_search():
-    st.warning("Not implemented yet!")
+    author_search_string = st.text_input(
+        "Search our database by author name.",
+        value="",
+        help="You can enter either all or part of the name."
+    )
+    if len(author_search_string) > 0:
+
+        search_name = author_search_string.lower().split()
+
+        names = [
+            [forename, surname] for forename, surname in st.session_state['author_dict'].items()
+            if search_name[0] in forename or name in surname for name in search_name 
+        ]
+
+        names = [name[0].split() for name in names]
+
+        db = FirestoreWrapper().connect_book(auth=False)
+        author_stream = (
+            db.collection('Authors')
+            .where('forename', '==', name[0])
+            .where('surname', '==', name[1])
+            .stream()
+            for name in names
+        )
+
+        authors = []
+
+        for author in author_stream:
+            for entry in author:
+                authors.append([entry.to_dict()['forename'], entry.to_dict()['surname']])
+
+        if authors == []:
+            st.warning(Alerts.no_matching_author)
+        else:
+            if 'author_df' not in st.session_state:
+                st.dataframe(authors, column_config={1: 'forename', 2: 'surname'}, on_select = 'rerun', selection_mode= 'single-row', key='author_df')
+            else:
+                author_books(authors[st.session_state['author_df'].get('selection').get('rows')[0]])
 
 
 def add_book():
