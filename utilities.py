@@ -26,8 +26,6 @@ def check_authentication_status():
         st.switch_page("./pages/login.py")
 
 def page_layout():
-    #with st.sidebar:
-    #    add_radio = st.radio('Menu', ('login', 'user_home'))
     st.set_page_config(
         #page_title="bde",
         initial_sidebar_state="collapsed"

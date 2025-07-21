@@ -71,10 +71,11 @@ def initialise():
         firestore.get_all_documents_stream(collection='Authors')
     }
     st.session_state['book_dict'] = {
-        book.to_dict()['title'].lower().replace(" ", "_"): book.reference
+        book.to_dict()['title']: book.reference
         for book in
         firestore.get_all_documents_stream(collection='Book')
     }
+    print(st.session_state['book_dict'])
     st.session_state['character_dict'] = {
         character.to_dict()['name']: character.reference
         for character in

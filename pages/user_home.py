@@ -16,7 +16,7 @@ def book_search():
     )
     if len(book_search_string) > 0:
 
-        search_title = book_search_string.lower().replace(" ", "_")
+        search_title = book_search_string.lower()
 
         #old_titles = [
         #    title for title in old_books
@@ -27,8 +27,8 @@ def book_search():
 
         #else:
         titles = [
-            title for title in st.session_state.book_dict.keys()
-            if search_title in title
+            title for title in st.session_state['book_dict'].keys()
+            if search_title in title.lower()
         ]
 
         books = [
@@ -38,9 +38,6 @@ def book_search():
             for title in titles
         ]
         print(books)
-
-        #books = [
-        #]
 
         if len(books) > 0:
             books = pd.concat(books)
