@@ -3,6 +3,9 @@ from utilities import author_entry_to_name
 from text_content import Instructions, BookForm
 from .base_structure import DataStructureBase, Field
 from .author import Author
+from .illustrator import Illustrator
+from .publisher import Publisher
+from datetime import datetime, date
 
 
 class Book(DataStructureBase):
@@ -20,8 +23,8 @@ class Book(DataStructureBase):
         'entry_status': 'started',
         'first_content_page': -1,
         'last_content_page': -1,
-        'illustrator': "",
-        'publisher': "",
+        'illustrator': None,
+        'publisher': None,
         'last_updated': -1,
         'published': 2012,
         'validated': False,
@@ -64,9 +67,10 @@ class Book(DataStructureBase):
         st.header(BookForm.header)
 
         _title = st.text_input("Title", value=self.title)
-        _published = st.number_input(
-            "Date first published", min_value=1900, max_value=2024, value=self.published
-        )
+        _published = int(st.selectbox(
+        "Date first published",
+        (x for x in range(1900, (date.today().year + 1))), index= 112
+        ))
         st.write(Instructions.author_publisher_illustrator_select)
 
         author_options = ["None of these (create a new author now)."] + list(
@@ -85,8 +89,32 @@ class Book(DataStructureBase):
             help=BookForm.author_help
         )
 
-        _publisher = st.text_input("Publisher name", value=self.publisher)
-        _illustrator = st.text_input("Illustrator name", value=self.illustrator)
+        publisher_options = ["None of these (create a new publisher now)."] + list(
+            st.session_state['publisher_dict'].keys()
+        )
+
+        _publisher = st.selectbox(
+            "Select from existing publishers",
+            options=publisher_options,
+            #index=publisher_index,
+            help=BookForm.publisher_help
+        )
+
+        illustrator_options = ["None of these (create a new illustrator now)."] + list(
+            st.session_state['illustrator_dict'].keys()
+        )
+        illustrator_index = (
+            illustrator_options.index(author_entry_to_name(self.illustrator.get()))
+            if self.illustrator is not None and author_entry_to_name(self.illustrator.get()) in illustrator_options
+            else 0
+        )
+
+        _illustrator = st.selectbox(
+            "Select from existing illustrators",
+            options=illustrator_options,
+            index=illustrator_index,
+            help=BookForm.illustrator_help
+        )
 
         values = [
             BookForm.theme_options[theme]
@@ -125,6 +153,12 @@ class Book(DataStructureBase):
             elif self.author is None:
                 st.session_state['current_author'] = Author()
                 st.switch_page("./pages/add_author.py")
+            elif self.illustrator is None:
+                st.session_state['current_illustrator'] = Illustrator()
+                st.switch_page("./pages/add_illustrator.py")
+            elif self.publisher is None:
+                st.session_state['current_publisher'] = Publisher()
+                st.switch_page("./pages/add_publisher.py")
             else:
                 self.editing = False
                 if self.is_registered:

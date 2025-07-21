@@ -1,10 +1,10 @@
 import streamlit as st
-from text_content import AuthorForm
+from text_content import IllustratorForm
 from .base_structure import DataStructureBase, Field
 from datetime import date
 
 
-class Author(DataStructureBase):
+class Illustrator(DataStructureBase):
 
     fields = {
         'is_registered': False,
@@ -31,7 +31,7 @@ class Author(DataStructureBase):
     ref_fields = []
 
     def __init__(self, db_object=None):
-        super().__init__(collection='Authors', db_object=db_object)
+        super().__init__(collection='Illustrators', db_object=db_object)
 
     @property
     def name(self):
@@ -43,13 +43,13 @@ class Author(DataStructureBase):
 
     def to_form(self):
 
-        st.header(AuthorForm.header)
+        st.header(IllustratorForm.header)
 
         self.forename = st.text_input("First name", value=self.forename)
         self.surname = st.text_input("Surname", value=self.surname)
 
         year_given = int(st.selectbox(
-            "What is the author's birth year?",
+            "What is the illustrator's birth year?",
             options = (x for x in ([-1, -2]+[y for y in range(1900, (date.today().year - 15))])),
             index=94,
             placeholder="Select year of birth",
@@ -61,15 +61,15 @@ class Author(DataStructureBase):
         else:
             self.birth_year = None
 
-        st.write(AuthorForm.gender_prompt)
+        st.write(IllustratorForm.gender_prompt)
         gender_index = (
-            AuthorForm.gender_options.index(self.gender)
+            IllustratorForm.gender_options.index(self.gender)
             if self.gender is not None and self.gender != ""
             else 0
         )
         self.gender = st.selectbox(
             "Gender",
-            options=AuthorForm.gender_options,
+            options=IllustratorForm.gender_options,
             index=gender_index
         )
 
@@ -77,11 +77,11 @@ class Author(DataStructureBase):
 
         if submitted:
             if st.session_state.firestore.document_exists(
-                collection='Authors',
+                collection='Illustrators',
                 doc_id=self.document_id
             ):
-                st.warning(AuthorForm.author_exists)
+                st.warning(IllustratorForm.illustrator_exists)
             else:
-                st.session_state['current_author'] = self
-                st.session_state['active_form_to_confirm'] = 'new_author'
+                st.session_state['current_illustrator'] = self
+                st.session_state['active_form_to_confirm'] = 'new_illustrator'
                 st.switch_page("./pages/confirm_entry.py")

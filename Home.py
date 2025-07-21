@@ -70,6 +70,16 @@ def initialise():
         for author in
         firestore.get_all_documents_stream(collection='Authors')
     }
+    st.session_state['publisher_dict'] = {
+        publisher.to_dict()['name'].replace('_', ' '): publisher.reference
+        for publisher in
+        firestore.get_all_documents_stream(collection='Publishers')
+    }
+    st.session_state['illustrator_dict'] = {
+        author_entry_to_name(illustrator): illustrator.reference
+        for illustrator in
+        firestore.get_all_documents_stream(collection='Illustrators')
+    }
     st.session_state['book_dict'] = {
         book.to_dict()['title']: book.reference
         for book in
