@@ -2,7 +2,7 @@ import streamlit as st
 from datetime import datetime, date
 import bcrypt
 from utilities import (
-    page_layout, hash_password, check_user_exists, send_confirmation_email, FirestoreWrapper, check_authentication_status
+    page_layout, hash_password, check_user_exists, send_confirmation_email, FirestoreWrapper
 )
 from text_content import Alerts, GenderRegistration
 

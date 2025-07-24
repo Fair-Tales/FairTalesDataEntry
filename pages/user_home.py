@@ -66,7 +66,7 @@ def author_books(author):
 
     db = FirestoreWrapper().connect_book(auth=False)
     book_stream = (
-        db.collection('Book')
+        db.collection('books')
         .where('author', '==', author[0] + '_' + author[1])
         .stream()
     )
@@ -81,7 +81,7 @@ def author_books(author):
     else:
         st.subheader('Books written by ' + author[0].capitalize() + ' ' + author[1].capitalize() + ':')
         st.dataframe(books, column_config={1: 'title', 2: 'publisher'})
-        
+
         clear = st.button('clear')
         if clear:
             del st.session_state['author_df']
@@ -106,7 +106,7 @@ def author_search():
 
         db = FirestoreWrapper().connect_book(auth=False)
         author_stream = (
-            db.collection('Authors')
+            db.collection('authors')
             .where('forename', '==', name[0])
             .where('surname', '==', name[1])
             .stream()
@@ -123,7 +123,13 @@ def author_search():
             st.warning(Alerts.no_matching_author)
         else:
             if 'author_df' not in st.session_state:
-                st.dataframe(authors, column_config={1: 'forename', 2: 'surname'}, on_select = 'rerun', selection_mode= 'single-row', key='author_df')
+                st.dataframe(
+                    authors,
+                    column_config={1: 'forename', 2: 'surname'},
+                    on_select = 'rerun',
+                    selection_mode= 'single-row',
+                    key='author_df'
+                    )
             else:
                 author_books(authors[st.session_state['author_df'].get('selection').get('rows')[0]])
 
@@ -132,9 +138,65 @@ def add_book():
     st.session_state['current_book'] = Book()
     st.switch_page("./pages/add_book.py")
 
+#def edit_books(book, characters):
+    #characters = pd.json_normalize(characters).to_dict(orient='records')[0]
+    #print(characters)
+#    with st.form('edit_book_form'):
+#        st.subheader(book['title'] + ':')
+#        st.session_state['edited_book'] = st.data_editor(pd.DataFrame([book]))
+#        st.session_state['edited_characters'] = st.data_editor(characters)
+#        confirm = st.form_submit_button('confirm')
+
+#        if confirm:
+#            print(st.session_state['edited_book'])
+#            print(st.session_state['edited_characters'])
+
+    #if 'edit_changes_df' in st.session_state:
+    #    print(st.session_state['edit_changes_df'].get('selection').get('rows'))
+    ##    edit = st.text_input('heeeyy')
+    #    if edit != '':
+    #        book[st.session_state['edit_changes_df'].get('selection').get('rows')[0]] = edit
+    #        del st.session_state['edit_changes_df']
+
+#    clear = st.button('clear')
+#    if clear:
+#        del st.session_state['edit_df']
 
 def review_my_books():
     st.switch_page("./pages/review_my_books.py")
+    #st.subheader('Review your books here:')
+
+    #db = FirestoreWrapper().connect_book(auth=False)
+    #book_stream = (
+    #    db.collection('Book')
+    #    .where('entered_by', '==', st.session_state['username'])
+    #    .stream()
+    #)
+
+    #books = []
+    #characters = []
+
+    #for book in book_stream:
+    #    book = book.to_dict()
+    #    book.pop('entered_by')
+    #    characters.append(book.pop('characters'))
+    #    book['characters'] = len(characters[-1])
+    #    books.append(book)
+    #if books == []:
+    #        st.warning(Alerts.no_matching_book)
+    #else:
+    #    if 'edit_df' not in st.session_state:
+    #        st.dataframe(
+    #            books,
+    #            on_select = 'rerun',
+    #            selection_mode= 'single-row',
+    #            key='edit_df'
+    #            )
+    #    else:
+    #        edit_books(books[st.session_state['edit_df'].get('selection').get('rows')[0]], characters[st.session_state['edit_df'].get('selection').get('rows')[0]])
+    #        print(st.session_state['edited_book'])
+    #        print(st.session_state['edited_characters'])
+
     
 
 page_layout()

@@ -68,28 +68,28 @@ def initialise():
     st.session_state['author_dict'] = {
         author_entry_to_name(author): author.reference
         for author in
-        firestore.get_all_documents_stream(collection='Authors')
+        firestore.get_all_documents_stream(collection='authors')
     }
     st.session_state['publisher_dict'] = {
         publisher.to_dict()['name'].replace('_', ' '): publisher.reference
         for publisher in
-        firestore.get_all_documents_stream(collection='Publishers')
+        firestore.get_all_documents_stream(collection='publishers')
     }
     st.session_state['illustrator_dict'] = {
         author_entry_to_name(illustrator): illustrator.reference
         for illustrator in
-        firestore.get_all_documents_stream(collection='Illustrators')
+        firestore.get_all_documents_stream(collection='illustrators')
     }
     st.session_state['book_dict'] = {
         book.to_dict()['title']: book.reference
         for book in
-        firestore.get_all_documents_stream(collection='Book')
+        firestore.get_all_documents_stream(collection='books')
     }
-    print(st.session_state['book_dict'])
+    #print(st.session_state['book_dict'])
     st.session_state['character_dict'] = {
         character.to_dict()['name']: character.reference
         for character in
-        firestore.get_all_documents_stream(collection='Characters')
+        firestore.get_all_documents_stream(collection='characters')
     }
 
 def navigate_pages():

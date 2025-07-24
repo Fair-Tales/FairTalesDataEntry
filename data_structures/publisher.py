@@ -27,7 +27,7 @@ class Publisher(DataStructureBase):
     ref_fields = []
 
     def __init__(self, db_object=None):
-        super().__init__(collection='Publishers', db_object=db_object)
+        super().__init__(collection='publishers', db_object=db_object)
 
     #@property
     #def name(self):
@@ -60,7 +60,7 @@ class Publisher(DataStructureBase):
 
         if submitted:
             if st.session_state.firestore.document_exists(
-                collection='Publishers',
+                collection='publishers',
                 doc_id=self.document_id
             ):
                 st.warning(PublisherForm.publisher_exists)

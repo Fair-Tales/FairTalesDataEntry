@@ -31,7 +31,7 @@ class Author(DataStructureBase):
     ref_fields = []
 
     def __init__(self, db_object=None):
-        super().__init__(collection='Authors', db_object=db_object)
+        super().__init__(collection='authors', db_object=db_object)
 
     @property
     def name(self):
@@ -77,7 +77,7 @@ class Author(DataStructureBase):
 
         if submitted:
             if st.session_state.firestore.document_exists(
-                collection='Authors',
+                collection='authors',
                 doc_id=self.document_id
             ):
                 st.warning(AuthorForm.author_exists)

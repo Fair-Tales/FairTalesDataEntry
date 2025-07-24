@@ -31,7 +31,7 @@ class Illustrator(DataStructureBase):
     ref_fields = []
 
     def __init__(self, db_object=None):
-        super().__init__(collection='Illustrators', db_object=db_object)
+        super().__init__(collection='illustrators', db_object=db_object)
 
     @property
     def name(self):
@@ -77,7 +77,7 @@ class Illustrator(DataStructureBase):
 
         if submitted:
             if st.session_state.firestore.document_exists(
-                collection='Illustrators',
+                collection='illustrators',
                 doc_id=self.document_id
             ):
                 st.warning(IllustratorForm.illustrator_exists)

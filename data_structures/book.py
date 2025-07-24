@@ -5,7 +5,7 @@ from .base_structure import DataStructureBase, Field
 from .author import Author
 from .illustrator import Illustrator
 from .publisher import Publisher
-from datetime import datetime, date
+from datetime import date
 
 
 class Book(DataStructureBase):

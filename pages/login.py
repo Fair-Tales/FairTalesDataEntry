@@ -6,7 +6,7 @@ from utilities import authenticate_user, is_authenticated
 from streamlit_js_eval import streamlit_js_eval
 
 def confirm(username, password):
-    print("heya", username, password)
+    #print("heya", username, password)
     if authenticate_user(username, password):
         st.session_state['authentication_status'] = True
         st.session_state['username'] = username

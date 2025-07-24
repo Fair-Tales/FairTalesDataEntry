@@ -1,5 +1,5 @@
 import streamlit as st
-from utilities import page_layout, check_authentication_status
+from utilities import page_layout
 from text_content import Alerts
 
 page_layout()
