@@ -93,29 +93,42 @@ def initialise():
     }
 
 def navigate_pages():
-    pages = {
-        "Menu":[
-            st.Page("./pages/login.py", title='Login'),
-            st.Page("./pages/account_settings.py", title='Account Settings'),
-            st.Page("./pages/user_home.py", title='Home'),
-        ],
-        "Other pages":[
-            st.Page("./pages/add_author.py"),
-            st.Page("./pages/add_book.py"),
-            st.Page("./pages/add_character.py"),
-            st.Page("./pages/book_data_entry.py"),
-            st.Page("./pages/book_edit_home.py"),
-            st.Page("./pages/confirm_entry.py"),
-            st.Page("./pages/confirm.py"),
-            st.Page("./pages/enter_text.py"),
-            st.Page("./pages/page_photo_upload.py"),
-            st.Page("./pages/qr_landing.py"),
-            st.Page("./pages/register_user_done.py"),
-            st.Page("./pages/register_user.py"),
-            st.Page("./pages/review_my_books.py"),
-            st.Page("./pages/uploader.py"),
-        ]
-    }
+    if 'admin' not in st.session_state or not st.session_state['admin']:
+        pages = {
+            "Menu":[
+                st.Page("./pages/login.py", title='Login'),
+                st.Page("./pages/account_settings.py", title='Account Settings'),
+                st.Page("./pages/user_home.py", title='Home'),
+            ],
+            "Other pages":[
+                st.Page("./pages/add_author.py"),
+                st.Page("./pages/add_illustrator.py"),
+                st.Page("./pages/add_publisher.py"),
+                st.Page("./pages/add_book.py"),
+                st.Page("./pages/add_character.py"),
+                st.Page("./pages/book_data_entry.py"),
+                st.Page("./pages/book_edit_home.py"),
+                st.Page("./pages/confirm_entry.py"),
+                st.Page("./pages/confirm.py"),
+                st.Page("./pages/enter_text.py"),
+                st.Page("./pages/page_photo_upload.py"),
+                st.Page("./pages/qr_landing.py"),
+                st.Page("./pages/register_user_done.py"),
+                st.Page("./pages/register_user.py"),
+                st.Page("./pages/review_my_books.py"),
+                st.Page("./pages/uploader.py"),
+            ]
+        }
+
+    else:
+        pages = {
+            "Menu":[
+                st.Page("./pages/login.py", title='Login'),
+                st.Page("./pages/account_settings.py", title='Account Settings'),
+                st.Page("./pages/user_home.py", title='Home'),
+                st.Page("./pages/validation.py", title='Validate'),
+            ]
+        }
 
     st.navigation(pages, position="sidebar").run()
 
@@ -124,5 +137,6 @@ if __name__ == "__main__":
     navigate_pages()
     if 'initialised' not in st.session_state:
         st.session_state['initialised'] = True
+        st.session_state['admin'] = False
         initialise()
         st.switch_page("./pages/login.py")
