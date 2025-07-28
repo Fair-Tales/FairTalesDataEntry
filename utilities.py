@@ -58,6 +58,11 @@ def get_user(username):
         return docs[0]
     else:
         return None
+    
+def get_admin(username):
+    user = get_user(username)
+    admin = user.to_dict()['admin']
+    return admin
 
 
 def authenticate_user(username, password):
@@ -211,6 +216,8 @@ class FormConfirmation:
     forms = {
         'new_book': 'confirm_new_book',
         'new_author': 'confirm_new_author',
+        'new_illustrator': 'confirm_new_illustrator',
+        'new_publisher': 'confirm_new_publisher',
         'new_character': 'confirm_new_character'
     }
 
@@ -274,6 +281,52 @@ class FormConfirmation:
 
         if edit_button:
             st.switch_page("./pages/add_author.py")
+
+    @classmethod
+    def confirm_new_illustrator(cls):
+        confirm_button, edit_button = cls.display_confirmation(
+            st.session_state['current_illustrator'].to_dict(
+                form_fields_only=True,
+                convert_ref_fields_to_ids=True
+            )
+        )
+
+        if confirm_button:
+            st.session_state['current_illustrator'].register()
+            st.session_state['illustrator_dict'][
+                st.session_state['current_illustrator'].name
+            ] = st.session_state['current_illustrator'].get_ref()
+
+            st.session_state['current_book'].illustrator = (
+                st.session_state['current_illustrator'].name
+            )
+            st.switch_page("./pages/add_book.py")
+
+        if edit_button:
+            st.switch_page("./pages/add_illustrator.py")
+
+    @classmethod
+    def confirm_new_publisher(cls):
+        confirm_button, edit_button = cls.display_confirmation(
+            st.session_state['current_publisher'].to_dict(
+                form_fields_only=True,
+                convert_ref_fields_to_ids=True
+            )
+        )
+
+        if confirm_button:
+            st.session_state['current_publisher'].register()
+            st.session_state['publisher_dict'][
+                st.session_state['current_publisher'].name
+            ] = st.session_state['current_publisher'].get_ref()
+
+            st.session_state['current_book'].publisher = (
+                st.session_state['current_publisher'].name
+            )
+            st.switch_page("./pages/add_book.py")
+
+        if edit_button:
+            st.switch_page("./pages/add_publisher.py")
 
     @classmethod
     def confirm_new_character(cls):
