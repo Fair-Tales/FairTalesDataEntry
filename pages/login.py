@@ -2,7 +2,7 @@ import streamlit as st
 from utilities import page_layout
 from text_content import Terms
 from streamlit_option_menu import option_menu
-from utilities import authenticate_user, is_authenticated
+from utilities import authenticate_user, is_authenticated, get_admin
 from streamlit_js_eval import streamlit_js_eval
 
 def confirm(username, password):
@@ -10,6 +10,8 @@ def confirm(username, password):
     if authenticate_user(username, password):
         st.session_state['authentication_status'] = True
         st.session_state['username'] = username
+        if get_admin(username):
+            st.session_state['admin'] = True
         st.switch_page("./pages/user_home.py")
     else:
         st.error("Invalid credentials.")
@@ -17,6 +19,7 @@ def confirm(username, password):
 def logout():
     st.session_state['authentication_status'] = False
     st.session_state['username'] = ""
+    st.session_state['admin'] = False
     streamlit_js_eval(js_expressions="parent.window.location.reload()")
 
 
