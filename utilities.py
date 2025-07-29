@@ -192,7 +192,7 @@ class FirestoreWrapper:
         return db.collection(collection).stream()
 
     def username_to_doc_ref(self, username):
-        return self.connect_book().collection('users').document(username)
+        return self.connect_user().collection('users').document(username)
 
     def document_exists(self, collection, doc_id):
         db = self.connect_book()

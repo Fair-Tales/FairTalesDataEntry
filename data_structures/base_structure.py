@@ -10,6 +10,8 @@ class Field:
     # that is a key to relevant lookup dictionary:
     ref_field_setters = {
         'author': 'author_dict',
+        'illustrator': 'illustrator_dict',
+        'publisher': 'publisher_dict',
         'book': 'book_dict',
         'character': 'character_dict',
     }
@@ -114,15 +116,15 @@ class DataStructureBase(ABC):
     def register(self):
         """ Sets entered_by user and records datetime if not set. """
         if not self.is_registered:
-            self.entered_by = st.session_state['firestore'].username_to_doc_ref(
-                st.session_state['username']
-            )
+            self.entered_by = st.session_state['username']#st.session_state['firestore'].username_to_doc_ref(
+                #st.session_state['username']
+            #)
             self.datetime_created = datetime.now(timezone.utc)
             self.is_registered = True
             self.save_to_db()
 
     def save_to_db(self):
-        db = st.session_state['firestore'].connect_user()
+        db = st.session_state['firestore'].connect_book()
         db.collection(
             self.belongs_to_collection
         ).document(self.document_id).set(self.to_dict(), merge=True)

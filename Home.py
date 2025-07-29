@@ -1,6 +1,6 @@
 import streamlit as st
 from utilities import is_authenticated, FirestoreWrapper, author_entry_to_name
-from data_structures import Author, Book
+from data_structures import Author, Book, Illustrator, Publisher
 
 # TODO: make better use of st-pages to show/hide and use icons: https://github.com/blackary/st_pages?tab=readme-ov-file
 # TODO: fix this Arrow table issue https://discuss.streamlit.io/t/applying-automatic-fixes-for-column-types-to-make-the-dataframe-arrow-compatible/52717/2
@@ -62,6 +62,8 @@ def initialise():
     st.session_state['firestore'] = FirestoreWrapper(auth=True)
     st.session_state['current_book'] = Book()
     st.session_state['author'] = Author()
+    st.session_state['publisher'] = Publisher()
+    st.session_state['illustrator'] = Illustrator()
     st.session_state['active_form_to_confirm'] = None
 
     firestore = FirestoreWrapper(auth=False)

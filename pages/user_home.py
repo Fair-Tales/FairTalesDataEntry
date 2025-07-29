@@ -33,23 +33,33 @@ def book_search():
 
         books = [
             st.session_state.firestore.get_by_field(
-                'Book', 'title', title
+                'books', 'title', title
             )
             for title in titles
         ]
-        print(books)
 
         if len(books) > 0:
             books = pd.concat(books)
-            #books.author = ['author']
-                #' '.join([
-                #    a.get().to_dict()['forename'],
-                #    a.get().to_dict()['surname']
-                #])
-                #for a in books.author
-            #]
+            books.author = [
+                ' '.join([
+                    a.get().to_dict()['forename'],
+                    a.get().to_dict()['surname']
+                ])
+                for a in books.author
+            ]
+            books.publisher = [
+                a.get().to_dict()['name']
+                for a in books.publisher
+                ]
+            books.illustrator = [
+                ' '.join([
+                    a.get().to_dict()['forename'],
+                    a.get().to_dict()['surname']
+                ])
+                for a in books.illustrator
+            ]
             st.write('Results:')
-            st.write(books[['title', 'author', 'publisher']])
+            st.write(books[['title', 'author', 'publisher', 'illustrator']])
         else:
             st.warning(Alerts.no_matching_book)
         # # TODO: combine author names...
@@ -64,23 +74,33 @@ def book_search():
 
 def author_books(author):
 
-    db = FirestoreWrapper().connect_book(auth=False)
-    book_stream = (
-        db.collection('books')
-        .where('author', '==', author[0] + '_' + author[1])
-        .stream()
+    db_book = st.session_state.firestore.connect_book()
+    author_ref = db_book.document(
+        f"authors/"+ author[0] + f'_' + author[1]
+    )
+    print(author_ref)
+    author_books = st.session_state.firestore.get_by_field(
+        collection="books",
+        field="author",
+        match=author_ref
     )
 
-    books = []
-
-    for book in book_stream:
-        books.append([book.to_dict()['title'], book.to_dict()['publisher']])
-
-    if books == []:
+    if author_books.empty:
         st.warning(Alerts.no_matching_book)
     else:
+        author_books.publisher = [
+            a.get().to_dict()['name']
+            for a in author_books.publisher
+            ]
+        author_books.illustrator = [
+            ' '.join([
+                a.get().to_dict()['forename'],
+                a.get().to_dict()['surname']
+            ])
+            for a in author_books.illustrator
+        ]
         st.subheader('Books written by ' + author[0].capitalize() + ' ' + author[1].capitalize() + ':')
-        st.dataframe(books, column_config={1: 'title', 2: 'publisher'})
+        st.dataframe(author_books, column_order=("title", "published", "publisher", "illustrator"))#, column_config={1: 'title', 2: 'publisher'})
 
         clear = st.button('clear')
         if clear:
@@ -99,7 +119,7 @@ def author_search():
 
         names = [
             [forename, surname] for forename, surname in st.session_state['author_dict'].items()
-            if search_name[0] in forename or name in surname for name in search_name 
+            if search_name[0] in forename or (name in surname for name in search_name)
         ]
 
         names = [name[0].split() for name in names]
@@ -117,7 +137,7 @@ def author_search():
 
         for author in author_stream:
             for entry in author:
-                authors.append([entry.to_dict()['forename'], entry.to_dict()['surname']])
+                authors.append([entry.to_dict()['forename'].lower(), entry.to_dict()['surname'].lower()])
 
         if authors == []:
             st.warning(Alerts.no_matching_author)
@@ -138,66 +158,8 @@ def add_book():
     st.session_state['current_book'] = Book()
     st.switch_page("./pages/add_book.py")
 
-#def edit_books(book, characters):
-    #characters = pd.json_normalize(characters).to_dict(orient='records')[0]
-    #print(characters)
-#    with st.form('edit_book_form'):
-#        st.subheader(book['title'] + ':')
-#        st.session_state['edited_book'] = st.data_editor(pd.DataFrame([book]))
-#        st.session_state['edited_characters'] = st.data_editor(characters)
-#        confirm = st.form_submit_button('confirm')
-
-#        if confirm:
-#            print(st.session_state['edited_book'])
-#            print(st.session_state['edited_characters'])
-
-    #if 'edit_changes_df' in st.session_state:
-    #    print(st.session_state['edit_changes_df'].get('selection').get('rows'))
-    ##    edit = st.text_input('heeeyy')
-    #    if edit != '':
-    #        book[st.session_state['edit_changes_df'].get('selection').get('rows')[0]] = edit
-    #        del st.session_state['edit_changes_df']
-
-#    clear = st.button('clear')
-#    if clear:
-#        del st.session_state['edit_df']
-
 def review_my_books():
     st.switch_page("./pages/review_my_books.py")
-    #st.subheader('Review your books here:')
-
-    #db = FirestoreWrapper().connect_book(auth=False)
-    #book_stream = (
-    #    db.collection('Book')
-    #    .where('entered_by', '==', st.session_state['username'])
-    #    .stream()
-    #)
-
-    #books = []
-    #characters = []
-
-    #for book in book_stream:
-    #    book = book.to_dict()
-    #    book.pop('entered_by')
-    #    characters.append(book.pop('characters'))
-    #    book['characters'] = len(characters[-1])
-    #    books.append(book)
-    #if books == []:
-    #        st.warning(Alerts.no_matching_book)
-    #else:
-    #    if 'edit_df' not in st.session_state:
-    #        st.dataframe(
-    #            books,
-    #            on_select = 'rerun',
-    #            selection_mode= 'single-row',
-    #            key='edit_df'
-    #            )
-    #    else:
-    #        edit_books(books[st.session_state['edit_df'].get('selection').get('rows')[0]], characters[st.session_state['edit_df'].get('selection').get('rows')[0]])
-    #        print(st.session_state['edited_book'])
-    #        print(st.session_state['edited_characters'])
-
-    
 
 page_layout()
 
