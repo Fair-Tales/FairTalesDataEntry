@@ -6,7 +6,6 @@ from .author import Author
 from .illustrator import Illustrator
 from .publisher import Publisher
 from datetime import date
-from streamlit_js_eval import streamlit_js_eval
 
 def add_book_entries(self):
     if 'adding_book_entries' not in st.session_state or not st.session_state['adding_book_entries']:
@@ -15,14 +14,19 @@ def add_book_entries(self):
         if self.author is None:
             st.session_state['current_author'] = Author()
             st.switch_page("./pages/add_author.py")
+        else:
+            st.session_state['current_author'] = self.author.get()
         if self.illustrator is None:
             st.session_state['current_illustrator'] = Illustrator()
             st.switch_page("./pages/add_illustrator.py")
+        else:
+            st.session_state['current_illustrator'] = self.illustrator.get()
         if self.publisher is None:
             st.session_state['current_publisher'] = Publisher()
             st.switch_page("./pages/add_publisher.py")
+        else:
+            st.session_state['current_publisher'] = self.publisher.get()
         st.session_state['adding_book_entries'] = False
-        #streamlit_js_eval(js_expressions="parent.window.location.reload()")
         form_content(self)
 
 def form_content(self):
@@ -40,9 +44,6 @@ def form_content(self):
         st.session_state['author_dict'].keys()
     )
     author_index = (
-    #    author_options.index(author_entry_to_name(self.author.get()))
-    #    if self.author is not None and author_entry_to_name(self.author.get()) in author_options
-    #    else 0
         author_options.index(author_entry_to_name(st.session_state['current_author']))
         if 'current_author' in st.session_state
         else 0
@@ -60,7 +61,7 @@ def form_content(self):
     )
 
     publisher_index = (
-        publisher_options.index(st.session_state['current_publisher'].name)
+        publisher_options.index(st.session_state['current_publisher'].to_dict()['name'].replace('_', ' '))
         if 'current_publisher' in st.session_state
         else 0
     )
@@ -78,9 +79,6 @@ def form_content(self):
         )
     
     illustrator_index = (
-    #    illustrator_options.index(author_entry_to_name(self.illustrator.get()))
-    #    if self.illustrator is not None and author_entry_to_name(self.illustrator.get()) in illustrator_options
-    #    else 0
         illustrator_options.index(author_entry_to_name(st.session_state['current_illustrator']))
         if 'current_illustrator' in st.session_state
         else 0
@@ -186,7 +184,7 @@ class Book(DataStructureBase):
     }
     form_fields.update(BookForm.theme_options)
 
-    ref_fields = ['author', 'entered_by']  # Reference fields will display document ID for human consumption
+    ref_fields = ['author', 'illustrator', 'publisher']  # Reference fields will display document ID for human consumption
 
     def __init__(self, db_object=None):
         super().__init__(collection='books', db_object=db_object)
