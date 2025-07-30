@@ -22,23 +22,17 @@ def check_authentication_status():
         st.session_state['authentication_status'] = False
 
     if not is_authenticated():
-        #st.info("Please login.")
         st.switch_page("./pages/login.py")
 
 def page_layout():
     st.set_page_config(
-        #page_title="bde",
         initial_sidebar_state="collapsed"
     )
-    hide()
-
-def hide():
-    return hide_pages([
-        'confirm', 'user_home', 'add_book', 'account_settings', 'confirm_entry',
-        'add_character', 'add_author', 'book_data_entry', 'enter_text',
-        'register_user', 'register_user_done', 'review_my_books',
-        'page_photo_upload', 'qr_landing', 'book_edit_home', 'uploader'
-    ])
+    st.sidebar.page_link("pages/login.py", label="Login")
+    st.sidebar.page_link("pages/user_home.py", label="Home")
+    st.sidebar.page_link("pages/account_settings.py", label="Settings")
+    if 'admin'in st.session_state and st.session_state['admin']:
+        st.sidebar.page_link("pages/validation.py", label="Validation")
 
 
 def check_user_exists(username):
