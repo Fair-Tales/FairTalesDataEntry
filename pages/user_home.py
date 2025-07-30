@@ -115,43 +115,50 @@ def author_search():
     )
     if len(author_search_string) > 0:
 
-        search_name = author_search_string.lower().split()
+        if 'search_name' not in st.session_state:
+            st.session_state['search_name'] = author_search_string.lower().split()
 
-        names = [
-            [forename, surname] for forename, surname in st.session_state['author_dict'].items()
-            if search_name[0] in forename or (name in surname for name in search_name)
-        ]
+        elif author_search_string.lower().split() != st.session_state['search_name']:
+            del st.session_state['search_name']
+            if 'author_df' in st.session_state:
+                del st.session_state['author_df']
 
-        names = [name[0].split() for name in names]
 
-        db = FirestoreWrapper().connect_book(auth=False)
-        author_stream = (
-            db.collection('authors')
-            .where('forename', '==', name[0])
-            .where('surname', '==', name[1])
-            .stream()
-            for name in names
-        )
+        if 'search_name' in st.session_state:
+            names = []
+            for author in st.session_state['author_dict']:
+                for name in st.session_state['search_name']:
+                    if name in author.lower():
+                        names.append(author.split())
 
-        authors = []
+            db = FirestoreWrapper().connect_book(auth=False)
+            author_stream = (
+                db.collection('authors')
+                .where('forename', '==', name[0])
+                .where('surname', '==', name[1])
+                .stream()
+                for name in names
+            )
 
-        for author in author_stream:
-            for entry in author:
-                authors.append([entry.to_dict()['forename'].lower(), entry.to_dict()['surname'].lower()])
+            authors = []
 
-        if authors == []:
-            st.warning(Alerts.no_matching_author)
-        else:
-            if 'author_df' not in st.session_state:
-                st.dataframe(
-                    authors,
-                    column_config={1: 'forename', 2: 'surname'},
-                    on_select = 'rerun',
-                    selection_mode= 'single-row',
-                    key='author_df'
-                    )
+            for author in author_stream:
+                for entry in author:
+                    authors.append([entry.to_dict()['forename'].lower(), entry.to_dict()['surname'].lower()])
+
+            if len(authors) > 0:
+                if 'author_df' not in st.session_state:
+                    st.dataframe(
+                        authors,
+                        column_config={1: 'forename', 2: 'surname'},
+                        on_select = 'rerun',
+                        selection_mode= 'single-row',
+                        key='author_df'
+                        )
+                else:
+                    author_books(authors[st.session_state['author_df'].get('selection').get('rows')[0]])
             else:
-                author_books(authors[st.session_state['author_df'].get('selection').get('rows')[0]])
+                st.warning(Alerts.no_matching_author)
 
 
 def add_book():
