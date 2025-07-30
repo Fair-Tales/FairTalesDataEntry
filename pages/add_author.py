@@ -12,5 +12,6 @@ with st.form("new_author"):
 cancel_button = st.button("Cancel entering new author.")
 
 if cancel_button:
+    st.session_state['adding_book_entries'] = False
     st.switch_page("./pages/add_book.py")
 
