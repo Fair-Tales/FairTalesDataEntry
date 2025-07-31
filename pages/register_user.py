@@ -30,7 +30,7 @@ def register_user(_username, _name, _password, _gender, _birth_year):
     else:
         db = FirestoreWrapper().connect_user(auth=False)
         db.collection("users").document(username).set(user_data)
-        #send_confirmation_email(username, username, confirmation_token, _name)
+        send_confirmation_email(username, username, confirmation_token, _name)
         st.switch_page("./pages/register_user_done.py")
 
 

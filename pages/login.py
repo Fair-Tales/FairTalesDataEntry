@@ -5,7 +5,6 @@ from streamlit_option_menu import option_menu
 from utilities import authenticate_user, is_authenticated, get_admin
 
 def confirm(username, password):
-    #print("heya", username, password)
     if authenticate_user(username, password):
         st.session_state['authentication_status'] = True
         st.session_state['username'] = username
@@ -40,7 +39,6 @@ else:
     if selected == "Login":
         st.header("Login")
         with st.form('LoginForm'):
-            #st.title("Login")
             username = st.text_input("Email", value="", key='login_email').lower()
             password = st.text_input("Password", type="password", value="", key='login_password')
             confirmed = st.form_submit_button(label="Confirm")
@@ -56,4 +54,3 @@ else:
 
         if accept_terms:
             st.switch_page("./pages/register_user.py")
-            #st.navigation([st.Page("./pages/login.py"),st.Page("./pages/register_user.py")], position="hidden").run()

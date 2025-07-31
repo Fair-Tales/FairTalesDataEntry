@@ -6,11 +6,6 @@ from data_structures import Book
 check_authentication_status()
 page_layout()
 
-#db_user = st.session_state.firestore.connect_user()
-#user_ref = db_user.document(
-#    f"users/{st.session_state['username']}"
-#)
-
 my_books = st.session_state.firestore.get_by_field(
     collection="books",
     field="entered_by",
@@ -42,14 +37,3 @@ cancel_button = st.button("Cancel editing books.")
 
 if cancel_button:
     st.switch_page("./pages/user_home.py")
-
-
-#with st.form('edit_book_form'):
-#    st.subheader(book['title'] + ':')
-#    st.session_state['edited_book'] = st.data_editor(pd.DataFrame([book]))
-#    st.session_state['edited_characters'] = st.data_editor(characters)
-#    confirm = st.form_submit_button('confirm')
-
-#    if confirm:
-#        print(st.session_state['edited_book'])
-#        print(st.session_state['edited_characters'])

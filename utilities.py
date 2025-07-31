@@ -130,15 +130,14 @@ class FirestoreWrapper:
 
     def __init__(self, auth=True):
         self.auth = auth
-        #print(st.secrets["firestore_key"])
-        self.firestore_key = json.loads(st.secrets["firestore_key"], strict=False)
+        self.firestore_key = json.loads(st.secrets["firestore_key"])
 
     def connect_book(self, auth=None):
 
         auth = self.auth if auth is None else auth
         if is_authenticated() or not auth:
             creds = service_account.Credentials.from_service_account_info(self.firestore_key)
-            return firestore.Client(credentials=creds, project="coherent-coder-464610-s2", database = "fair-tales")
+            return firestore.Client(credentials=creds, project="sawdataentry", database = "data-books")
         else:
             return None
         
@@ -147,7 +146,7 @@ class FirestoreWrapper:
         auth = self.auth if auth is None else auth
         if is_authenticated() or not auth:
             creds = service_account.Credentials.from_service_account_info(self.firestore_key)
-            return firestore.Client(credentials=creds, project="coherent-coder-464610-s2", database = "data-entry-users")
+            return firestore.Client(credentials=creds, project="sawdataentry", database = "data-users")
         else:
             return None
 
