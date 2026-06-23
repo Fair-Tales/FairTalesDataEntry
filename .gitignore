@@ -2,6 +2,10 @@
 databases/
 secrets/
 
+# Claude Code
+.claude/
+DECISIONS.md
+
 # Pycharm
 .idea/*
 

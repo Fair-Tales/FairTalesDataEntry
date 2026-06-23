@@ -1,0 +1,49 @@
+# FairTalesDataEntry
+
+
+
+## Working style
+
+**Unknown terms and tools:** If the user mentions something unfamiliar — a library, framework, tool, dataset, or concept — do a web search before responding. Do not guess or infer from name alone. Training data has a cutoff; web search gives current information.
+
+**Accuracy over confidence:** This project is used for research, coding, and task automation. Do not hallucinate. If uncertain, say so explicitly and search or ask rather than fabricating an answer. Cite sources when making factual claims about external tools or APIs.
+
+**Precision by default:** Operate as if temperature were zero — prefer the most correct, well-established answer over a creative or varied one. Avoid speculation. If multiple approaches exist, state the trade-offs rather than arbitrarily picking one. (Note: CC does not expose a literal temperature setting — this is a behavioral instruction.)
+
+**Model recommendations:** Proactively suggest switching model when the task warrants it:
+- Suggest **Haiku** (`/model haiku`) for mechanical tasks: formatting, simple edits, quick lookups
+- Suggest **Opus** (`/model opus`) for hard problems: complex architecture decisions, subtle bugs, difficult multi-file refactors, research synthesis — anything where Sonnet is struggling or the stakes are high
+- Default Sonnet is right for most coding work; only suggest switching when there's a clear reason
+
+## Safety rules
+
+The confirmation passphrase for all guarded actions is **`AFFIRMATIVE`** (capitals).
+Pressing Enter or saying "yes" / "ok" / "sure" does not count.
+
+### Require `AFFIRMATIVE` before:
+- Writing any file outside the project directory (also enforced by the PreToolUse hook)
+- System-level changes (OS config, services, hardware, anything outside this project)
+- Destructive git: `git push --force`, `git reset --hard`, amending pushed commits
+- File deletion: `rm -rf` or bulk deletes
+- Package removal: `pip uninstall` or removing packages from `pyproject.toml`
+- Process termination: `kill`, `pkill`, `killall`
+- Destructive database operations: `DROP`, `TRUNCATE`, `DELETE` without `WHERE`
+
+### Hard stops (never do, even with `AFFIRMATIVE`):
+- Never commit files matching `*.env`, `*secret*`, `*credential*`, `*token*`, `*api_key*`.
+
+## Environment
+- Python 3.10
+- Install deps: `pip install -e ".[dev]"`
+- Linter/formatter: `ruff check . --fix && ruff format .`
+- Type checker: `mypy src/`
+- Tests: `pytest`
+
+## Repository layout
+```
+(add your layout here)
+```
+
+## Decisions
+Significant technical decisions are logged in `DECISIONS.md`. Check it before proposing
+changes to tooling, layout, or data handling.
