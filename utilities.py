@@ -271,7 +271,7 @@ class FormConfirmation:
             st.switch_page("./pages/add_character.py")
 
 
-@st.experimental_dialog("Are you sure?")
+@st.dialog("Are you sure?")
 def confirm_submit():
     st.write(
         """
