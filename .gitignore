@@ -1,6 +1,7 @@
 # Project specific (development stuff)
 databases/
 secrets/
+planning/*.docx
 
 # Claude Code
 .claude/
