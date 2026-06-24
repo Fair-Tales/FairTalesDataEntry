@@ -10,7 +10,6 @@ class GenderRegistration:
         calculate aggregate statistics. Your personal information will be kept private.   
     """
 
-
 class BookForm:
     header = "Please enter or review the details of this book."
     cancel_text = "Cancel"
@@ -18,6 +17,14 @@ class BookForm:
     author_help = """
         Please select author from the list. If the author is not listed, please select `None of these`
         and you will be guided to create a new author on the next step.
+    """
+    illustrator_help = """
+        Please select illustrator from the list. If the illustrator is not listed, please select `None of these`
+        and you will be guided to create a new illustrator on the next step.
+    """
+    publisher_help = """
+        Please select publisher from the list. If the publisher is not listed, please select `None of these`
+        and you will be guided to create a new publisher on the next step.
     """
     book_exists = """
         This book already exists in the database. You can use the `Book search` function on your 
@@ -56,6 +63,25 @@ class AuthorForm:
     author_exists = """
         This author already exists in the database. Please either select them from the 
         dropdown menu above, or enter a unique name for your new author.
+    """
+
+class IllustratorForm:
+    header = "Please enter illustrator details."
+    gender_options = ["Woman", "Man", "Non-binary", "Other", "Unknown"]
+    gender_prompt = """
+        Please use a web search to enter the gender of the illustrator to the best of your knowledge.
+        If it is not clear from a cursory search, please select `Unknown`.
+    """
+    illustrator_exists = """
+        This illustrator already exists in the database. Please either select them from the 
+        dropdown menu above, or enter a unique name for your new illustrator.
+    """
+
+class PublisherForm:
+    header = "Please enter publisher details."
+    publisher_exists = """
+        This publisher already exists in the database. Please either select them from the 
+        dropdown menu above, or enter a unique name for your new publisher.
     """
 
 

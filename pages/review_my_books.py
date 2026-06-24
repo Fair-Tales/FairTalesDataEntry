@@ -1,20 +1,12 @@
 import streamlit as st
-st.set_page_config(
-    page_title="bde",
-    initial_sidebar_state="collapsed"
-)
-from utilities import hide
+from utilities import page_layout, check_authentication_status
 from text_content import Instructions, Alerts
 from data_structures import Book
 
-hide()
+check_authentication_status()
+page_layout()
 
-db = st.session_state.firestore.connect()
-user_ref = db.document(
-    f"users/{st.session_state['username']}"
-)
-
-
+user_ref = st.session_state.firestore.username_to_doc_ref(st.session_state['username'])
 my_books = st.session_state.firestore.get_by_field(
     collection="books",
     field="entered_by",

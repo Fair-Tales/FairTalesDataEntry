@@ -1,11 +1,9 @@
 import streamlit as st
-from utilities import author_entry_to_name, hide
+from utilities import author_entry_to_name, page_layout, check_authentication_status
 
-hide()
-
+check_authentication_status()
 
 # TODO: add option to edit existing character (change names, aliases etc)
-
 def new_character():
 
     # first find existing authors:
@@ -41,6 +39,8 @@ def new_character():
             st.session_state['active_form_to_confirm'] = 'new_character'
             st.switch_page("./pages/confirm_entry.py")
 
+
+page_layout()
 
 new_character()
 

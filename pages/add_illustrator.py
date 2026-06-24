@@ -5,11 +5,11 @@ check_authentication_status()
 page_layout()
 
 
-with st.form("new_author"):
-    st.session_state['current_author'].to_form()
+with st.form("new_illustrator"):
+    st.session_state['current_illustrator'].to_form()
 
 
-cancel_button = st.button("Cancel entering new author.")
+cancel_button = st.button("Cancel entering new illustrator.")
 
 if cancel_button:
     st.session_state['adding_book_entries'] = False

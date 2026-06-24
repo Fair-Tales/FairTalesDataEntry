@@ -1,11 +1,13 @@
 import streamlit as st
-from utilities import FirestoreWrapper, hide
+from utilities import FirestoreWrapper, page_layout, check_authentication_status
 
-hide()
+check_authentication_status()
+page_layout()
+
 token = st.query_params.token
 user = st.query_params.user
 
-db = FirestoreWrapper().connect(auth=False)
+db = FirestoreWrapper().connect_user(auth=False)
 user_ref = db.collection("users").document(user)
 
 if user_ref.get().to_dict()['is_confirmed']:

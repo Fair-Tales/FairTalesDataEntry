@@ -10,6 +10,8 @@ class Field:
     # that is a key to relevant lookup dictionary:
     ref_field_setters = {
         'author': 'author_dict',
+        'illustrator': 'illustrator_dict',
+        'publisher': 'publisher_dict',
         'book': 'book_dict',
         'character': 'character_dict',
     }
@@ -108,7 +110,7 @@ class DataStructureBase(ABC):
                 self.last_updated = datetime.now(timezone.utc)
 
     def get_ref(self):
-        db = st.session_state.firestore.connect()
+        db = st.session_state.firestore.connect_book()
         return db.collection(self.belongs_to_collection).document(self.document_id)
 
     def register(self):
@@ -122,7 +124,7 @@ class DataStructureBase(ABC):
             self.save_to_db()
 
     def save_to_db(self):
-        db = st.session_state['firestore'].connect()
+        db = st.session_state['firestore'].connect_book()
         db.collection(
             self.belongs_to_collection
         ).document(self.document_id).set(self.to_dict(), merge=True)
