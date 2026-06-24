@@ -2,14 +2,12 @@ from google.cloud import firestore
 import streamlit as st
 from google.cloud.firestore_v1 import FieldFilter
 from google.oauth2 import service_account
-from st_pages import hide_pages
 import pandas as pd
 import json
 import bcrypt
 import smtplib
 from email.mime.text import MIMEText
 from datetime import datetime, timezone
-
 
 def is_authenticated():
     if 'authentication_status' not in st.session_state:
@@ -23,21 +21,21 @@ def check_authentication_status():
         st.session_state['authentication_status'] = False
 
     if not is_authenticated():
-        st.info("Please login.")
-        st.stop()
+        st.switch_page("./pages/login.py")
 
-
-def hide():
-    hide_pages([
-        'confirm', 'user_home', 'add_book', 'account_settings', 'confirm_entry',
-        'add_character', 'add_author', 'book_data_entry', 'enter_text',
-        'register_user', 'register_user_done', 'review_my_books',
-        'page_photo_upload', 'qr_landing', 'book_edit_home', 'uploader'
-    ])
+def page_layout():
+    st.set_page_config(
+        initial_sidebar_state="collapsed"
+    )
+    st.sidebar.page_link("pages/login.py", label="Login")
+    st.sidebar.page_link("pages/user_home.py", label="Home")
+    st.sidebar.page_link("pages/account_settings.py", label="Settings")
+    if 'admin'in st.session_state and st.session_state['admin']:
+        st.sidebar.page_link("pages/validation.py", label="Validation")
 
 
 def check_user_exists(username):
-    db = FirestoreWrapper().connect(auth=False)
+    db = FirestoreWrapper().connect_user(auth=False)
     users_ref = db.collection("users")
     query_ref = users_ref.where(filter=firestore.FieldFilter("username", "==", username))
     docs = query_ref.get()
@@ -45,7 +43,7 @@ def check_user_exists(username):
 
 
 def get_user(username):
-    db = FirestoreWrapper().connect(auth=False)
+    db = FirestoreWrapper().connect_user(auth=False)
     users_ref = db.collection("users")
     query_ref = users_ref.where(filter=firestore.FieldFilter("username", "==", username))
     docs = query_ref.get()
@@ -53,6 +51,10 @@ def get_user(username):
         return docs[0]
     else:
         return None
+    
+def get_admin(username):
+    user = get_user(username)
+    return user.to_dict().get('admin', False)
 
 
 def authenticate_user(username, password):
@@ -128,8 +130,7 @@ class FirestoreWrapper:
         self.auth = auth
         self.firestore_key = json.loads(st.secrets["firestore_key"])
 
-    def connect(self, auth=None):
-
+    def _connect(self, auth=None):
         auth = self.auth if auth is None else auth
         if is_authenticated() or not auth:
             creds = service_account.Credentials.from_service_account_info(self.firestore_key)
@@ -137,9 +138,20 @@ class FirestoreWrapper:
         else:
             return None
 
+    # connect_book and connect_user are kept as separate methods in anticipation
+    # of issue #48, which will split the single Firestore database into two:
+    # one for book/content data and one for user credentials. When that work is
+    # done, each method will connect to its own named database. For now both
+    # route to the same default database.
+    def connect_book(self, auth=None):
+        return self._connect(auth)
+
+    def connect_user(self, auth=None):
+        return self._connect(auth)
+
     def single_field_search(self, collection, field, contains_string):
         """ Search for string withing field. """
-        db = self.connect()
+        db = self.connect_book()
 
         results = (
             db.collection(collection)
@@ -153,7 +165,7 @@ class FirestoreWrapper:
 
     def get_by_field(self, collection, field, match):
         """ Get exact match in field"""
-        db = self.connect()
+        db = self.connect_book()
         results = db.collection(collection).where(
             filter=FieldFilter(field, "==", match)
         ).stream()
@@ -163,24 +175,24 @@ class FirestoreWrapper:
         return pd.DataFrame(results_dict)
 
     def get_by_reference(self, collection, document_ref):
-        db = self.connect()
+        db = self.connect_book()
         doc_ref = db.collection(collection).document(document_ref)
         return doc_ref.get()
 
     def get_all_documents_stream(self, collection):
-        db = self.connect()
+        db = self.connect_book()
         return db.collection(collection).stream()
 
     def username_to_doc_ref(self, username):
-        return self.connect().collection('users').document(username)
+        return self.connect_user().collection('users').document(username)
 
     def document_exists(self, collection, doc_id):
-        db = self.connect()
+        db = self.connect_book()
         doc = db.collection(collection).document(doc_id).get()
         return doc.exists
 
     def update_field(self, collection, document, field, value):
-        db = self.connect()
+        db = self.connect_book()
         doc_ref = db.collection(collection).document(document)
         doc_ref.update({field: value})
 
@@ -196,6 +208,8 @@ class FormConfirmation:
     forms = {
         'new_book': 'confirm_new_book',
         'new_author': 'confirm_new_author',
+        'new_illustrator': 'confirm_new_illustrator',
+        'new_publisher': 'confirm_new_publisher',
         'new_character': 'confirm_new_character'
     }
 
@@ -261,6 +275,52 @@ class FormConfirmation:
             st.switch_page("./pages/add_author.py")
 
     @classmethod
+    def confirm_new_illustrator(cls):
+        confirm_button, edit_button = cls.display_confirmation(
+            st.session_state['current_illustrator'].to_dict(
+                form_fields_only=True,
+                convert_ref_fields_to_ids=True
+            )
+        )
+
+        if confirm_button:
+            st.session_state['current_illustrator'].register()
+            st.session_state['illustrator_dict'][
+                st.session_state['current_illustrator'].name
+            ] = st.session_state['current_illustrator'].get_ref()
+
+            st.session_state['current_book'].illustrator = (
+                st.session_state['current_illustrator'].name
+            )
+            st.switch_page("./pages/add_book.py")
+
+        if edit_button:
+            st.switch_page("./pages/add_illustrator.py")
+
+    @classmethod
+    def confirm_new_publisher(cls):
+        confirm_button, edit_button = cls.display_confirmation(
+            st.session_state['current_publisher'].to_dict(
+                form_fields_only=True,
+                convert_ref_fields_to_ids=True
+            )
+        )
+
+        if confirm_button:
+            st.session_state['current_publisher'].register()
+            st.session_state['publisher_dict'][
+                st.session_state['current_publisher'].name
+            ] = st.session_state['current_publisher'].get_ref()
+
+            st.session_state['current_book'].publisher = (
+                st.session_state['current_publisher'].name
+            )
+            st.switch_page("./pages/add_book.py")
+
+        if edit_button:
+            st.switch_page("./pages/add_publisher.py")
+
+    @classmethod
     def confirm_new_character(cls):
         confirm_button, edit_button = cls.display_confirmation('character_details')
 
@@ -271,7 +331,7 @@ class FormConfirmation:
             st.switch_page("./pages/add_character.py")
 
 
-@st.experimental_dialog("Are you sure?")
+@st.dialog("Are you sure?")
 def confirm_submit():
     st.write(
         """

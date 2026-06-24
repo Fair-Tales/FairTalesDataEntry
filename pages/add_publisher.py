@@ -5,11 +5,11 @@ check_authentication_status()
 page_layout()
 
 
-with st.form("new_author"):
-    st.session_state['current_author'].to_form()
+with st.form("new_publisher"):
+    st.session_state['current_publisher'].to_form()
 
 
-cancel_button = st.button("Cancel entering new author.")
+cancel_button = st.button("Cancel entering new publisher.")
 
 if cancel_button:
     st.session_state['adding_book_entries'] = False

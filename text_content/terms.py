@@ -21,7 +21,7 @@ class Terms:
         copyright owner for non-commercial research or private study. You must ensure that 
         your use complies with the principles of "fair dealing" and does not significantly 
         impact the copyright owner. You must not share the material that you copy anywhere 
-        else except into out data entry tool. You can the find details of the exception here
+        else except into our data entry tool. You can the find details of the exception here
         under 'research':
         https://www.gov.uk/government/publications/changes-to-copyright-law
         

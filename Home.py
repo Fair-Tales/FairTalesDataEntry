@@ -1,11 +1,6 @@
 import streamlit as st
-st.set_page_config(
-    page_title="Home",
-    initial_sidebar_state="collapsed"
-)
-from utilities import hide, is_authenticated, FirestoreWrapper, authenticate_user, author_entry_to_name
-from text_content import Terms
-from data_structures import Author, Book
+from utilities import is_authenticated, FirestoreWrapper, author_entry_to_name
+from data_structures import Author, Book, Illustrator, Publisher
 
 # TODO: make better use of st-pages to show/hide and use icons: https://github.com/blackary/st_pages?tab=readme-ov-file
 # TODO: fix this Arrow table issue https://discuss.streamlit.io/t/applying-automatic-fixes-for-column-types-to-make-the-dataframe-arrow-compatible/52717/2
@@ -63,34 +58,12 @@ from data_structures import Author, Book
 # TODO: add diagram of how to take photos
 # TODO: check orientation of portrait images - not working atm.
 
-
-def login():
-    st.title("Login")
-    username = st.text_input("Email", value="", key='login_email').lower()
-    password = st.text_input("Password", type="password", value="", key='login_password')
-    if st.button("Login"):
-        if authenticate_user(username, password):
-            st.session_state['authentication_status'] = True
-            st.session_state['username'] = username
-            st.switch_page("./pages/user_home.py")
-        else:
-            st.error("Invalid credentials.")
-
-
-def terms_and_conditions():
-    st.text(
-        Terms.archivist_user_terms
-    )
-    accept_terms = st.checkbox("Accept")
-
-    if accept_terms:
-        st.switch_page("./pages/register_user.py")
-
-
 def initialise():
     st.session_state['firestore'] = FirestoreWrapper(auth=True)
     st.session_state['current_book'] = Book()
     st.session_state['author'] = Author()
+    st.session_state['publisher'] = Publisher()
+    st.session_state['illustrator'] = Illustrator()
     st.session_state['active_form_to_confirm'] = None
 
     firestore = FirestoreWrapper(auth=False)
@@ -99,34 +72,66 @@ def initialise():
         for author in
         firestore.get_all_documents_stream(collection='authors')
     }
+    st.session_state['publisher_dict'] = {
+        publisher.to_dict()['name'].replace('_', ' '): publisher.reference
+        for publisher in
+        firestore.get_all_documents_stream(collection='publishers')
+    }
+    st.session_state['illustrator_dict'] = {
+        author_entry_to_name(illustrator): illustrator.reference
+        for illustrator in
+        firestore.get_all_documents_stream(collection='illustrators')
+    }
     st.session_state['book_dict'] = {
         book.to_dict()['title']: book.reference
         for book in
         firestore.get_all_documents_stream(collection='books')
     }
+    #print(st.session_state['book_dict'])
     st.session_state['character_dict'] = {
         character.to_dict()['name']: character.reference
         for character in
         firestore.get_all_documents_stream(collection='characters')
     }
 
+def navigate_pages():
+    
+    pages = {
+        "Menu":[
+            st.Page("./pages/login.py", title='Sign Out'),
+            st.Page("./pages/account_settings.py", title='Account Settings'),
+            st.Page("./pages/user_home.py", title='Home'),
+        ],
+        "Other pages":[
+            st.Page("./pages/add_author.py"),
+            st.Page("./pages/add_illustrator.py"),
+            st.Page("./pages/add_publisher.py"),
+            st.Page("./pages/add_book.py"),
+            st.Page("./pages/add_character.py"),
+            st.Page("./pages/book_data_entry.py"),
+            st.Page("./pages/book_edit_home.py"),
+            st.Page("./pages/confirm_entry.py"),
+            st.Page("./pages/confirm.py"),
+            st.Page("./pages/enter_text.py"),
+            st.Page("./pages/page_photo_upload.py"),
+            st.Page("./pages/qr_landing.py"),
+            st.Page("./pages/register_user_done.py"),
+            st.Page("./pages/register_user.py"),
+            st.Page("./pages/review_my_books.py"),
+            st.Page("./pages/uploader.py"),
+        ]
+    }
 
-def main():
-    st.sidebar.title("Navigation")
-    choice = st.sidebar.radio("Select an option:", ["Login", "Register"])
+    if 'admin' in st.session_state and st.session_state['admin']:
+        pages["Menu"].append(st.Page("./pages/validation.py", title='Validate'))
 
-    if choice == "Login":
-        login()
-    elif choice == "Register":
-        terms_and_conditions()
-
+    st.navigation(pages, position="hidden").run()
 
 if __name__ == "__main__":
 
-    initialise()
-    hide()
-
-    if is_authenticated():
-        st.switch_page("./pages/user_home.py")
-    main()
-
+    navigate_pages()
+    if 'initialised' not in st.session_state:
+        st.session_state['initialised'] = True
+        st.session_state['admin'] = False
+        initialise()
+        st.switch_page("./pages/login.py")

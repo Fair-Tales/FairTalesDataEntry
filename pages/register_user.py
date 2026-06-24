@@ -1,16 +1,10 @@
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, date
 import bcrypt
-st.set_page_config(
-    initial_sidebar_state="auto"
-)
 from utilities import (
-    hide, hash_password, check_user_exists,
-    send_confirmation_email, FirestoreWrapper
+    page_layout, hash_password, check_user_exists, send_confirmation_email, FirestoreWrapper
 )
 from text_content import Alerts, GenderRegistration
-
-hide()
 
 
 def register_user(_username, _name, _password, _gender, _birth_year):
@@ -28,12 +22,13 @@ def register_user(_username, _name, _password, _gender, _birth_year):
         "account_type": "user",
         "confirmation_token": confirmation_token,
         "is_confirmed": False,
-        "trust_rating": 0
+        "trust_rating": 0,
+        "admin": False
     }
     if check_user_exists(_username):
         st.warning(Alerts.user_exists)
     else:
-        db = FirestoreWrapper().connect(auth=False)
+        db = FirestoreWrapper().connect_user(auth=False)
         db.collection("users").document(username).set(user_data)
         send_confirmation_email(username, username, confirmation_token, _name)
         st.switch_page("./pages/register_user_done.py")
@@ -73,6 +68,8 @@ def validate_user_details(_username, _name, _password, _gender, _gender_custom, 
     return True
 
 
+page_layout()
+
 with st.form('registration_form'):
     st.title("User Registration")
     username = st.text_input("Email", value="", key='register_email').lower()
@@ -86,7 +83,11 @@ with st.form('registration_form'):
     )
     gender_custom = st.text_input(label=GenderRegistration.manual_input_prompt, value="")
 
-    user_birth_year = st.number_input("Birth year", min_value=1900, max_value=2030, value=1980)
+    user_birth_year = int(st.selectbox(
+        "What is your birth year?",
+        (x for x in range(1900, (date.today().year + 1))),
+        placeholder="Select year of birth",
+        ))
     registered = st.form_submit_button("Register")
 
     if registered:
