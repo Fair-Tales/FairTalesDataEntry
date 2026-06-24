@@ -5,25 +5,10 @@ import natsort
 import streamlit as st
 import anthropic
 from data_structures import Page
-from text_content import Instructions
+from text_content import Instructions, AIPrompts
 from utilities import page_layout, check_authentication_status
 
 check_authentication_status()
-
-_EXTRACTION_PROMPT = """\
-Analyse this photo of a children's picture book page.
-
-Instructions:
-- Correct for any rotation or tilt in the image and focus on the book page itself, ignoring any background (table, hands, etc.).
-- Transcribe ALL text visible on the page exactly as written, including speech bubbles and captions. Do not include page numbers.
-- Classify whether this is a STORY page — meaning it contains narrative text that is part of the story itself. Pages that are NOT story pages include: title page, half-title, copyright, dedication, contents, about the author, publisher information, back-cover synopsis, end matter, or blank pages.
-
-Respond with valid JSON only, no other text:
-{
-  "text": "<all text on the page, or empty string if none>",
-  "is_story_page": true or false,
-  "page_type": "<one of: story, title, copyright, dedication, contents, about_author, publisher_info, synopsis, blank, other>"
-}"""
 
 
 def extract_page_info(fs, photos_url, page_number, client):
@@ -45,7 +30,7 @@ def extract_page_info(fs, photos_url, page_number, client):
                             "data": image_data
                         }
                     },
-                    {"type": "text", "text": _EXTRACTION_PROMPT}
+                    {"type": "text", "text": AIPrompts.page_extraction}
                 ]
             }]
         )
