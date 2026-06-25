@@ -82,67 +82,76 @@ def upload_widget(on_submit='enter_text'):
             total = len(sort_file_names)
             photos_url = f"sawimages/{st.session_state['current_book'].title}"
 
-            # Phase 1 — upload raw photos to S3, keep bytes in memory
-            upload_status = st.empty()
-            upload_progress = st.progress(0)
-            raw_bytes_list = []
-            for fi, name in enumerate(sort_file_names):
-                upload_status.write(f"Saving photo {fi + 1} of {total}...")
-                raw_bytes = file_dict[name].read()
-                with fs.open(f"{photos_url}/page_{fi + 1}.jpg", 'wb') as f:
-                    f.write(raw_bytes)
-                raw_bytes_list.append(raw_bytes)
-                upload_progress.progress((fi + 1) / total)
+            # Only run the pipeline once. Streamlit re-runs the script when the
+            # user clicks Continue — the file uploader still holds the selected
+            # files on that re-run, so without this guard the whole pipeline
+            # would fire again before st.switch_page redirects.
+            if not st.session_state.get('_upload_pipeline_done', False):
 
-            st.session_state.current_book.photos_uploaded = True
-            st.session_state.current_book.photos_url = photos_url
-            st.session_state.current_book.page_count = total
-            upload_status.write("Photos saved.")
+                # Phase 1 — upload raw photos to S3, keep bytes in memory
+                upload_status = st.empty()
+                upload_progress = st.progress(0)
+                raw_bytes_list = []
+                for fi, name in enumerate(sort_file_names):
+                    upload_status.write(f"Saving photo {fi + 1} of {total}...")
+                    raw_bytes = file_dict[name].read()
+                    with fs.open(f"{photos_url}/page_{fi + 1}.jpg", 'wb') as f:
+                        f.write(raw_bytes)
+                    raw_bytes_list.append(raw_bytes)
+                    upload_progress.progress((fi + 1) / total)
 
-            # Phase 2 — image correction + text extraction per page
-            if 'ANTHROPIC_API_KEY' in st.secrets:
-                ai_client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
-                process_status = st.empty()
-                process_progress = st.progress(0)
+                st.session_state.current_book.photos_uploaded = True
+                st.session_state.current_book.photos_url = photos_url
+                st.session_state.current_book.page_count = total
+                upload_status.write("Photos saved.")
 
-                for i, raw_bytes in enumerate(raw_bytes_list):
-                    page_number = i + 1
-                    process_status.write(
-                        f"Processing page {page_number} of {total} "
-                        f"(correcting image, extracting text)..."
-                    )
+                # Phase 2 — image correction + text extraction per page
+                if 'ANTHROPIC_API_KEY' in st.secrets:
+                    ai_client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
+                    process_status = st.empty()
+                    process_progress = st.progress(0)
 
-                    bytes_for_extraction = _process_page(
-                        raw_bytes, page_number, photos_url, fs, ai_client
-                    )
+                    for i, raw_bytes in enumerate(raw_bytes_list):
+                        page_number = i + 1
+                        process_status.write(
+                            f"Processing page {page_number} of {total} "
+                            f"(correcting image, extracting text)..."
+                        )
 
-                    page = Page(
-                        page_number=page_number,
-                        book=st.session_state['current_book'].title
-                    )
-                    page.register()
+                        bytes_for_extraction = _process_page(
+                            raw_bytes, page_number, photos_url, fs, ai_client
+                        )
 
-                    text, is_story = extract_page_info(bytes_for_extraction, ai_client)
-                    if text:
-                        page.text = text
-                    page.contains_story = is_story
+                        page = Page(
+                            page_number=page_number,
+                            book=st.session_state['current_book'].title
+                        )
+                        page.register()
 
-                    process_progress.progress((i + 1) / total)
+                        text, is_story = extract_page_info(bytes_for_extraction, ai_client)
+                        if text:
+                            page.text = text
+                        page.contains_story = is_story
 
-                process_status.write("Processing complete.")
-            else:
-                # No API key — register pages without extraction
-                for i in range(total):
-                    page = Page(
-                        page_number=i + 1,
-                        book=st.session_state['current_book'].title
-                    )
-                    page.register()
+                        process_progress.progress((i + 1) / total)
+
+                    process_status.write("Processing complete.")
+                else:
+                    # No API key — register pages without extraction
+                    for i in range(total):
+                        page = Page(
+                            page_number=i + 1,
+                            book=st.session_state['current_book'].title
+                        )
+                        page.register()
+
+                st.session_state['_upload_pipeline_done'] = True
 
             st.write("Page photo upload complete, you may continue.")
             submit = st.button('Continue')
 
             if submit:
+                st.session_state.pop('_upload_pipeline_done', None)
                 st.session_state.pop('book_pages_dict', None)
                 if on_submit == 'enter_text':
                     st.switch_page("./pages/enter_text.py")
