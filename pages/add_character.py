@@ -35,6 +35,9 @@ def new_character():
 
         submitted = st.form_submit_button("Submit")
         if submitted:
+            if not metadata['name'].strip():
+                st.warning("Character name is required.")
+                return
             st.session_state['character_details'] = metadata
             st.session_state['active_form_to_confirm'] = 'new_character'
             st.switch_page("./pages/confirm_entry.py")

@@ -59,6 +59,9 @@ class Publisher(DataStructureBase):
         submitted = st.form_submit_button("Submit")
 
         if submitted:
+            if not self.name.strip():
+                st.warning("Publisher name is required.")
+                return
             if st.session_state.firestore.document_exists(
                 collection='publishers',
                 doc_id=self.document_id
