@@ -5,7 +5,9 @@ import natsort
 import streamlit as st
 import anthropic
 from data_structures import Page
-from image_processing import correct_book_page, check_crop_quality
+from image_processing import (
+    correct_book_page, check_crop_quality, get_rotation_angle, rotate_image
+)
 from text_content import Instructions, AIPrompts
 from utilities import page_layout, check_authentication_status
 
@@ -47,18 +49,33 @@ def extract_page_info(image_bytes, client):
 
 def _process_page(raw_bytes, page_number, photos_url, fs, ai_client):
     """
-    Run the two-stage correction pipeline for one page.
-    Returns (image_bytes_for_extraction, correction_applied).
-    Saves page_{n}_cropped.jpg to S3 only when both stages pass.
+    Run the staged correction pipeline for one page.
+
+    Stage 1: OpenCV perspective correction + Haiku quality check.
+    Stage 2: Rotation-only Sonnet fallback + Haiku quality check.
+
+    Returns (image_bytes_for_extraction, method) where method is
+    'opencv', 'rotation', or None (no correction applied).
+    Saves page_{n}_cropped.jpg to S3 when a stage succeeds.
     """
-    corrected_bytes, opencv_ok = correct_book_page(raw_bytes)
-
-    if opencv_ok and check_crop_quality(corrected_bytes, ai_client):
+    def _save_and_return(corrected, method):
         with fs.open(f"{photos_url}/page_{page_number}_cropped.jpg", 'wb') as f:
-            f.write(corrected_bytes)
-        return corrected_bytes, True
+            f.write(corrected)
+        return corrected, method
 
-    return raw_bytes, False
+    # Stage 1 — OpenCV perspective correction
+    corrected_bytes, opencv_ok = correct_book_page(raw_bytes)
+    if opencv_ok and check_crop_quality(corrected_bytes, ai_client):
+        return _save_and_return(corrected_bytes, 'opencv')
+
+    # Stage 2 — rotation-only fallback via Sonnet
+    angle = get_rotation_angle(raw_bytes, ai_client)
+    if angle != 0:
+        rotated_bytes = rotate_image(raw_bytes, angle)
+        if check_crop_quality(rotated_bytes, ai_client):
+            return _save_and_return(rotated_bytes, 'rotation')
+
+    return raw_bytes, None
 
 
 def upload_widget(on_submit='enter_text'):
@@ -118,7 +135,7 @@ def upload_widget(on_submit='enter_text'):
                             f"(correcting image, extracting text)..."
                         )
 
-                        bytes_for_extraction, corrected = _process_page(
+                        bytes_for_extraction, method = _process_page(
                             raw_bytes, page_number, photos_url, fs, ai_client
                         )
 
@@ -133,11 +150,16 @@ def upload_widget(on_submit='enter_text'):
                             page.text = text
                         page.contains_story = is_story
 
-                        icon = "✓" if corrected else "⚠"
-                        process_status.write(
-                            f"{icon} Page {page_number} of {total} — "
-                            + ("auto-corrected" if corrected else "correction unavailable, using original")
-                        )
+                        if method:
+                            process_status.write(
+                                f"✓ Page {page_number} of {total} — "
+                                f"auto-corrected ({method})"
+                            )
+                        else:
+                            process_status.write(
+                                f"⚠ Page {page_number} of {total} — "
+                                "correction unavailable, using original"
+                            )
                         process_progress.progress((i + 1) / total)
 
                     process_status.write("Processing complete.")

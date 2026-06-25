@@ -1,5 +1,12 @@
 class AIPrompts:
 
+    rotation_angle = (
+        "By how many degrees clockwise should this image be rotated so that "
+        "the book page text reads horizontally? "
+        "Reply with a single integer between -180 and 180. "
+        "Reply with 0 if the text is already horizontal or there is no clear text."
+    )
+
     crop_quality_check = (
         "Does this image show a properly cropped book page — "
         "text roughly horizontal, the page filling most of the frame, "

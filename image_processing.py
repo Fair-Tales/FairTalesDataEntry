@@ -10,6 +10,7 @@ a proper book page before it is committed to S3.
 
 import base64
 import io
+import re
 
 import cv2
 import numpy as np
@@ -103,6 +104,55 @@ def correct_book_page(image_bytes):
         return buf.getvalue(), True
 
     return None, False
+
+
+def get_rotation_angle(image_bytes, client):
+    """
+    Ask Claude Sonnet to estimate the clockwise rotation angle needed to
+    make the book page text read horizontally.
+    Returns an integer angle in degrees, or 0 if no rotation is needed,
+    the model is uncertain, or the API call fails.
+    """
+    image_data = base64.standard_b64encode(image_bytes).decode('utf-8')
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=10,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": image_data,
+                        },
+                    },
+                    {"type": "text", "text": AIPrompts.rotation_angle},
+                ],
+            }]
+        )
+        raw = response.content[0].text.strip()
+        match = re.search(r'-?\d+', raw)
+        if not match:
+            return 0
+        angle = int(match.group())
+        return 0 if abs(angle) < 5 else angle
+    except Exception:
+        return 0
+
+
+def rotate_image(image_bytes, angle_degrees):
+    """
+    Rotate image bytes clockwise by angle_degrees. expand=True ensures no
+    content is cropped by the rotation. Returns JPEG bytes.
+    """
+    img = Image.open(io.BytesIO(image_bytes))
+    rotated = img.rotate(-angle_degrees, expand=True)  # PIL rotates counter-clockwise
+    buf = io.BytesIO()
+    rotated.save(buf, format='JPEG', quality=95)
+    return buf.getvalue()
 
 
 def check_crop_quality(image_bytes, client):
