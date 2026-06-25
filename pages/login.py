@@ -45,6 +45,19 @@ else:
             if confirmed:
                 confirm(username, password)
 
+        with st.expander("Forgot your password?"):
+            reset_email = st.text_input("Enter your email address", key='reset_email')
+            if st.button("Request password reset"):
+                if reset_email.strip():
+                    # TODO: implement full token-based reset flow
+                    st.info(
+                        "Password reset is not yet automated. Please email "
+                        "dataentry.kidsbooks@gmail.com with your username and we will "
+                        "reset your password manually."
+                    )
+                else:
+                    st.warning("Please enter your email address.")
+
     else:
         st.header("Register")
         st.markdown(
