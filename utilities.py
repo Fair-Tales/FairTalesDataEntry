@@ -25,7 +25,8 @@ def check_authentication_status():
 
 def page_layout():
     st.set_page_config(
-        initial_sidebar_state="collapsed"
+        initial_sidebar_state="collapsed",
+        layout="wide"
     )
     st.sidebar.page_link("pages/login.py", label="Login")
     st.sidebar.page_link("pages/user_home.py", label="Home")

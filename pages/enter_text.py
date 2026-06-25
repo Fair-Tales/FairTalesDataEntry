@@ -37,6 +37,17 @@ def load_image(book, page_number):
         ))
 
 
+@st.dialog(" ", width="large")
+def enlarged_image_dialog():
+    st.image(
+        load_image(
+            st.session_state['current_book'].title,
+            st.session_state.current_page_number
+        ),
+        use_container_width=True
+    )
+
+
 def display_image():
     page_image = load_image(
         st.session_state['current_book'].title,
@@ -44,17 +55,15 @@ def display_image():
     )
     w, h = page_image.size
 
-    dimensions = st_dimensions(key="main")
-    container_width = dimensions['width'] if dimensions is not None else 10
-    _image_width = int(container_width / 2)
+    col1.image(page_image, use_container_width=True)
+    if col1.button("🔍 Enlarge", use_container_width=True):
+        enlarged_image_dialog()
 
-    col1.write("# ")
-    col1.image(
-        page_image,
-        width=_image_width
-    )
-    scaled_height = int(_image_width*h/w)
-    return scaled_height
+    # Estimate rendered height from aspect ratio and approximate column width
+    # (col1 is 3/5 of the container in a [3, 2] layout)
+    dimensions = st_dimensions(key="main")
+    col_width = int(dimensions['width'] * 3 / 5) if dimensions else 500
+    return int(col_width * h / w)
 
 def adding_character():
     if st.session_state['_page_text_editing'] is not None:
@@ -81,7 +90,7 @@ def text_entry(element, image_height, delta=50):
     subcol1.button("Add character", use_container_width=True, on_click=adding_character, help=EnterText.character_help)
     subcol2.button("Add alias", use_container_width=True, on_click=adding_alias, help=EnterText.alias_help)
 
-    height = max(image_height - delta, 10)
+    height = max(image_height - delta, 200)
 
     with element.form('page_text'):
         st.session_state['_page_text_editing'] = st.text_area(
@@ -160,7 +169,7 @@ st.session_state.current_page = st.session_state.book_pages_dict[
 st.header(EnterText.header)
 st.write(EnterText.instruction)
 
-col1, col2 = st.columns(2)
+col1, col2 = st.columns([3, 2])
 previous_page = col1.button("Previous page", use_container_width=True, key='b1', on_click=page_change, args=(-1,))
 next_page = col2.button("Next page", use_container_width=True, key='b2', on_click=page_change, args=(1,))
 
