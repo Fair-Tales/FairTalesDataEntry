@@ -60,7 +60,7 @@ def enlarged_image_dialog(use_cropped):
             st.session_state.current_page_number,
             use_cropped=use_cropped,
         ),
-        use_container_width=True
+        width="stretch"
     )
 
 
@@ -84,8 +84,8 @@ def display_image():
     page_image = load_image(book, page_number, use_cropped=use_cropped)
     w, h = page_image.size
 
-    col1.image(page_image, use_container_width=True)
-    if col1.button("🔍 Enlarge", use_container_width=True):
+    col1.image(page_image, width="stretch")
+    if col1.button("🔍 Enlarge", width="stretch"):
         enlarged_image_dialog(use_cropped=use_cropped)
 
     dimensions = st_dimensions(key="main")
@@ -114,8 +114,8 @@ def text_entry(element, image_height, delta=50):
         value=st.session_state.current_page.contains_story
     )
     subcol1, subcol2 = element.columns(2)
-    subcol1.button("Add character", use_container_width=True, on_click=adding_character, help=EnterText.character_help)
-    subcol2.button("Add alias", use_container_width=True, on_click=adding_alias, help=EnterText.alias_help)
+    subcol1.button("Add character", width="stretch", on_click=adding_character, help=EnterText.character_help)
+    subcol2.button("Add alias", width="stretch", on_click=adding_alias, help=EnterText.alias_help)
 
     height = max(image_height - delta, 200)
 
@@ -140,7 +140,7 @@ def character_entry(element):
     with element.form('character'):
         st.session_state['current_character'].to_form()
 
-    element.button('Cancel adding character', use_container_width=True, on_click=adding_text)
+    element.button('Cancel adding character', width="stretch", on_click=adding_text)
 
 
 def alias_entry(element):
@@ -151,7 +151,7 @@ def alias_entry(element):
     with element.form('alias'):
         st.session_state['current_alias'].to_form()
 
-    element.button('Cancel adding alias', use_container_width=True, on_click=adding_text)
+    element.button('Cancel adding alias', width="stretch", on_click=adding_text)
 
 
 def user_entry_box(element, image_height, delta=50):
@@ -197,8 +197,8 @@ st.header(EnterText.header)
 st.write(EnterText.instruction)
 
 col1, col2 = st.columns([3, 2])
-previous_page = col1.button("Previous page", use_container_width=True, key='b1', on_click=page_change, args=(-1,))
-next_page = col2.button("Next page", use_container_width=True, key='b2', on_click=page_change, args=(1,))
+previous_page = col1.button("Previous page", width="stretch", key='b1', on_click=page_change, args=(-1,))
+next_page = col2.button("Next page", width="stretch", key='b2', on_click=page_change, args=(1,))
 
 col1.write(
     "Showing page %d of %d."
@@ -212,8 +212,8 @@ if '_page_text_editing' not in st.session_state:
 user_entry_box(col2, image_height)
 
 butcol1, butcol2 = st.columns(2)
-return_button = butcol1.button("Back to menu", use_container_width=True)
-save_button = butcol2.button("Finish and submit book", help=EnterText.save_help, use_container_width=True)
+return_button = butcol1.button("Back to menu", width="stretch")
+save_button = butcol2.button("Finish and submit book", help=EnterText.save_help, width="stretch")
 
 if return_button:
     st.switch_page("./pages/book_edit_home.py")
