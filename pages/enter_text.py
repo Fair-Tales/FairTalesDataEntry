@@ -64,6 +64,78 @@ def enlarged_image_dialog(use_cropped):
     )
 
 
+@st.dialog("Edit image", width="large")
+def manual_correction_dialog():
+    import io
+    import s3fs as _s3fs
+
+    book = st.session_state['current_book'].title
+    page_number = st.session_state.current_page_number
+
+    raw_image = load_image(book, page_number, use_cropped=False)
+
+    if '_manual_rotation' not in st.session_state:
+        st.session_state['_manual_rotation'] = 0
+
+    st.subheader("Rotation")
+    col_a, col_b, col_c, _ = st.columns(4)
+    rotate_90_left = col_a.button("↺ 90° left")
+    rotate_90_right = col_b.button("↻ 90° right")
+    rotate_180 = col_c.button("180°")
+
+    if rotate_90_left:
+        st.session_state['_manual_rotation'] -= 90
+    if rotate_90_right:
+        st.session_state['_manual_rotation'] += 90
+    if rotate_180:
+        st.session_state['_manual_rotation'] += 180
+
+    fine_angle = st.slider("Fine adjustment (degrees)", -45, 45, 0, key="fine_rotation")
+
+    st.subheader("Crop margins (%)")
+    crop_left = st.slider("Left", 0, 40, 0, key="crop_left")
+    crop_right = st.slider("Right", 0, 40, 0, key="crop_right")
+    crop_top = st.slider("Top", 0, 40, 0, key="crop_top")
+    crop_bottom = st.slider("Bottom", 0, 40, 0, key="crop_bottom")
+
+    img = raw_image.copy()
+    total_angle = st.session_state['_manual_rotation'] + fine_angle
+
+    if total_angle != 0:
+        img = img.rotate(-total_angle, expand=True)
+
+    w, h = img.size
+    if crop_left + crop_right < 100 and crop_top + crop_bottom < 100:
+        left = int(w * crop_left / 100)
+        right = int(w * (1 - crop_right / 100))
+        top_px = int(h * crop_top / 100)
+        bottom_px = int(h * (1 - crop_bottom / 100))
+        if right > left and bottom_px > top_px:
+            img = img.crop((left, top_px, right, bottom_px))
+
+    st.image(img, width="stretch", caption="Preview")
+
+    save_col, discard_col = st.columns(2)
+    if save_col.button("💾 Save as corrected image", use_container_width=True):
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=95)
+        fs_save = _s3fs.S3FileSystem(
+            anon=False,
+            key=st.secrets['AWS_ACCESS_KEY_ID'],
+            secret=st.secrets['AWS_SECRET_ACCESS_KEY']
+        )
+        cropped_path = f"sawimages/{book}/page_{page_number}_cropped.jpg"
+        with fs_save.open(cropped_path, 'wb') as f:
+            f.write(buf.getvalue())
+        load_image.clear()
+        st.session_state['_manual_rotation'] = 0
+        st.success("Saved! Refresh the page to see the corrected image.")
+
+    if discard_col.button("✕ Discard", use_container_width=True):
+        st.session_state['_manual_rotation'] = 0
+        st.rerun()
+
+
 def display_image():
     book = st.session_state['current_book'].title
     page_number = st.session_state.current_page_number
@@ -80,6 +152,8 @@ def display_image():
             col1.caption("✓ Auto-corrected")
     else:
         col1.caption("⚠ Auto-correction unavailable — showing original photo")
+        if col1.button("✏ Edit image", use_container_width=True):
+            manual_correction_dialog()
 
     page_image = load_image(book, page_number, use_cropped=use_cropped)
     w, h = page_image.size
