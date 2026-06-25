@@ -5,17 +5,17 @@ import natsort
 import streamlit as st
 import anthropic
 from data_structures import Page
+from image_processing import correct_book_page, check_crop_quality
 from text_content import Instructions, AIPrompts
 from utilities import page_layout, check_authentication_status
 
 check_authentication_status()
 
 
-def extract_page_info(fs, photos_url, page_number, client):
-    """Return (text, is_story_page) extracted from a page photo via Claude vision."""
+def extract_page_info(image_bytes, client):
+    """Return (text, is_story_page) by sending image bytes to Claude Sonnet."""
     try:
-        with fs.open(f"{photos_url}/page_{page_number}.jpg", 'rb') as f:
-            image_data = base64.standard_b64encode(f.read()).decode('utf-8')
+        image_data = base64.standard_b64encode(image_bytes).decode('utf-8')
         response = client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=1024,
@@ -35,7 +35,6 @@ def extract_page_info(fs, photos_url, page_number, client):
             }]
         )
         raw = response.content[0].text.strip()
-        # Strip markdown code fences if the model wrapped the JSON
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):
@@ -46,6 +45,22 @@ def extract_page_info(fs, photos_url, page_number, client):
         return "", False
 
 
+def _process_page(raw_bytes, page_number, photos_url, fs, ai_client):
+    """
+    Run the two-stage correction pipeline for one page.
+    Returns the image bytes to use for text extraction (corrected or raw),
+    and saves page_{n}_cropped.jpg to S3 when correction succeeds.
+    """
+    corrected_bytes, opencv_ok = correct_book_page(raw_bytes)
+
+    if opencv_ok and check_crop_quality(corrected_bytes, ai_client):
+        with fs.open(f"{photos_url}/page_{page_number}_cropped.jpg", 'wb') as f:
+            f.write(corrected_bytes)
+        return corrected_bytes
+
+    return raw_bytes
+
+
 def upload_widget(on_submit='enter_text'):
 
     fs = s3fs.S3FileSystem(
@@ -54,7 +69,7 @@ def upload_widget(on_submit='enter_text'):
         secret=st.secrets['AWS_SECRET_ACCESS_KEY']
     )
 
-    # TODO: set file order (sort ascending? time modified? https://stackoverflow.com/questions/31588543/how-to-change-order-of-files-in-multiple-file-input)
+    # TODO: set file order (sort ascending? time modified?)
     def upload_page_photos():
         uploaded_files = st.file_uploader(
             "Select page photos to upload",
@@ -62,46 +77,67 @@ def upload_widget(on_submit='enter_text'):
         )
 
         if uploaded_files:
-            file_dict = {
-                file.name: file
-                for file in uploaded_files
-            }
+            file_dict = {file.name: file for file in uploaded_files}
             sort_file_names = natsort.natsorted(list(file_dict.keys()), reverse=False)
-
-            st.write("Saving page photos to the database, please stay on this page...")
+            total = len(sort_file_names)
             photos_url = f"sawimages/{st.session_state['current_book'].title}"
 
-            pages = []
+            # Phase 1 — upload raw photos to S3, keep bytes in memory
+            upload_status = st.empty()
+            upload_progress = st.progress(0)
+            raw_bytes_list = []
             for fi, name in enumerate(sort_file_names):
-                uploaded_file = file_dict[name]
-                page_number = fi + 1
-                with fs.open(
-                        photos_url + f"/page_{page_number}.jpg",
-                        'wb'
-                ) as out_file:
-                    out_file.write(uploaded_file.read())
-
-                page = Page(
-                    page_number=page_number,
-                    book=st.session_state['current_book'].title
-                )
-                page.register()
-                pages.append(page)
+                upload_status.write(f"Saving photo {fi + 1} of {total}...")
+                raw_bytes = file_dict[name].read()
+                with fs.open(f"{photos_url}/page_{fi + 1}.jpg", 'wb') as f:
+                    f.write(raw_bytes)
+                raw_bytes_list.append(raw_bytes)
+                upload_progress.progress((fi + 1) / total)
 
             st.session_state.current_book.photos_uploaded = True
             st.session_state.current_book.photos_url = photos_url
-            st.session_state.current_book.page_count = len(uploaded_files)
+            st.session_state.current_book.page_count = total
+            upload_status.write("Photos saved.")
 
+            # Phase 2 — image correction + text extraction per page
             if 'ANTHROPIC_API_KEY' in st.secrets:
-                st.write("Extracting text from page photos using AI, please wait...")
-                progress = st.progress(0)
                 ai_client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
-                for i, page in enumerate(pages):
-                    text, is_story = extract_page_info(fs, photos_url, i + 1, ai_client)
+                process_status = st.empty()
+                process_progress = st.progress(0)
+
+                for i, raw_bytes in enumerate(raw_bytes_list):
+                    page_number = i + 1
+                    process_status.write(
+                        f"Processing page {page_number} of {total} "
+                        f"(correcting image, extracting text)..."
+                    )
+
+                    bytes_for_extraction = _process_page(
+                        raw_bytes, page_number, photos_url, fs, ai_client
+                    )
+
+                    page = Page(
+                        page_number=page_number,
+                        book=st.session_state['current_book'].title
+                    )
+                    page.register()
+
+                    text, is_story = extract_page_info(bytes_for_extraction, ai_client)
                     if text:
                         page.text = text
                     page.contains_story = is_story
-                    progress.progress((i + 1) / len(pages))
+
+                    process_progress.progress((i + 1) / total)
+
+                process_status.write("Processing complete.")
+            else:
+                # No API key — register pages without extraction
+                for i in range(total):
+                    page = Page(
+                        page_number=i + 1,
+                        book=st.session_state['current_book'].title
+                    )
+                    page.register()
 
             st.write("Page photo upload complete, you may continue.")
             submit = st.button('Continue')

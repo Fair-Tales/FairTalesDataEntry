@@ -30,37 +30,59 @@ def page_change(delta):
 
 
 @st.cache_data(max_entries=3)
-def load_image(book, page_number):
+def load_image(book, page_number, use_cropped=True):
+    """Load page image, preferring the corrected _cropped version when available."""
+    if use_cropped:
+        try:
+            return Image.open(fs.open(
+                f"sawimages/{book}/page_{page_number}_cropped.jpg", mode='rb'
+            ))
+        except Exception:
+            pass
     return Image.open(fs.open(
-            f"sawimages/{book}/page_{page_number}.jpg",
-            mode='rb'
-        ))
+        f"sawimages/{book}/page_{page_number}.jpg", mode='rb'
+    ))
+
+
+def cropped_exists(book, page_number):
+    try:
+        fs.info(f"sawimages/{book}/page_{page_number}_cropped.jpg")
+        return True
+    except Exception:
+        return False
 
 
 @st.dialog(" ", width="large")
-def enlarged_image_dialog():
+def enlarged_image_dialog(use_cropped):
     st.image(
         load_image(
             st.session_state['current_book'].title,
-            st.session_state.current_page_number
+            st.session_state.current_page_number,
+            use_cropped=use_cropped,
         ),
         use_container_width=True
     )
 
 
 def display_image():
-    page_image = load_image(
-        st.session_state['current_book'].title,
-        st.session_state.current_page_number
-    )
+    book = st.session_state['current_book'].title
+    page_number = st.session_state.current_page_number
+    has_cropped = cropped_exists(book, page_number)
+
+    # Offer "show original" toggle only when a corrected version exists
+    use_cropped = True
+    if has_cropped:
+        use_cropped = not col1.toggle(
+            "Show original photo", value=False, key=f"show_raw_{page_number}"
+        )
+
+    page_image = load_image(book, page_number, use_cropped=use_cropped)
     w, h = page_image.size
 
     col1.image(page_image, use_container_width=True)
     if col1.button("🔍 Enlarge", use_container_width=True):
-        enlarged_image_dialog()
+        enlarged_image_dialog(use_cropped=use_cropped)
 
-    # Estimate rendered height from aspect ratio and approximate column width
-    # (col1 is 3/5 of the container in a [3, 2] layout)
     dimensions = st_dimensions(key="main")
     col_width = int(dimensions['width'] * 3 / 5) if dimensions else 500
     return int(col_width * h / w)

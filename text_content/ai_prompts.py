@@ -1,5 +1,12 @@
 class AIPrompts:
 
+    crop_quality_check = (
+        "Does this image show a properly cropped book page — "
+        "text roughly horizontal, the page filling most of the frame, "
+        "and no significant content cut off? "
+        "Answer only: yes or no."
+    )
+
     page_extraction = """\
 Analyse this photo of a children's picture book page.
 
