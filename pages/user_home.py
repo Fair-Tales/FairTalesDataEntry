@@ -1,7 +1,7 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
 from text_content import Alerts, Instructions, old_books
-from utilities import check_authentication_status, page_layout, FirestoreWrapper
+from utilities import check_authentication_status, page_layout, FirestoreWrapper, navigate_to, clear_page_history
 from data_structures import Book
 import pandas as pd
 
@@ -163,12 +163,13 @@ def author_search():
 
 def add_book():
     st.session_state['current_book'] = Book()
-    st.switch_page("./pages/add_book.py")
+    navigate_to("./pages/add_book.py")
 
 def review_my_books():
-    st.switch_page("./pages/review_my_books.py")
+    navigate_to("./pages/review_my_books.py")
 
-page_layout()
+clear_page_history()
+page_layout(current_page="./pages/user_home.py")
 
 st.title("Fair Tales Data Entry Tool")
 

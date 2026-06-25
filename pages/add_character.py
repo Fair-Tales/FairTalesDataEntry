@@ -1,5 +1,5 @@
 import streamlit as st
-from utilities import author_entry_to_name, page_layout, check_authentication_status
+from utilities import author_entry_to_name, page_layout, check_authentication_status, navigate_to
 
 check_authentication_status()
 
@@ -37,10 +37,10 @@ def new_character():
         if submitted:
             st.session_state['character_details'] = metadata
             st.session_state['active_form_to_confirm'] = 'new_character'
-            st.switch_page("./pages/confirm_entry.py")
+            navigate_to("./pages/confirm_entry.py")
 
 
-page_layout()
+page_layout(current_page="./pages/add_character.py")
 
 new_character()
 

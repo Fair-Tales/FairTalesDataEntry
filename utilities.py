@@ -23,16 +23,52 @@ def check_authentication_status():
     if not is_authenticated():
         st.switch_page("./pages/login.py")
 
-def page_layout():
+
+_MAX_HISTORY = 10
+
+
+def navigate_to(page_path):
+    """Navigate to a page, pushing the current page onto the back-history stack."""
+    current = st.session_state.get('_current_page', None)
+    if current:
+        history = st.session_state.get('_page_history', [])
+        history.append(current)
+        st.session_state['_page_history'] = history[-_MAX_HISTORY:]
+    st.switch_page(page_path)
+
+
+def go_back(fallback="./pages/user_home.py"):
+    """Navigate to the previous page in the history stack."""
+    history = st.session_state.get('_page_history', [])
+    if history:
+        previous = history.pop()
+        st.session_state['_page_history'] = history
+        st.switch_page(previous)
+    else:
+        st.switch_page(fallback)
+
+
+def clear_page_history():
+    """Reset the back-history stack (used at root pages and on logout)."""
+    st.session_state['_page_history'] = []
+
+
+def page_layout(current_page=None):
     st.set_page_config(
         initial_sidebar_state="collapsed",
         layout="wide"
     )
+    if current_page:
+        st.session_state['_current_page'] = current_page
     st.sidebar.page_link("pages/login.py", label="Login")
     st.sidebar.page_link("pages/user_home.py", label="Home")
     st.sidebar.page_link("pages/account_settings.py", label="Settings")
     if 'admin'in st.session_state and st.session_state['admin']:
         st.sidebar.page_link("pages/validation.py", label="Validation")
+    history = st.session_state.get('_page_history', [])
+    if history:
+        if st.sidebar.button("← Back"):
+            go_back()
 
 
 def check_user_exists(username):
@@ -236,7 +272,7 @@ class FormConfirmation:
 
         if confirm_button:
             if st.session_state['current_book'].author == "None of these (create a new author).":
-                st.switch_page("./pages/add_author.py")
+                navigate_to("./pages/add_author.py")
 
             else:
                 st.session_state['current_book'].register()
@@ -245,9 +281,9 @@ class FormConfirmation:
                 ] = st.session_state['current_book'].get_ref()
 
                 if st.session_state.current_book.photos_uploaded:
-                    st.switch_page("./pages/enter_text.py")
+                    navigate_to("./pages/enter_text.py")
                 else:
-                    st.switch_page("./pages/page_photo_upload.py")
+                    navigate_to("./pages/page_photo_upload.py")
 
         if edit_button:
             st.switch_page("./pages/add_book.py")
@@ -326,7 +362,7 @@ class FormConfirmation:
         confirm_button, edit_button = cls.display_confirmation('character_details')
 
         if confirm_button:
-            st.switch_page("./pages/book_data_entry.py")
+            navigate_to("./pages/book_data_entry.py")
 
         if edit_button:
             st.switch_page("./pages/add_character.py")
@@ -343,6 +379,7 @@ def confirm_submit():
     if st.button("Confirm"):
         st.session_state.current_book.entry_status = 'completed'
         st.session_state.current_book.datetime_submitted = datetime.now(timezone.utc)
+        clear_page_history()
         st.switch_page("./pages/user_home.py")
     if st.button("Cancel"):
         st.rerun()

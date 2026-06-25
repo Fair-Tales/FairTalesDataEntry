@@ -171,7 +171,7 @@ def user_entry_box(element, image_height, delta=50):
 #     )
 
 
-page_layout()
+page_layout(current_page="./pages/enter_text.py")
 
 fs = s3fs.S3FileSystem(
         anon=False,
