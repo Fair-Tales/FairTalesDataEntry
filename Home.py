@@ -123,7 +123,8 @@ def navigate_pages():
     }
 
     if 'admin' in st.session_state and st.session_state['admin']:
-        pages["Menu"].append(st.Page("./pages/validation.py", title='Validate'))
+        pages["Menu"].append(st.Page("./pages/admin.py", title='Admin'))
+        pages["Other pages"].append(st.Page("./pages/validation.py"))
 
     st.navigation(pages, position="hidden").run()
 

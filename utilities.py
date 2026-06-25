@@ -31,8 +31,8 @@ def page_layout():
     st.sidebar.page_link("pages/login.py", label="Login")
     st.sidebar.page_link("pages/user_home.py", label="Home")
     st.sidebar.page_link("pages/account_settings.py", label="Settings")
-    if 'admin'in st.session_state and st.session_state['admin']:
-        st.sidebar.page_link("pages/validation.py", label="Validation")
+    if 'admin' in st.session_state and st.session_state['admin']:
+        st.sidebar.page_link("pages/admin.py", label="Admin")
 
 
 def check_user_exists(username):
