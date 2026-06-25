@@ -9,13 +9,15 @@ from image_processing import (
     correct_book_page, check_crop_quality, get_rotation_angle, rotate_image
 )
 from text_content import Instructions, AIPrompts
-from utilities import page_layout, check_authentication_status
+from utilities import (
+    page_layout, check_authentication_status, extract_isbn, lookup_isbn
+)
 
 check_authentication_status()
 
 
 def extract_page_info(image_bytes, client):
-    """Return (text, is_story_page) by sending image bytes to Claude Sonnet."""
+    """Return (text, is_story_page, page_type) by sending image bytes to Claude Sonnet."""
     try:
         image_data = base64.standard_b64encode(image_bytes).decode('utf-8')
         response = client.messages.create(
@@ -42,9 +44,13 @@ def extract_page_info(image_bytes, client):
             if raw.startswith("json"):
                 raw = raw[4:]
         result = json.loads(raw)
-        return result.get("text", "").strip(), bool(result.get("is_story_page", False))
+        return (
+            result.get("text", "").strip(),
+            bool(result.get("is_story_page", False)),
+            result.get("page_type", ""),
+        )
     except Exception:
-        return "", False
+        return "", False, ""
 
 
 def _process_page(raw_bytes, page_number, photos_url, fs, ai_client):
@@ -127,6 +133,7 @@ def upload_widget(on_submit='enter_text'):
                     ai_client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
                     process_status = st.empty()
                     process_progress = st.progress(0)
+                    copyright_text = None
 
                     for i, raw_bytes in enumerate(raw_bytes_list):
                         page_number = i + 1
@@ -145,10 +152,15 @@ def upload_widget(on_submit='enter_text'):
                         )
                         page.register()
 
-                        text, is_story = extract_page_info(bytes_for_extraction, ai_client)
+                        text, is_story, page_type = extract_page_info(
+                            bytes_for_extraction, ai_client
+                        )
                         if text:
                             page.text = text
                         page.contains_story = is_story
+
+                        if page_type == 'copyright' and text and copyright_text is None:
+                            copyright_text = text
 
                         if method:
                             process_status.write(
@@ -163,6 +175,19 @@ def upload_widget(on_submit='enter_text'):
                         process_progress.progress((i + 1) / total)
 
                     process_status.write("Processing complete.")
+
+                    # ISBN lookup — use the copyright page text to fetch
+                    # book metadata and pre-populate the Add Book form.
+                    if copyright_text:
+                        isbn = extract_isbn(copyright_text)
+                        if isbn:
+                            isbn_metadata = lookup_isbn(isbn)
+                            if isbn_metadata:
+                                st.session_state['isbn_metadata'] = isbn_metadata
+                                st.info(
+                                    f"Found book metadata via ISBN {isbn}: "
+                                    f"{isbn_metadata['title']}"
+                                )
                 else:
                     # No API key — register pages without extraction
                     for i in range(total):
