@@ -13,7 +13,6 @@ from data_structures import Author, Book, Illustrator, Publisher
 # TODO: improve email address validation
 # TODO: add 'Home' option to return to user home at any time
 # TODO: either expand Book.safe_cast and move to utilities, or remove pandas usage in FiresotreWarrper
-# TODO: replace check_user_exists function with better solution as in FirestoreWrapper.document_exists
 # TODO: add functionality to skip photo upload page (or choose to change photos) if photos were already uploaded
 # TODO: And change layout according to image dimensions.
 # TODO: replace auhtor_dict and book_dict with cached retrieval methods (will not scale to v. large database but OK for now)
@@ -50,9 +49,7 @@ from data_structures import Author, Book, Illustrator, Publisher
 # TODO: add timeout to QR link?
 # TODO: delete development junk from databases!!
 # TODO: Add Alias lets you select from all characters not just book ones!
-# TODO: add whitespace striping from names entered?
 # TODO: add 'initialise_session_state' function and if something (like current_book) is not present, redirect to user_home.
-# TODO: adding alias form did not clear.
 # TODO: schedule database backup
 # TODO: add data protection statement to T&Cs.
 # TODO: add diagram of how to take photos

@@ -32,7 +32,7 @@ def add_book_entries(self):
 def form_content(self):
     st.header(BookForm.header)
 
-    _title = st.text_input("Title", value=self.title)
+    _title = st.text_input("Title", value=self.title).strip()
     _published = int(st.selectbox(
     "Date first published",
     (x for x in range(1900, (date.today().year + 1))), 

@@ -100,11 +100,13 @@ def adding_character():
 
 def adding_text():
     st.session_state.now_entering = 'text'
+    st.session_state.pop('current_alias', None)
 
 
 def adding_alias():
     if st.session_state['_page_text_editing'] is not None:
         st.session_state.current_page.text = st.session_state['_page_text_editing']
+    st.session_state['_alias_form_count'] = st.session_state.get('_alias_form_count', 0) + 1
     st.session_state.now_entering = 'alias'
 
 
@@ -148,7 +150,8 @@ def alias_entry(element):
     st.session_state['current_alias'] = Alias(
         book=st.session_state['current_book'].title
     )
-    with element.form('alias'):
+    form_key = f"alias_{st.session_state.get('_alias_form_count', 0)}"
+    with element.form(form_key):
         st.session_state['current_alias'].to_form()
 
     element.button('Cancel adding alias', width="stretch", on_click=adding_text)

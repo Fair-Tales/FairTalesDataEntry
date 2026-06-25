@@ -35,13 +35,6 @@ def page_layout():
         st.sidebar.page_link("pages/validation.py", label="Validation")
 
 
-def check_user_exists(username):
-    db = FirestoreWrapper().connect_user(auth=False)
-    users_ref = db.collection("users")
-    query_ref = users_ref.where(filter=firestore.FieldFilter("username", "==", username))
-    docs = query_ref.get()
-    return len(docs) >= 1
-
 
 def get_user(username):
     db = FirestoreWrapper().connect_user(auth=False)

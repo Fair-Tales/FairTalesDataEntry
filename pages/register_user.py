@@ -2,7 +2,7 @@ import streamlit as st
 from datetime import datetime, date
 import bcrypt
 from utilities import (
-    page_layout, hash_password, check_user_exists, send_confirmation_email, FirestoreWrapper
+    page_layout, hash_password, send_confirmation_email, FirestoreWrapper
 )
 from text_content import Alerts, GenderRegistration
 
@@ -25,10 +25,10 @@ def register_user(_username, _name, _password, _gender, _birth_year):
         "trust_rating": 0,
         "admin": False
     }
-    if check_user_exists(_username):
+    db = FirestoreWrapper().connect_user(auth=False)
+    if db.collection('users').document(_username).get().exists:
         st.warning(Alerts.user_exists)
     else:
-        db = FirestoreWrapper().connect_user(auth=False)
         db.collection("users").document(username).set(user_data)
         send_confirmation_email(username, username, confirmation_token, _name)
         st.switch_page("./pages/register_user_done.py")

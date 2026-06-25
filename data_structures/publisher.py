@@ -41,7 +41,7 @@ class Publisher(DataStructureBase):
 
         st.header(PublisherForm.header)
 
-        self.name = st.text_input("Name", value= self.name)
+        self.name = st.text_input("Name", value=self.name).strip()
 
         year_given = int(st.selectbox(
             "Which year was the publisher founded?",
