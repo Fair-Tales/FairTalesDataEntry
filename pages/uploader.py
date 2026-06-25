@@ -48,17 +48,17 @@ def extract_page_info(image_bytes, client):
 def _process_page(raw_bytes, page_number, photos_url, fs, ai_client):
     """
     Run the two-stage correction pipeline for one page.
-    Returns the image bytes to use for text extraction (corrected or raw),
-    and saves page_{n}_cropped.jpg to S3 when correction succeeds.
+    Returns (image_bytes_for_extraction, correction_applied).
+    Saves page_{n}_cropped.jpg to S3 only when both stages pass.
     """
     corrected_bytes, opencv_ok = correct_book_page(raw_bytes)
 
     if opencv_ok and check_crop_quality(corrected_bytes, ai_client):
         with fs.open(f"{photos_url}/page_{page_number}_cropped.jpg", 'wb') as f:
             f.write(corrected_bytes)
-        return corrected_bytes
+        return corrected_bytes, True
 
-    return raw_bytes
+    return raw_bytes, False
 
 
 def upload_widget(on_submit='enter_text'):
@@ -118,7 +118,7 @@ def upload_widget(on_submit='enter_text'):
                             f"(correcting image, extracting text)..."
                         )
 
-                        bytes_for_extraction = _process_page(
+                        bytes_for_extraction, corrected = _process_page(
                             raw_bytes, page_number, photos_url, fs, ai_client
                         )
 
@@ -133,6 +133,11 @@ def upload_widget(on_submit='enter_text'):
                             page.text = text
                         page.contains_story = is_story
 
+                        icon = "✓" if corrected else "⚠"
+                        process_status.write(
+                            f"{icon} Page {page_number} of {total} — "
+                            + ("auto-corrected" if corrected else "correction unavailable, using original")
+                        )
                         process_progress.progress((i + 1) / total)
 
                     process_status.write("Processing complete.")

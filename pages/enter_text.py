@@ -69,12 +69,17 @@ def display_image():
     page_number = st.session_state.current_page_number
     has_cropped = cropped_exists(book, page_number)
 
-    # Offer "show original" toggle only when a corrected version exists
     use_cropped = True
     if has_cropped:
         use_cropped = not col1.toggle(
             "Show original photo", value=False, key=f"show_raw_{page_number}"
         )
+        if not use_cropped:
+            col1.caption("Showing original photo")
+        else:
+            col1.caption("✓ Auto-corrected")
+    else:
+        col1.caption("⚠ Auto-correction unavailable — showing original photo")
 
     page_image = load_image(book, page_number, use_cropped=use_cropped)
     w, h = page_image.size
