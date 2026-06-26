@@ -179,8 +179,19 @@ fs = s3fs.S3FileSystem(
         secret=st.secrets['AWS_SECRET_ACCESS_KEY']
     )
 
-if 'book_pages_dict' not in st.session_state:
+# Rebuild the page cache whenever the current book changes. Without this, the
+# dict for the first book opened persists in session state and is shown for
+# every subsequent book (stale text leaking across books).
+_book_id = st.session_state.current_book.document_id
+if (
+    'book_pages_dict' not in st.session_state
+    or st.session_state.get('_pages_dict_book_id') != _book_id
+):
     create_page_dict_from_db()
+    st.session_state['_pages_dict_book_id'] = _book_id
+    st.session_state['current_page_number'] = 1
+    st.session_state['now_entering'] = 'text'
+    st.session_state['_page_text_editing'] = None
 
 if 'current_page_number' not in st.session_state:
     st.session_state['current_page_number'] = 1
