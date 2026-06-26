@@ -74,7 +74,7 @@ def book_search():
 
 def author_search():
     author_search_string = st.text_input(
-        "Search our database by author name.",
+        "Search by author name — enter a full or partial name and press Enter to find close matches.",
         value="",
         help="You can enter either all or part of the name."
     )
