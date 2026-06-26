@@ -14,6 +14,35 @@ class AIPrompts:
         "Answer only: yes or no."
     )
 
+    theme_detection = """\
+Below is the full text of a children's picture book. Identify which of the \
+following themes are EXPLICITLY represented in the text (not merely imaginable \
+— they must be clearly present in the story):
+
+Themes to check:
+- disability: characters with physical or cognitive disabilities
+- race_ethnicity: race, ethnicity, or cultural identity is part of the story
+- sexuality: sexual orientation or LGBTQ+ identity is part of the story
+- religion_spirituality: religion, faith, or spirituality is part of the story
+- gender: gender identity or gender roles are explicitly addressed
+- social_class: socioeconomic status or class difference is part of the story
+- age: age-related themes (e.g. ageing, generational difference) are present
+
+Respond with valid JSON only:
+{
+  "disability": true or false,
+  "race_ethnicity": true or false,
+  "sexuality": true or false,
+  "religion_spirituality": true or false,
+  "gender": true or false,
+  "social_class": true or false,
+  "age": true or false,
+  "reasoning": "One sentence explaining which themes you found and why."
+}
+
+Book text:
+"""
+
     page_extraction = """\
 Analyse this photo of a children's picture book page.
 
