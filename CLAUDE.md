@@ -29,6 +29,12 @@ Pressing Enter or saying "yes" / "ok" / "sure" does not count.
 - Process termination: `kill`, `pkill`, `killall`
 - Destructive database operations: `DROP`, `TRUNCATE`, `DELETE` without `WHERE`
 
+### Always get explicit, specific approval before:
+- **Merging, rebasing, or cherry-picking branches** — especially into shared/integration
+  branches like `claude-dev` or `main`. Never run `git merge` (or equivalent) until the user
+  has explicitly approved *that specific merge*. A user saying a feature "works" or "looks
+  good", or approving an earlier step, is **not** approval to merge — ask first, every time.
+
 ### Hard stops (never do, even with `AFFIRMATIVE`):
 - Never commit files matching `*.env`, `*secret*`, `*credential*`, `*token*`, `*api_key*`.
 
