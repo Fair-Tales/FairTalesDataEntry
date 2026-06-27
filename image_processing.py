@@ -14,9 +14,41 @@ import re
 
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from text_content import AIPrompts
+
+
+def exif_transpose_bytes(image_bytes):
+    """
+    Bake any EXIF orientation tag into the pixel data and return JPEG bytes.
+
+    Phone cameras commonly store portrait photos as landscape pixels plus an
+    EXIF Orientation tag describing how the viewer should rotate them. Neither
+    OpenCV (``cv2.imdecode``) nor a plain PIL/Streamlit display applies that
+    tag, so such photos appear rotated/sideways. Applying the transpose once,
+    here, at upload time means every downstream stage (perspective correction,
+    AI text extraction, on-screen display) operates on a correctly-oriented
+    image.
+
+    Returns the original bytes unchanged when there is no orientation to apply
+    (tag absent or equal to 1) or when the bytes cannot be decoded as an image.
+    """
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        orientation = img.getexif().get(0x0112)  # 0x0112 == Orientation tag
+        if orientation in (None, 1):
+            return image_bytes
+        transposed = ImageOps.exif_transpose(img)
+        if transposed.mode not in ('RGB', 'L'):
+            transposed = transposed.convert('RGB')
+        buf = io.BytesIO()
+        transposed.save(buf, format='JPEG', quality=95)
+        return buf.getvalue()
+    except (UnidentifiedImageError, OSError):
+        # Undecodable or truncated image: return the original bytes untouched
+        # so the caller can still store/handle the upload as-is.
+        return image_bytes
 
 
 def _order_points(pts):

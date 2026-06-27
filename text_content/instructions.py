@@ -24,6 +24,28 @@ class Instructions:
         - Try to hold the book flat - you can use your thumb or finger.  
         - Please upload all photos in one batch.
     """
+    photo_naming_instructions = """
+        **Naming and ordering your photos**
+
+        The pages are reconstructed in the order the photo files sort by name,
+        so naming them in reading order keeps the book in the right sequence:
+        - Name the files so they sort in order, e.g. `01`, `02`, `03` … (or
+          `page_01`, `page_02`). Use a leading zero (`01`, not `1`) so the
+          order is still correct once you reach page 10 and beyond.
+        - Make the front cover the first photo and the back cover the last.
+        - If you need to re-take, re-order or add a page later, rename the files
+          so the numbering stays continuous and upload the whole set again
+          using `Replace / re-upload photos`.
+    """
+
+    photos_already_uploaded = """
+        You have already uploaded photos for this book.
+
+        You can continue straight to entering the text, or replace the photos if
+        you need to re-take, re-order or add pages. Replacing will re-upload and
+        re-process the whole set of photos for this book.
+    """
+
     go_to_phone_instructions = """
         First take the photos on your phone. 
         Then scan the QR code below, which will take you to the upload page.

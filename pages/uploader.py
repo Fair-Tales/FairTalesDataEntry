@@ -6,7 +6,8 @@ import streamlit as st
 import anthropic
 from data_structures import Page
 from image_processing import (
-    correct_book_page, check_crop_quality, get_rotation_angle, rotate_image
+    correct_book_page, check_crop_quality, get_rotation_angle, rotate_image,
+    exif_transpose_bytes,
 )
 from text_content import Instructions, AIPrompts
 from utilities import (
@@ -117,7 +118,10 @@ def upload_widget(on_submit='enter_text'):
                 raw_bytes_list = []
                 for fi, name in enumerate(sort_file_names):
                     upload_status.write(f"Saving photo {fi + 1} of {total}...")
-                    raw_bytes = file_dict[name].read()
+                    # Normalise orientation up front so the stored photo and
+                    # every downstream stage (correction, extraction, display)
+                    # work on correctly-oriented pixels (fixes portrait photos).
+                    raw_bytes = exif_transpose_bytes(file_dict[name].read())
                     with fs.open(f"{photos_url}/page_{fi + 1}.jpg", 'wb') as f:
                         f.write(raw_bytes)
                     raw_bytes_list.append(raw_bytes)
