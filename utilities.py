@@ -210,8 +210,11 @@ class FormConfirmation:
     @classmethod
     def display_confirmation(cls, data):
 
-        # st.dataframe(data, use_container_width=True)
-        st.table(data)
+        df = pd.DataFrame(
+            [(field, "" if value is None else str(value)) for field, value in data.items()],
+            columns=["Field", "Value"],
+        )
+        st.table(df.set_index("Field"))
         col1, col2 = st.columns(2)
         confirm_button = col1.button("Confirm")
         edit_button = col2.button("Edit")

@@ -10,6 +10,7 @@ from datetime import date
 def add_book_entries(self):
     if 'adding_book_entries' not in st.session_state or not st.session_state['adding_book_entries']:
         st.session_state['adding_book_entries'] = True
+        st.rerun()
     else:
         if self.author is None:
             st.session_state['current_author'] = Author()
