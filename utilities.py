@@ -232,6 +232,105 @@ def lookup_person_details(name, role, client):
         return None
 
 
+def _claude_json(client, prompt, max_tokens=1024):
+    """Send a text prompt to Claude Sonnet and parse the JSON response.
+
+    Reuses the model and JSON-fence-stripping convention used by the existing
+    Claude helpers (extract_page_info, lookup_person_details, theme detection).
+    Raises json.JSONDecodeError if the model does not return valid JSON, or an
+    anthropic error if the API call fails — the caller is expected to surface
+    these to the user.
+    """
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    raw = response.content[0].text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    return json.loads(raw.strip())
+
+
+def detect_book_characters(pages, client, progress_callback=None):
+    """Two-pass character + alias detection across a book's story pages (#52).
+
+    Args:
+        pages: iterable of (page_number, page_text) for story pages with text.
+        client: an anthropic.Anthropic client.
+        progress_callback: optional callable(done, total) for UI progress.
+
+    Returns a list of character suggestion dicts, each with keys:
+        name (str), gender (one of CharacterForm.gender_options),
+        human (bool), plural (bool), protagonist (bool), aliases (list[str]).
+
+    Pass 1 extracts the character references appearing on each page; pass 2
+    consolidates those references across pages so that e.g. "the boy", "Tom"
+    and "Tommy" collapse into a single character with the others as aliases.
+    Nothing is written to the database — the caller presents the result for the
+    user to review, correct and confirm.
+    """
+    from text_content import AIPrompts
+
+    pages = list(pages)
+    total_steps = len(pages) + 1
+
+    # Pass 1 — per-page character mentions.
+    per_page_mentions = []
+    for index, (page_number, page_text) in enumerate(pages):
+        data = _claude_json(
+            client,
+            AIPrompts.character_extraction.format(page_text=page_text),
+            max_tokens=512,
+        )
+        mentions = data.get("mentions", []) if isinstance(data, dict) else []
+        per_page_mentions.append({"page": page_number, "mentions": mentions})
+        if progress_callback is not None:
+            progress_callback(index + 1, total_steps)
+
+    # Pass 2 — consolidate references into distinct characters.
+    mentions_json = json.dumps(per_page_mentions, ensure_ascii=False)
+    result = _claude_json(
+        client,
+        AIPrompts.character_consolidation.format(mentions_json=mentions_json),
+        max_tokens=2048,
+    )
+    raw_characters = result.get("characters", []) if isinstance(result, dict) else []
+
+    valid_genders = ["Female", "Male", "Non-specific", "Transgender"]
+    suggestions = []
+    for character in raw_characters:
+        if not isinstance(character, dict):
+            continue
+        name = str(character.get("name", "")).strip()
+        if not name:
+            continue
+        gender = character.get("gender", "Non-specific")
+        if gender not in valid_genders:
+            gender = "Non-specific"
+        seen = set()
+        aliases = []
+        for alias in character.get("aliases", []) or []:
+            alias = str(alias).strip()
+            if alias and alias.lower() != name.lower() and alias.lower() not in seen:
+                seen.add(alias.lower())
+                aliases.append(alias)
+        suggestions.append({
+            "name": name,
+            "gender": gender,
+            "human": bool(character.get("human", True)),
+            "plural": bool(character.get("plural", False)),
+            "protagonist": bool(character.get("protagonist", False)),
+            "aliases": aliases,
+        })
+
+    if progress_callback is not None:
+        progress_callback(total_steps, total_steps)
+    return suggestions
+
+
 def lookup_isbn(isbn):
     """
     Look up book metadata via the Google Books API (free, no auth required).

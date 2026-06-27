@@ -119,9 +119,45 @@ class EnterText:
     """
 
     save_help = """
-        The data you enter will save automatically as you work. This button finishes entering this book. 
+        The data you enter will save automatically as you work. This button finishes entering this book.
         You will not be able to edit it again after this.
     """
+
+    # --- AI character + alias detection (issue #52) ---
+    detect_help = """
+        Use AI to read the text you have entered so far and suggest the characters and their aliases
+        across the whole book. Nothing is saved until you review and confirm the suggestions.
+    """
+    detect_intro = """
+        This will read the story text you have entered for every page and suggest a list of
+        characters and their aliases for you to review. Make sure you have entered (or auto-extracted)
+        the page text first. Nothing is saved until you confirm.
+    """
+    detect_spinner = "Reading the book text and detecting characters..."
+    detect_progress = "Detecting characters — step {done} of {total}..."
+    detect_no_api_key = "AI character detection requires an Anthropic API key."
+    detect_no_text = (
+        "No story text found. Please enter or extract text for the book pages first, "
+        "and tick 'Does this page contain story text?' on the relevant pages."
+    )
+    detect_failed = "Character detection failed: {error}"
+    detect_none_found = "The AI did not find any characters in the text. You can add characters manually."
+    review_instruction = """
+        Review the suggested characters below. Correct any names, genders or other details,
+        edit the comma-separated aliases, and choose an action for each one. To merge a duplicate,
+        choose 'Merge into' on the duplicate and select the character to keep — its name and aliases
+        will be added to that character. Nothing is saved until you press the button at the bottom.
+    """
+    review_action_create = "Create as a new character"
+    review_action_skip = "Skip (do not add)"
+    review_action_merge = "Merge into: {name}"
+    review_submit = "Create selected characters"
+    review_created = "Created {characters} character(s) and {aliases} alias(es)."
+    review_skipped = "Skipped (already in the database): {names}."
+    review_unresolved = (
+        "Could not merge these because their target was not created: {names}. "
+        "They were not added — please re-run detection or add them manually."
+    )
 
 
 class CharacterForm:

@@ -1,10 +1,15 @@
+import json
 import streamlit as st
+import anthropic
 from PIL import Image
 from streamlit_dimensions import st_dimensions
 import s3fs
-from utilities import page_layout, confirm_submit, check_authentication_status
+from utilities import (
+    page_layout, confirm_submit, check_authentication_status,
+    detect_book_characters,
+)
 from data_structures import Page, Character, Alias
-from text_content import EnterText
+from text_content import EnterText, CharacterForm
 
 check_authentication_status()
 
@@ -192,7 +197,18 @@ def adding_alias():
     st.session_state.now_entering = 'alias'
 
 
+def adding_detect():
+    if st.session_state['_page_text_editing'] is not None:
+        st.session_state.current_page.text = st.session_state['_page_text_editing']
+    # Start a fresh detection run; discard any previous suggestions.
+    st.session_state.pop('_detected_characters', None)
+    st.session_state.now_entering = 'detect'
+
+
 def text_entry(element, image_height, delta=50):
+    for message in st.session_state.pop('_detected_characters_result', []):
+        element.success(message)
+
     st.session_state.current_page.contains_story = element.checkbox(
         "Does this page contain story text?",
         value=st.session_state.current_page.contains_story
@@ -200,6 +216,12 @@ def text_entry(element, image_height, delta=50):
     subcol1, subcol2 = element.columns(2)
     subcol1.button("Add character", width="stretch", on_click=adding_character, help=EnterText.character_help)
     subcol2.button("Add alias", width="stretch", on_click=adding_alias, help=EnterText.alias_help)
+    element.button(
+        "Detect characters (AI)",
+        width="stretch",
+        on_click=adding_detect,
+        help=EnterText.detect_help,
+    )
 
     height = max(image_height - delta, 200)
 
@@ -239,6 +261,221 @@ def alias_entry(element):
     element.button('Cancel adding alias', width="stretch", on_click=adding_text)
 
 
+def run_character_detection():
+    """Run the two-pass AI detection and stash suggestions in session state.
+
+    Returns True when suggestions were produced (and a rerun should follow),
+    False otherwise (a warning/error has already been shown to the user).
+    """
+    if 'ANTHROPIC_API_KEY' not in st.secrets:
+        st.warning(EnterText.detect_no_api_key)
+        return False
+
+    pages = [
+        (page_number, page.text)
+        for page_number, page in st.session_state.book_pages_dict.items()
+        if page.contains_story and (page.text or "").strip()
+    ]
+    if not pages:
+        st.warning(EnterText.detect_no_text)
+        return False
+
+    client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
+    status = st.empty()
+    progress = st.progress(0.0)
+
+    def _on_progress(done, total):
+        status.write(EnterText.detect_progress.format(done=done, total=total))
+        progress.progress(min(done / total, 1.0))
+
+    with st.spinner(EnterText.detect_spinner):
+        try:
+            suggestions = detect_book_characters(pages, client, progress_callback=_on_progress)
+        except (anthropic.AnthropicError, json.JSONDecodeError, ValueError, KeyError) as error:
+            st.error(EnterText.detect_failed.format(error=error))
+            return False
+
+    st.session_state['_detected_characters'] = suggestions
+    return True
+
+
+def _parse_aliases(text, exclude_name):
+    """Split a comma-separated alias string, dropping blanks, duplicates and
+    any value equal to the character's own name."""
+    aliases = []
+    seen = set()
+    for part in (text or "").split(','):
+        alias = part.strip()
+        if alias and alias.lower() != exclude_name.lower() and alias.lower() not in seen:
+            seen.add(alias.lower())
+            aliases.append(alias)
+    return aliases
+
+
+def commit_detected_characters(rows):
+    """Persist the reviewed character suggestions, honouring per-row actions.
+
+    rows is aligned with st.session_state['_detected_characters']; each entry
+    carries the (possibly edited) name/gender/flags, an alias string and a
+    chosen action. 'Merge into' folds a row's names into the target character's
+    aliases instead of creating a separate character.
+    """
+    book_title = st.session_state['current_book'].title
+    original_names = [s['name'] for s in st.session_state['_detected_characters']]
+    merge_prefix = EnterText.review_action_merge.split('{', 1)[0]
+
+    # Rows the user wants to create, keyed by their original (AI) name so that
+    # 'Merge into' actions can find their target.
+    create_rows = {}
+    for original_name, row in zip(original_names, rows):
+        if row['action'] == EnterText.review_action_create and row['name'].strip():
+            row['_aliases'] = _parse_aliases(row['aliases'], row['name'].strip())
+            create_rows[original_name] = row
+
+    # Fold merged rows into their target's alias list.
+    unresolved = []
+    for row in rows:
+        action = row['action']
+        if action == EnterText.review_action_create or action == EnterText.review_action_skip:
+            continue
+        target_name = action[len(merge_prefix):].strip()
+        target = create_rows.get(target_name)
+        if target is None:
+            unresolved.append(row['name'].strip() or "(unnamed)")
+            continue
+        extra = [row['name'].strip()] + _parse_aliases(row['aliases'], row['name'].strip())
+        for alias in extra:
+            if (
+                alias
+                and alias.lower() != target['name'].strip().lower()
+                and alias not in target['_aliases']
+            ):
+                target['_aliases'].append(alias)
+
+    created_count = 0
+    alias_count = 0
+    skipped = []
+
+    for row in create_rows.values():
+        name = row['name'].strip()
+        character = Character(book=book_title)
+        character.name = name
+        character.gender = row['gender']
+        character.human = row['human']
+        character.protagonist = row['protagonist']
+        character.plural = row['plural']
+
+        if st.session_state.firestore.document_exists(
+            collection='characters', doc_id=character.document_id
+        ):
+            skipped.append(name)
+            continue
+
+        character.register()
+        st.session_state['character_dict'][name] = character.get_ref()
+        created_count += 1
+
+        for alias_name in row['_aliases']:
+            alias = Alias(book=book_title)
+            alias.character = name
+            alias.name = alias_name
+            if st.session_state.firestore.document_exists(
+                collection='aliases', doc_id=alias.document_id
+            ):
+                continue
+            alias.register()
+            alias_count += 1
+
+    messages = [EnterText.review_created.format(characters=created_count, aliases=alias_count)]
+    if skipped:
+        messages.append(EnterText.review_skipped.format(names=", ".join(skipped)))
+    if unresolved:
+        messages.append(EnterText.review_unresolved.format(names=", ".join(unresolved)))
+
+    st.session_state['_detected_characters_result'] = messages
+    st.session_state.pop('_detected_characters', None)
+    st.session_state['now_entering'] = 'text'
+    st.rerun()
+
+
+def character_review_form(element):
+    suggestions = st.session_state['_detected_characters']
+    if not suggestions:
+        element.info(EnterText.detect_none_found)
+        element.button(
+            "Back to text", width="stretch", on_click=adding_text, key="detect_back_none"
+        )
+        return
+
+    element.write(EnterText.review_instruction)
+    names = [s['name'] for s in suggestions]
+
+    with element.form('character_review'):
+        rows = []
+        for i, suggestion in enumerate(suggestions):
+            st.markdown(f"**Character {i + 1}**")
+            name = st.text_input("Name", value=suggestion['name'], key=f"rev_name_{i}")
+
+            gender_index = (
+                CharacterForm.gender_options.index(suggestion['gender'])
+                if suggestion['gender'] in CharacterForm.gender_options
+                else 0
+            )
+            gender = st.selectbox(
+                "Gender",
+                options=CharacterForm.gender_options,
+                index=gender_index,
+                key=f"rev_gender_{i}",
+            )
+            human = st.checkbox("Is human?", value=suggestion['human'], key=f"rev_human_{i}")
+            protagonist = st.checkbox(
+                "Is protagonist?", value=suggestion['protagonist'], key=f"rev_prot_{i}"
+            )
+            plural = st.checkbox("Is plural?", value=suggestion['plural'], key=f"rev_plural_{i}")
+            aliases = st.text_input(
+                "Aliases (comma-separated)",
+                value=", ".join(suggestion['aliases']),
+                key=f"rev_alias_{i}",
+            )
+
+            other_names = [n for j, n in enumerate(names) if j != i]
+            action_options = (
+                [EnterText.review_action_create, EnterText.review_action_skip]
+                + [EnterText.review_action_merge.format(name=n) for n in other_names]
+            )
+            action = st.selectbox(
+                "Action", options=action_options, index=0, key=f"rev_action_{i}"
+            )
+            st.divider()
+
+            rows.append({
+                "name": name,
+                "gender": gender,
+                "human": human,
+                "protagonist": protagonist,
+                "plural": plural,
+                "aliases": aliases,
+                "action": action,
+            })
+
+        submitted = st.form_submit_button(EnterText.review_submit)
+        if submitted:
+            commit_detected_characters(rows)
+
+    element.button("Cancel", width="stretch", on_click=adding_text, key="cancel_review")
+
+
+def detect_entry(element):
+    if '_detected_characters' not in st.session_state:
+        element.info(EnterText.detect_intro)
+        if element.button("Run detection", width="stretch", key="run_detect"):
+            if run_character_detection():
+                st.rerun()
+        element.button("Cancel", width="stretch", on_click=adding_text, key="cancel_detect")
+        return
+    character_review_form(element)
+
+
 def user_entry_box(element, image_height, delta=50):
     if st.session_state.now_entering == 'text':
         text_entry(element, image_height, delta)
@@ -246,6 +483,8 @@ def user_entry_box(element, image_height, delta=50):
         character_entry(element)
     elif st.session_state.now_entering == 'alias':
         alias_entry(element)
+    elif st.session_state.now_entering == 'detect':
+        detect_entry(element)
 
 # def create_current_page_from_db():
 #     st.session_state.current_page = Page(
