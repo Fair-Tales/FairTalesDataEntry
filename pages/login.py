@@ -12,7 +12,7 @@ def confirm(username, password):
         st.session_state.pop('unconfirmed_username', None)
         if get_admin(username):
             st.session_state['admin'] = True
-        st.switch_page("./pages/user_home.py")
+        st.switch_page("./pages/landing.py")
     elif result == "not_confirmed":
         # Password was correct but account not yet confirmed.  Store the
         # username so the resend button below the form can use it.
