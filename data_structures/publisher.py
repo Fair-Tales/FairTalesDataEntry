@@ -46,7 +46,7 @@ class Publisher(DataStructureBase):
         year_given = int(st.selectbox(
             "Which year was the publisher founded?",
             options = (x for x in ([-1, -2]+[y for y in range(1900, (date.today().year + 1))])),
-            index=94,
+            index=0,
             placeholder="Select year of founding",
             format_func = lambda x: "I don't know" if x == -1 else ("Earlier year" if x == -2 else str(x))
         ))

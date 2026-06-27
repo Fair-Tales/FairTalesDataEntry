@@ -50,7 +50,7 @@ class Author(DataStructureBase):
 
         year_given = st.selectbox(
             "What is the author's birth year?",
-            options=([-1, -2] + [y for y in range(1900, (date.today().year - 15))]),
+            options=([-1, -2] + [y for y in range(1900, (date.today().year + 1))]),
             index=0,
             placeholder="Select year of birth",
             format_func=lambda x: "I don't know" if x == -1 else ("Earlier year" if x == -2 else str(x))
