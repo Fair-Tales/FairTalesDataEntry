@@ -173,6 +173,48 @@ def extract_isbn(text):
     return None
 
 
+def lookup_person_details(name, role, client):
+    """Use Claude + web search to suggest birth year and gender for a named person.
+
+    Returns a dict with 'birth_year' (int or None) and 'gender' (str from
+    AuthorForm/IllustratorForm.gender_options), or None on any failure.
+    """
+    import json as _json
+    from text_content import AIPrompts
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=512,
+            tools=[{"type": "web_search_20260209", "name": "web_search"}],
+            messages=[{
+                "role": "user",
+                "content": AIPrompts.person_lookup.format(name=name, role=role)
+            }]
+        )
+        text_block = None
+        for block in response.content:
+            if hasattr(block, 'type') and block.type == "text":
+                text_block = block.text
+        if text_block is None:
+            return None
+        raw = text_block.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        result = _json.loads(raw.strip())
+        birth_year = result.get("birth_year")
+        if birth_year is not None:
+            birth_year = int(birth_year)
+        gender = result.get("gender", "Unknown")
+        valid_genders = ["Woman", "Man", "Non-binary", "Other", "Unknown"]
+        if gender not in valid_genders:
+            gender = "Unknown"
+        return {"birth_year": birth_year, "gender": gender}
+    except Exception:
+        return None
+
+
 def lookup_isbn(isbn):
     """
     Look up book metadata via the Google Books API (free, no auth required).
