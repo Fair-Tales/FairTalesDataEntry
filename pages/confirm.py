@@ -8,12 +8,13 @@ user = st.query_params.user
 
 db = FirestoreWrapper().connect_user(auth=False)
 user_ref = db.collection("users").document(user)
+user_data = user_ref.get().to_dict()
 
-if user_ref.get().to_dict()['is_confirmed']:
+if user_data['is_confirmed']:
     st.warning("User account already confirmed. Please proceed to login by selecting `Home` in navigation menu.")
 else:
     try:
-        if token == user_ref.get().to_dict()['confirmation_token']:
+        if token == user_data['confirmation_token']:
             user_ref.update({
                 'is_confirmed': True
             })
