@@ -4,6 +4,14 @@ class Instructions:
         Thank you for taking the time to enter data for us.
     """
 
+    @staticmethod
+    def last_saved(timestamp):
+        """Reassurance message that the book's edits are persisted (issue #53).
+
+        ``timestamp`` is a timezone-aware UTC datetime (Book.last_updated).
+        """
+        return f"Last saved: {timestamp:%Y-%m-%d %H:%M UTC}"
+
     advise_to_search = """
         Before adding a book to our database, please search to check that we do not already have the book. You can also 
         search by author to see which books that we have by them.

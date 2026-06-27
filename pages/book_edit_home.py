@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 import anthropic
 import streamlit as st
 from streamlit_option_menu import option_menu
@@ -89,6 +90,12 @@ def suggest_themes():
 page_layout()
 
 st.title(f"Editing book: {st.session_state.current_book.title}")
+
+# Reassure the user that their edits are persisted (issue #53). last_updated is
+# only a datetime for a book that has been saved; a brand-new book leaves the
+# default sentinel (-1), which we skip.
+if isinstance(st.session_state.current_book.last_updated, datetime):
+    st.caption(Instructions.last_saved(st.session_state.current_book.last_updated))
 
 check_authentication_status()
 

@@ -1,5 +1,6 @@
 import streamlit as st
 from text_content import CharacterForm
+from utilities import load_character_dict
 from .base_structure import DataStructureBase, Field
 
 
@@ -111,5 +112,8 @@ class Character(DataStructureBase):
             else:
                 self.register()
                 st.session_state['character_dict'][self.name] = self.get_ref()
+                # Invalidate shared cache so new/other sessions re-read this
+                # character (this session sees it via the in-place update above).
+                load_character_dict.clear()
                 st.session_state['now_entering'] = 'text'
                 st.rerun()
