@@ -2,7 +2,9 @@ import io
 import zipfile
 import csv
 import streamlit as st
+from google.api_core.exceptions import GoogleAPIError
 from utilities import page_layout, check_authentication_status, FirestoreWrapper
+from text_content import FeedbackExport
 
 check_authentication_status()
 
@@ -90,3 +92,63 @@ if st.button("Prepare book data download"):
         file_name="fairtales_book_data.zip",
         mime="application/zip"
     )
+
+st.divider()
+
+st.header(FeedbackExport.header)
+st.write(FeedbackExport.description)
+
+if st.button(FeedbackExport.prepare_button):
+    db = FirestoreWrapper().connect_book()
+    try:
+        feedback_docs = list(db.collection("feedback").stream())
+    except GoogleAPIError as e:
+        st.error(FeedbackExport.error_message.format(error=e))
+        feedback_docs = None
+
+    if feedback_docs is not None:
+        if not feedback_docs:
+            st.info(FeedbackExport.empty_message)
+        else:
+            rows = []
+            for doc in feedback_docs:
+                d = doc.to_dict()
+
+                # Resolve the stored user DocumentReference to a username and,
+                # where available, an email address. The reference id is the
+                # username (see report_feedback.py / username_to_doc_ref).
+                user_ref = d.get("user")
+                username = ""
+                email = ""
+                if user_ref is not None and hasattr(user_ref, "id"):
+                    username = user_ref.id
+                    try:
+                        user_doc = user_ref.get()
+                        if user_doc.exists:
+                            email = user_doc.to_dict().get("email", "")
+                    except GoogleAPIError:
+                        # Keep the username we already have; leave email blank
+                        # rather than failing the whole export for one lookup.
+                        email = ""
+
+                timestamp = d.get("timestamp")
+                rows.append({
+                    "timestamp": timestamp.isoformat() if hasattr(timestamp, "isoformat") else ("" if timestamp is None else str(timestamp)),
+                    "type": d.get("type", ""),
+                    "username": username,
+                    "email": email,
+                    "text": d.get("text", ""),
+                })
+
+            buf = io.StringIO()
+            fieldnames = ["timestamp", "type", "username", "email", "text"]
+            writer = csv.DictWriter(buf, fieldnames=fieldnames, restval="", extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(rows)
+
+            st.download_button(
+                label=FeedbackExport.download_button,
+                data=buf.getvalue().encode("utf-8"),
+                file_name=FeedbackExport.file_name,
+                mime="text/csv"
+            )
