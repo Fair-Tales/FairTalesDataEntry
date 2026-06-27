@@ -7,7 +7,7 @@ from utilities import (
 from text_content import Alerts, GenderRegistration
 
 
-def register_user(_username, _name, _password, _gender, _birth_year):
+def register_user(_username, _name, _password, _gender, _birth_year, _newsletter_opt_in=False):
     hashed_password = hash_password(_password)
     confirmation_token = bcrypt.gensalt().decode('utf8')
     now = datetime.now()
@@ -23,7 +23,8 @@ def register_user(_username, _name, _password, _gender, _birth_year):
         "confirmation_token": confirmation_token,
         "is_confirmed": False,
         "trust_rating": 0,
-        "admin": False
+        "admin": False,
+        "newsletter_opt_in": _newsletter_opt_in
     }
     if check_user_exists(_username):
         st.warning(Alerts.user_exists)
@@ -88,8 +89,13 @@ with st.form('registration_form'):
         (x for x in range(1900, (date.today().year + 1))),
         placeholder="Select year of birth",
         ))
+    newsletter_opt_in = st.checkbox(
+        "Keep me updated with research findings and project news from Fair Tales "
+        "(max. one email per month). You can opt out at any time.",
+        value=False
+    )
     registered = st.form_submit_button("Register")
 
     if registered:
         if validate_user_details(username, name, password, gender, gender_custom, user_birth_year):
-            register_user(username, name, password, gender, user_birth_year)
+            register_user(username, name, password, gender, user_birth_year, newsletter_opt_in)
