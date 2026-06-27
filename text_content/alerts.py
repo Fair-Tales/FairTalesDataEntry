@@ -39,3 +39,14 @@ class Alerts:
         You currently have no books to edit! Please use the `Add a Book` option from the menu to start
         entering a book.
     """
+
+    invalid_credentials = "Invalid credentials."
+
+    account_not_confirmed = (
+        "Your account hasn't been confirmed yet — please check your email for the "
+        "confirmation link. If you can't find it, use the button below to resend it."
+    )
+
+    confirmation_email_resent = (
+        "A new confirmation email has been sent. Please check your inbox (and junk folder)."
+    )
