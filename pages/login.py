@@ -1,18 +1,41 @@
 import streamlit as st
-from utilities import page_layout, clear_page_history
-from text_content import Terms
+from utilities import page_layout, clear_page_history, authenticate_user, is_authenticated, get_admin, get_user, send_confirmation_email
+from text_content import Terms, Alerts
 from streamlit_option_menu import option_menu
-from utilities import authenticate_user, is_authenticated, get_admin
+
 
 def confirm(username, password):
-    if authenticate_user(username, password):
+    result = authenticate_user(username, password)
+    if result == "ok":
         st.session_state['authentication_status'] = True
         st.session_state['username'] = username
+        st.session_state.pop('unconfirmed_username', None)
         if get_admin(username):
             st.session_state['admin'] = True
         st.switch_page("./pages/user_home.py")
+    elif result == "not_confirmed":
+        # Password was correct but account not yet confirmed.  Store the
+        # username so the resend button below the form can use it.
+        st.session_state['unconfirmed_username'] = username
     else:
-        st.error("Invalid credentials.")
+        # Bad credentials — clear any previous unconfirmed state so the
+        # resend option is not shown for a different (or non-existent) account.
+        st.session_state.pop('unconfirmed_username', None)
+        st.error(Alerts.invalid_credentials)
+
+
+def _resend_confirmation(username):
+    """Look up the user's stored token and re-send the confirmation email."""
+    user = get_user(username)
+    if user:
+        user_data = user.to_dict()
+        send_confirmation_email(
+            user_data['username'],
+            user_data['username'],
+            user_data['confirmation_token'],
+            user_data['name'],
+        )
+        st.success(Alerts.confirmation_email_resent)
 
 def logout():
     st.session_state['authentication_status'] = False
@@ -45,6 +68,13 @@ else:
             confirmed = st.form_submit_button(label="Confirm")
             if confirmed:
                 confirm(username, password)
+
+        # Show the "not confirmed" warning and resend button only when the last
+        # login attempt was a correct-password / unconfirmed-account case.
+        if st.session_state.get('unconfirmed_username'):
+            st.warning(Alerts.account_not_confirmed)
+            if st.button("Resend confirmation email"):
+                _resend_confirmation(st.session_state['unconfirmed_username'])
 
         with st.expander("Forgot your password?"):
             reset_email = st.text_input("Enter your email address", key='reset_email')

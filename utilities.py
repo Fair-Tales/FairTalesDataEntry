@@ -93,19 +93,34 @@ def get_admin(username):
 
 
 def authenticate_user(username, password):
+    """Authenticate a user by username and password.
 
+    Returns one of three string statuses:
+    - "ok"              — credentials valid and account confirmed.
+    - "not_confirmed"   — credentials valid but account not yet confirmed.
+    - "bad_credentials" — username not found or password incorrect.
+
+    Security note: the password is always checked before the confirmation flag
+    is inspected.  This prevents an attacker from inferring account existence
+    via the confirmation state using a wrong password.
+    """
     user = get_user(username)
-    if user is not None:
-        if not user.to_dict()['is_confirmed']:
-            return False
+    if user is None:
+        return "bad_credentials"
 
-        stored_password = user.to_dict()['password']
-        return bcrypt.checkpw(
-            password=password.encode('utf8'),
-            hashed_password=stored_password.encode('utf8')
-        )
+    user_dict = user.to_dict()
 
-    return False
+    password_ok = bcrypt.checkpw(
+        password=password.encode('utf8'),
+        hashed_password=user_dict['password'].encode('utf8')
+    )
+    if not password_ok:
+        return "bad_credentials"
+
+    if not user_dict.get('is_confirmed', False):
+        return "not_confirmed"
+
+    return "ok"
 
 
 def hash_password(password):
