@@ -49,8 +49,15 @@ Analyse this photo of a children's picture book page.
 Instructions:
 1. Correct for any rotation or tilt in the image. Focus on the book page itself \
 and ignore any background (table, hands, etc.).
-2. Transcribe ALL text visible on the page exactly as written. Include speech \
+2. Transcribe ALL story text visible on the page exactly as written. Include speech \
 bubbles and captions. Do not include page numbers.
+   - Text may use a variety of fonts, stylised or decorative lettering, or handwriting — \
+transcribe it as accurately as possible regardless of style.
+   - Text within the page may appear in different orientations (rotated, vertical, curved, \
+or angled) — read and transcribe it even if it is not horizontal.
+   - Do NOT transcribe text that is part of the illustration artwork rather than the \
+narrative — for example: signposts, shop or street names, labels on objects, posters, \
+or other background signage. Only extract text that belongs to the story itself.
    - If a word or passage is difficult to read (blurred, partially obscured, \
 unusual lettering), enclose it in square brackets with a question mark: [like this?]
    - If you cannot make out any part of a word at all, write [?] in its place.
