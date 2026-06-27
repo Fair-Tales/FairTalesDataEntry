@@ -1,6 +1,7 @@
 import streamlit as st
 from datetime import datetime, date
 import bcrypt
+import email.utils
 from utilities import (
     page_layout, hash_password, check_user_exists, send_confirmation_email, FirestoreWrapper
 )
@@ -35,8 +36,18 @@ def register_user(_username, _name, _password, _gender, _birth_year, _newsletter
         st.switch_page("./pages/register_user_done.py")
 
 
-def is_valid_email(email):
-    return ('@' in email) and ('.' in email)
+def is_valid_email(address):
+    """Basic RFC 5322 email validation using the standard library."""
+    if not address or len(address) > 254:
+        return False
+    try:
+        parsed = email.utils.parseaddr(address)
+        if not parsed[1] or '@' not in parsed[1]:
+            return False
+        local, domain = parsed[1].rsplit('@', 1)
+        return bool(local) and bool(domain) and '.' in domain
+    except Exception:
+        return False
 
 
 def validate_user_details(_username, _name, _password, _gender, _gender_custom, _user_birth_year):
@@ -73,8 +84,8 @@ page_layout()
 
 with st.form('registration_form'):
     st.title("User Registration")
-    username = st.text_input("Email", value="", key='register_email').lower()
-    name = st.text_input("Name", value="", key='name_of_user')
+    username = st.text_input("Email", value="", key='register_email').lower().strip()
+    name = st.text_input("Name", value="", key='name_of_user').strip()
     password = st.text_input("Password", type="password", value="", key='register_password')
     gender = st.selectbox(
         GenderRegistration.question,
