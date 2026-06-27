@@ -45,8 +45,8 @@ class Illustrator(DataStructureBase):
 
         st.header(IllustratorForm.header)
 
-        self.forename = st.text_input("First name", value=self.forename)
-        self.surname = st.text_input("Surname", value=self.surname)
+        self.forename = st.text_input("First name", value=self.forename).strip()
+        self.surname = st.text_input("Surname", value=self.surname).strip()
 
         year_given = int(st.selectbox(
             "What is the illustrator's birth year?",

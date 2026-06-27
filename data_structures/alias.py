@@ -68,4 +68,5 @@ class Alias(DataStructureBase):
             else:
                 self.register()
                 st.session_state['now_entering'] = 'text'
+                st.session_state.pop('current_alias', None)
                 st.rerun()
