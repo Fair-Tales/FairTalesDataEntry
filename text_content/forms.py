@@ -222,3 +222,18 @@ class ReportFeedback:
     submit_label = "Submit"
     success_message = "Thank you — your report has been submitted!"
     empty_text_warning = "Please enter some text before submitting."
+
+
+class FeedbackExport:
+
+    header = "Feedback export"
+    description = (
+        "Download all submitted bug reports and feature requests (from the "
+        "Report a Bug / Request a Feature page) for review. May take a moment "
+        "for large datasets."
+    )
+    prepare_button = "Prepare feedback download"
+    download_button = "⬇ Download feedback (CSV)"
+    file_name = "fairtales_feedback.csv"
+    empty_message = "No feedback has been submitted yet."
+    error_message = "Could not load the feedback collection: {error}"
