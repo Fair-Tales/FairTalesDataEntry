@@ -4,6 +4,8 @@ from google.cloud.firestore_v1 import FieldFilter
 from google.oauth2 import service_account
 import pandas as pd
 import json
+import re
+import urllib.request
 import bcrypt
 import smtplib
 from email.mime.text import MIMEText
@@ -152,6 +154,49 @@ def author_entry_to_name(entry):
     return ' '.join([author['forename'], author['surname']])
 
 
+def extract_isbn(text):
+    """Extract ISBN-13 or ISBN-10 from text. Returns string or None.
+
+    Real-world copyright pages hyphenate ISBNs with varied group sizes, so we
+    match a run of digits separated by optional hyphens/spaces and validate the
+    cleaned length rather than assuming a fixed grouping.
+    """
+    if not text:
+        return None
+    isbn13 = re.search(r'97[89][-\s]?(?:\d[-\s]?){9}\d', text)
+    if isbn13:
+        return re.sub(r'[-\s]', '', isbn13.group())
+    isbn10 = re.search(r'\b\d[-\s]?(?:\d[-\s]?){8}[\dX]\b', text)
+    if isbn10:
+        return re.sub(r'[-\s]', '', isbn10.group())
+    return None
+
+
+def lookup_isbn(isbn):
+    """
+    Look up book metadata via the Google Books API (free, no auth required).
+    Returns dict with keys title, authors, publisher, published_date,
+    or None on any failure.
+    """
+    if not isbn:
+        return None
+    url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}&maxResults=1"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = json.loads(resp.read())
+        if data.get('totalItems', 0) == 0:
+            return None
+        info = data['items'][0]['volumeInfo']
+        return {
+            'title': info.get('title', ''),
+            'authors': info.get('authors', []),
+            'publisher': info.get('publisher', ''),
+            'published_date': info.get('publishedDate', ''),
+        }
+    except Exception:
+        return None
+
+
 class FirestoreWrapper:
     """
     Wrapper class to handle interacting with
@@ -279,6 +324,7 @@ class FormConfirmation:
                 st.session_state['book_dict'][
                     st.session_state['current_book'].title
                 ] = st.session_state['current_book'].get_ref()
+                st.session_state.pop('isbn_metadata', None)
 
                 if st.session_state.current_book.photos_uploaded:
                     navigate_to("./pages/enter_text.py")

@@ -30,14 +30,38 @@ def add_book_entries(self):
         st.session_state['adding_book_entries'] = False
         form_content(self)
 
+def _isbn_year(published_date):
+    if published_date and len(published_date) >= 4 and published_date[:4].isdigit():
+        year = int(published_date[:4])
+        if 1900 <= year <= date.today().year:
+            return year
+    return None
+
 def form_content(self):
     st.header(BookForm.header)
 
-    _title = st.text_input("Title", value=self.title).strip()
+    isbn_meta = st.session_state.get('isbn_metadata', {})
+    isbn_used = False
+
+    if isbn_meta.get('title') and not self.title:
+        _title_default = isbn_meta['title']
+        isbn_used = True
+    else:
+        _title_default = self.title
+    _title = st.text_input("Title", value=_title_default).strip()
+
+    isbn_year = _isbn_year(isbn_meta.get('published_date', ''))
+    if self.published != -1:
+        published_index = self.published - 1900
+    elif isbn_year is not None:
+        published_index = isbn_year - 1900
+        isbn_used = True
+    else:
+        published_index = 112
     _published = int(st.selectbox(
     "Date first published",
-    (x for x in range(1900, (date.today().year + 1))), 
-    index = self.published - 1900 if self.published != -1 else 112
+    (x for x in range(1900, (date.today().year + 1))),
+    index = published_index
     ))
     st.write(Instructions.author_publisher_illustrator_select)
 
@@ -66,6 +90,9 @@ def form_content(self):
         _publisher_name = st.session_state['current_publisher'].to_dict()['name'].replace('_', ' ')
         if _publisher_name in publisher_options:
             publisher_index = publisher_options.index(_publisher_name)
+    elif isbn_meta.get('publisher') and isbn_meta['publisher'] in publisher_options:
+        publisher_index = publisher_options.index(isbn_meta['publisher'])
+        isbn_used = True
 
     _publisher = st.selectbox(
         "Select from existing publishers",
@@ -105,6 +132,9 @@ def form_content(self):
     )
 
     _comment = st.text_input("Comment", value=self.comment, help=BookForm.comment_help)
+
+    if isbn_used:
+        st.caption("ℹ Metadata pre-filled from ISBN lookup — please verify.")
 
     submitted = st.form_submit_button("Submit")
 
