@@ -6,3 +6,4 @@ from text_content.forms import *
 from text_content.old_books import old_books
 from text_content.ai_prompts import AIPrompts
 from text_content.forms import ReportFeedback
+from text_content.priority_books import PriorityBooks

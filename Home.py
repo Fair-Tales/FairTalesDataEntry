@@ -99,6 +99,7 @@ def navigate_pages():
             st.Page("./pages/account_settings.py", title='Account Settings'),
             st.Page("./pages/landing.py", title='Home'),
             st.Page("./pages/user_home.py", title='Enter Data'),
+            st.Page("./pages/priority_books.py", title='Books We Need'),
             st.Page("./pages/report_feedback.py", title='Report a Bug / Feature'),
         ],
         "Other pages":[

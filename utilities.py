@@ -64,6 +64,7 @@ def page_layout(current_page=None):
         st.session_state['_current_page'] = current_page
     st.sidebar.page_link("pages/login.py", label="Login")
     st.sidebar.page_link("pages/landing.py", label="Home")
+    st.sidebar.page_link("pages/priority_books.py", label="Books We Need")
     st.sidebar.page_link("pages/account_settings.py", label="Settings")
     st.sidebar.page_link("pages/donate.py", label="Donate")
     st.sidebar.page_link("pages/report_feedback.py", label="Report a Bug / Feature")
