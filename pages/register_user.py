@@ -31,8 +31,8 @@ def register_user(_username, _name, _password, _gender, _birth_year, _newsletter
     if db.collection('users').document(_username).get().exists:
         st.warning(Alerts.user_exists)
     else:
-        db.collection("users").document(username).set(user_data)
-        send_confirmation_email(username, username, confirmation_token, _name)
+        db.collection("users").document(_username).set(user_data)
+        send_confirmation_email(_username, _username, confirmation_token, _name)
         st.switch_page("./pages/register_user_done.py")
 
 
