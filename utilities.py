@@ -66,7 +66,9 @@ def page_layout(current_page=None):
     if 'admin' in st.session_state and st.session_state['admin']:
         st.sidebar.page_link("pages/admin.py", label="Admin")
     history = st.session_state.get('_page_history', [])
-    if history:
+    # Hide Back during the guided book sub-entry flow (add author/illustrator/
+    # publisher): returning to add_book.py would just re-forward here. Use Cancel.
+    if history and not st.session_state.get('adding_book_entries', False):
         if st.sidebar.button("← Back"):
             go_back()
 
