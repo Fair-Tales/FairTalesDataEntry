@@ -151,3 +151,17 @@ class AliasForm:
     character_exists = """
             This alias already exists in the database.
     """
+
+
+class UserForm:
+
+    header = "Account Settings"
+    save_button_text = "Save changes"
+    birth_year_question = "What is your birth year?"
+    newsletter_label = (
+        "Keep me updated with research findings and project news from Fair Tales "
+        "(max. one email per month). You can opt out at any time."
+    )
+    save_success = "Your account settings have been updated."
+    page_header = "Your Account"
+    page_intro = "Update your personal details below. Changes are saved when you click 'Save changes'."
