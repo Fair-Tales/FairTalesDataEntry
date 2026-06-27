@@ -114,6 +114,7 @@ def navigate_pages():
             st.Page("./pages/review_my_books.py"),
             st.Page("./pages/uploader.py"),
             st.Page("./pages/donate.py"),
+            st.Page("./pages/results_dashboard.py"),
         ]
     }
 

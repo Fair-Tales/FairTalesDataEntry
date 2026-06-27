@@ -22,7 +22,4 @@ with col2:
     st.subheader(Instructions.landing_view_results_label)
     st.write(Instructions.landing_view_results_description)
     if st.button(Instructions.landing_view_results_label, use_container_width=True):
-        st.session_state['show_results_placeholder'] = True
-
-if st.session_state.get('show_results_placeholder'):
-    st.info(Instructions.landing_results_coming_soon)
+        navigate_to("./pages/results_dashboard.py")

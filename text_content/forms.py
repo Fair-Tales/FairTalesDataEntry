@@ -185,6 +185,46 @@ class CharacterForm:
         """
 
 
+class ResultsDashboard:
+
+    page_title = "Research Results"
+
+    intro = """
+        Explore aggregated results for the books in our collection. This is an
+        early preview — the first result type is a breakdown of character counts
+        by gender.
+    """
+
+    gender_column_label = "Gender"
+    count_column_label = "Number of characters"
+
+    combined_chart_title = "All characters by gender"
+    human_chart_title = "Human characters by gender"
+    nonhuman_chart_title = "Non-human characters by gender"
+
+    scope_all_caption = "Showing results across all books in the collection."
+    scope_collection_caption = (
+        "Showing results for the selected collection of {n} book(s)."
+    )
+
+    empty_message = """
+        There are no characters in the current selection yet, so there is nothing
+        to chart. Enter some character data (or choose a different collection) and
+        check back.
+    """
+
+    work_in_progress_header = "Work in progress"
+    work_in_progress_intro = """
+        More result types are on the way. Planned breakdowns include:
+    """
+    work_in_progress_items = [
+        "Speech statistics — how much each character speaks.",
+        "Ethnicity breakdowns per character (see issue #46).",
+        "Disability breakdowns per character (see issue #46).",
+        "Author, illustrator and publisher diversity summaries.",
+    ]
+
+
 class AliasForm:
 
     header = "Please select a character and enter their alias:"
