@@ -128,11 +128,11 @@ def manual_correction_dialog():
         with fs_save.open(cropped_path, 'wb') as f:
             f.write(buf.getvalue())
         load_image.clear()
-        st.session_state['_manual_rotation'] = 0
-        st.success("Saved! Refresh the page to see the corrected image.")
+        # Close the dialog and rerun the main page so the corrected image is
+        # shown immediately (st.rerun() inside an st.dialog dismisses it).
+        st.rerun()
 
     if discard_col.button("✕ Discard", use_container_width=True):
-        st.session_state['_manual_rotation'] = 0
         st.rerun()
 
 
@@ -153,6 +153,14 @@ def display_image():
     else:
         col1.caption("⚠ Auto-correction unavailable — showing original photo")
         if col1.button("✏ Edit image", use_container_width=True):
+            # Start each editing session from a clean slate: clear any rotation/
+            # crop state left from a previous open (including closing via the
+            # dialog's native ✕, which we can't otherwise hook into).
+            for _k in (
+                '_manual_rotation', 'fine_rotation',
+                'crop_left', 'crop_right', 'crop_top', 'crop_bottom',
+            ):
+                st.session_state.pop(_k, None)
             manual_correction_dialog()
 
     page_image = load_image(book, page_number, use_cropped=use_cropped)
