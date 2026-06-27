@@ -117,6 +117,10 @@ def author_search():
 
 def add_book():
     st.session_state['current_book'] = Book()
+    # Clear any leftover entity selections / flow flag from a previous (cancelled)
+    # book entry so the new book form starts blank.
+    for _key in ('current_author', 'current_illustrator', 'current_publisher', 'adding_book_entries'):
+        st.session_state.pop(_key, None)
     st.switch_page("./pages/add_book.py")
 
 def review_my_books():
