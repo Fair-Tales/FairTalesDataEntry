@@ -10,7 +10,7 @@ class Author(DataStructureBase):
         'is_registered': False,
         'forename': "",
         'surname': "",
-        'birth_year': 1970,
+        'birth_year': None,
         'gender': "",
         'entered_by': None,
         'datetime_created': -1,
@@ -48,13 +48,13 @@ class Author(DataStructureBase):
         self.forename = st.text_input("First name", value=self.forename).strip()
         self.surname = st.text_input("Surname", value=self.surname).strip()
 
-        year_given = int(st.selectbox(
+        year_given = st.selectbox(
             "What is the author's birth year?",
-            options = (x for x in ([-1, -2]+[y for y in range(1900, (date.today().year - 15))])),
-            index=94,
+            options=([-1, -2] + [y for y in range(1900, (date.today().year - 15))]),
+            index=0,
             placeholder="Select year of birth",
-            format_func = lambda x: "I don't know" if x == -1 else ("Earlier year" if x == -2 else str(x))
-        ))
+            format_func=lambda x: "I don't know" if x == -1 else ("Earlier year" if x == -2 else str(x))
+        )
 
         if year_given > 0:
             self.birth_year = year_given
