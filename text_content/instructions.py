@@ -93,3 +93,8 @@ class Instructions:
     landing_results_coming_soon = """
         The results viewer is coming soon! Check back later to explore our research findings.
     """
+
+    author_search_label = (
+        "Search by author name — results filter as you type. "
+        "Enter all or part of the name to find close matches."
+    )

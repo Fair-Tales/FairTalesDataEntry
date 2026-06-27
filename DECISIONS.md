@@ -42,3 +42,23 @@ Status: `accepted` | `superseded` | `deprecated`.
 **Consequences / follow-up:**
 - Any existing author with `birth_year: 1970` is potentially wrong but cannot be corrected programmatically without human review.
 - A future clean-up task could present all 1970 records to a data-entry user for confirmation or correction.
+
+---
+
+## 003 — Adopt `streamlit-keyup` for live author search (issue #72)
+
+**Status:** accepted
+
+**Context:** The home-page author search (`pages/user_home.py`) used `st.text_input`, which only reruns on Enter / blur, so results did not update live as the user typed. Streamlit's native per-keystroke input tracking (streamlit/streamlit#4553) is still unshipped, so there is no built-in way to filter as the user types.
+
+**Decision:** Add the `streamlit-keyup` third-party component (`st_keyup`, pinned to `0.3.0` in `requirements.txt`) and use it for the author search field. The component reruns on each keystroke and is configured with a `debounce=300` (milliseconds).
+
+**Reasons:**
+- A native Streamlit live-filter input does not exist yet, so a component is the only way to deliver the live-filter UX requested in #72.
+- `streamlit-keyup` is the component named in the issue, is also bundled in `streamlit-extras`, and exposes a `debounce` parameter.
+- The 300ms debounce means the author lookup only re-runs after the user pauses typing, avoiding a Firestore read on every individual keystroke while still feeling responsive.
+
+**Consequences / follow-up:**
+- New runtime dependency `streamlit-keyup==0.3.0`; developers/deploys must reinstall requirements before running.
+- `st_keyup` does not accept a `help` tooltip parameter (unlike `st.text_input`), so the previous help hint was folded into the field label.
+- If Streamlit ships native keystroke tracking, this component could be revisited and removed.

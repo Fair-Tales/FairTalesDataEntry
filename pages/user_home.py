@@ -1,5 +1,6 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
+from st_keyup import st_keyup
 from text_content import Alerts, Instructions, old_books
 from utilities import check_authentication_status, page_layout, navigate_to, clear_page_history
 from data_structures import Book
@@ -65,12 +66,15 @@ def book_search():
                     st.write(f"**Illustrator:** {illustrator_name}")
 
 def author_search():
-    author_search_string = st.text_input(
-        "Search by author name — enter a full or partial name and press Enter to find close matches.",
+    # Live-filter as the user types (issue #72). st_keyup reruns on each keystroke;
+    # the 300ms debounce limits how often the author lookup runs while typing.
+    author_search_string = st_keyup(
+        Instructions.author_search_label,
         value="",
-        help="You can enter either all or part of the name."
+        debounce=300,
+        key="author_search_keyup",
     )
-    if len(author_search_string) > 0:
+    if author_search_string and len(author_search_string) > 0:
         search_term = author_search_string.lower()
 
         matching_names = [
