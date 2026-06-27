@@ -1,7 +1,7 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
 from text_content import Alerts, Instructions, old_books
-from utilities import check_authentication_status, page_layout
+from utilities import check_authentication_status, page_layout, navigate_to, clear_page_history
 from data_structures import Book
 import pandas as pd
 
@@ -121,12 +121,13 @@ def add_book():
     # book entry so the new book form starts blank.
     for _key in ('current_author', 'current_illustrator', 'current_publisher', 'adding_book_entries'):
         st.session_state.pop(_key, None)
-    st.switch_page("./pages/add_book.py")
+    navigate_to("./pages/add_book.py")
 
 def review_my_books():
-    st.switch_page("./pages/review_my_books.py")
+    navigate_to("./pages/review_my_books.py")
 
-page_layout()
+clear_page_history()
+page_layout(current_page="./pages/user_home.py")
 
 st.title("Fair Tales Data Entry Tool")
 

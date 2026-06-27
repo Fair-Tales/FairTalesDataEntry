@@ -1,5 +1,5 @@
 import streamlit as st
-from utilities import page_layout
+from utilities import page_layout, clear_page_history
 from text_content import Terms
 from streamlit_option_menu import option_menu
 from utilities import authenticate_user, is_authenticated, get_admin
@@ -18,6 +18,7 @@ def logout():
     st.session_state['authentication_status'] = False
     st.session_state['username'] = ""
     st.session_state['admin'] = False
+    clear_page_history()
     st.rerun()
 
 

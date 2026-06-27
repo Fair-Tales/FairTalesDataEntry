@@ -1,5 +1,5 @@
 import streamlit as st
-from utilities import author_entry_to_name
+from utilities import author_entry_to_name, navigate_to
 from text_content import Instructions, BookForm
 from .base_structure import DataStructureBase, Field
 from .author import Author
@@ -14,17 +14,17 @@ def add_book_entries(self):
     else:
         if self.author is None:
             st.session_state['current_author'] = Author()
-            st.switch_page("./pages/add_author.py")
+            navigate_to("./pages/add_author.py")
         else:
             st.session_state['current_author'] = self.author.get()
         if self.illustrator is None:
             st.session_state['current_illustrator'] = Illustrator()
-            st.switch_page("./pages/add_illustrator.py")
+            navigate_to("./pages/add_illustrator.py")
         else:
             st.session_state['current_illustrator'] = self.illustrator.get()
         if self.publisher is None:
             st.session_state['current_publisher'] = Publisher()
-            st.switch_page("./pages/add_publisher.py")
+            navigate_to("./pages/add_publisher.py")
         else:
             st.session_state['current_publisher'] = self.publisher.get()
         st.session_state['adding_book_entries'] = False
@@ -137,12 +137,12 @@ def form_content(self):
             self.editing = False
             if self.is_registered:
                 if st.session_state.current_book.photos_uploaded:
-                    st.switch_page("./pages/enter_text.py")
+                    navigate_to("./pages/enter_text.py")
                 else:
-                    st.switch_page("./pages/page_photo_upload.py")
+                    navigate_to("./pages/page_photo_upload.py")
             else:
                 st.session_state['active_form_to_confirm'] = 'new_book'
-                st.switch_page("./pages/confirm_entry.py")
+                navigate_to("./pages/confirm_entry.py")
 
 class Book(DataStructureBase):
 

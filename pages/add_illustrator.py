@@ -2,7 +2,7 @@ import streamlit as st
 from utilities import page_layout, check_authentication_status
 
 check_authentication_status()
-page_layout()
+page_layout(current_page="./pages/add_illustrator.py")
 
 
 with st.form("new_illustrator"):

@@ -1,6 +1,6 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
-from utilities import page_layout, check_authentication_status
+from utilities import page_layout, check_authentication_status, navigate_to
 from text_content import Instructions
 
 check_authentication_status()
@@ -16,14 +16,14 @@ def upload_page_photos():
 
 
 def enter_text():
-    st.switch_page("./pages/enter_text.py")
+    navigate_to("./pages/enter_text.py")
 
 
 def add_character():
-    st.switch_page("./pages/add_character.py")
+    navigate_to("./pages/add_character.py")
 
 
-page_layout()
+page_layout(current_page="./pages/book_data_entry.py")
 
 st.title(
     f"Enter book data: {st.session_state.current_book.title}"
