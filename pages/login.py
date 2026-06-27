@@ -10,7 +10,7 @@ def confirm(username, password):
         st.session_state['username'] = username
         if get_admin(username):
             st.session_state['admin'] = True
-        st.switch_page("./pages/user_home.py")
+        st.switch_page("./pages/landing.py")
     else:
         st.error("Invalid credentials.")
 

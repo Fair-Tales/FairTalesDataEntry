@@ -97,7 +97,8 @@ def navigate_pages():
         "Menu":[
             st.Page("./pages/login.py", title='Sign Out'),
             st.Page("./pages/account_settings.py", title='Account Settings'),
-            st.Page("./pages/user_home.py", title='Home'),
+            st.Page("./pages/landing.py", title='Home'),
+            st.Page("./pages/user_home.py", title='Enter Data'),
         ],
         "Other pages":[
             st.Page("./pages/add_author.py"),

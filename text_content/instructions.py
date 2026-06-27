@@ -73,3 +73,23 @@ class Instructions:
         Page photo upload was successful!
         You can now close this window and return to enter the book text on your other device.
     """
+
+    landing_intro = """
+        What would you like to do today?
+    """
+
+    landing_enter_data_label = "Enter data"
+
+    landing_enter_data_description = """
+        Contribute to the project by entering book and character data.
+    """
+
+    landing_view_results_label = "View results"
+
+    landing_view_results_description = """
+        Explore the research results for our collection of books.
+    """
+
+    landing_results_coming_soon = """
+        The results viewer is coming soon! Check back later to explore our research findings.
+    """

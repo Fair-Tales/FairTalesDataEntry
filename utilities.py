@@ -63,7 +63,7 @@ def page_layout(current_page=None):
     if current_page:
         st.session_state['_current_page'] = current_page
     st.sidebar.page_link("pages/login.py", label="Login")
-    st.sidebar.page_link("pages/user_home.py", label="Home")
+    st.sidebar.page_link("pages/landing.py", label="Home")
     st.sidebar.page_link("pages/account_settings.py", label="Settings")
     st.sidebar.page_link("pages/donate.py", label="Donate")
     if 'admin' in st.session_state and st.session_state['admin']:
