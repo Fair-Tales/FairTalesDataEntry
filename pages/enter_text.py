@@ -4,7 +4,7 @@ from streamlit_dimensions import st_dimensions
 import s3fs
 from utilities import page_layout, confirm_submit, check_authentication_status
 from data_structures import Page, Character, Alias
-from text_content import EnterText
+from text_content import EnterText, ManageCharacters, AliasForm
 
 check_authentication_status()
 
@@ -192,6 +192,34 @@ def adding_alias():
     st.session_state.now_entering = 'alias'
 
 
+def managing_characters():
+    if st.session_state['_page_text_editing'] is not None:
+        st.session_state.current_page.text = st.session_state['_page_text_editing']
+    st.session_state.now_entering = 'manage'
+
+
+@st.dialog(ManageCharacters.delete_character_dialog_title)
+def confirm_delete_character(character_doc_dict, name):
+    st.write(ManageCharacters.delete_character_warning.format(name=name))
+    if st.button(ManageCharacters.confirm_delete_button):
+        Character(db_object=character_doc_dict).delete()
+        st.session_state.now_entering = 'manage'
+        st.rerun()
+    if st.button(ManageCharacters.cancel_button):
+        st.rerun()
+
+
+@st.dialog(ManageCharacters.delete_alias_dialog_title)
+def confirm_delete_alias(alias_doc_dict, name):
+    st.write(ManageCharacters.delete_alias_warning.format(name=name))
+    if st.button(ManageCharacters.confirm_delete_button):
+        Alias(db_object=alias_doc_dict).delete()
+        st.session_state.now_entering = 'manage'
+        st.rerun()
+    if st.button(ManageCharacters.cancel_button):
+        st.rerun()
+
+
 def text_entry(element, image_height, delta=50):
     st.session_state.current_page.contains_story = element.checkbox(
         "Does this page contain story text?",
@@ -200,6 +228,12 @@ def text_entry(element, image_height, delta=50):
     subcol1, subcol2 = element.columns(2)
     subcol1.button("Add character", width="stretch", on_click=adding_character, help=EnterText.character_help)
     subcol2.button("Add alias", width="stretch", on_click=adding_alias, help=EnterText.alias_help)
+    element.button(
+        ManageCharacters.manage_button,
+        width="stretch",
+        on_click=managing_characters,
+        help=ManageCharacters.manage_help,
+    )
 
     height = max(image_height - delta, 200)
 
@@ -229,6 +263,14 @@ def character_entry(element):
 
 def alias_entry(element):
 
+    # Aliases can only be attached to characters in this book. If none exist
+    # yet, avoid rendering an empty form (a Streamlit form must contain a submit
+    # button) and prompt the user to add a character first.
+    if not st.session_state.get('book_character_dict'):
+        element.warning(AliasForm.no_characters)
+        element.button('Cancel adding alias', width="stretch", on_click=adding_text)
+        return
+
     st.session_state['current_alias'] = Alias(
         book=st.session_state['current_book'].title
     )
@@ -239,6 +281,56 @@ def alias_entry(element):
     element.button('Cancel adding alias', width="stretch", on_click=adding_text)
 
 
+def manage_characters_entry(element):
+
+    element.subheader(ManageCharacters.header)
+    element.write(ManageCharacters.intro)
+
+    book = st.session_state['current_book']
+    # Rebuild the book-scoped character lookup from the book's reference list so
+    # it reflects any additions/deletions, and keep it in session state so the
+    # alias form stays scoped to this book.
+    character_dict = book.get_character_dict()
+    st.session_state['book_character_dict'] = character_dict
+
+    if not character_dict:
+        element.info(ManageCharacters.no_characters)
+    else:
+        for name, character_ref in character_dict.items():
+            with element.expander(name):
+                character_doc = character_ref.get()
+                if not character_doc.exists:
+                    continue
+                aliases = list(
+                    st.session_state['firestore'].query_stream(
+                        collection='aliases',
+                        field='character',
+                        op='==',
+                        value=character_ref,
+                    )
+                )
+                st.write(ManageCharacters.aliases_label)
+                if not aliases:
+                    st.caption(ManageCharacters.no_aliases)
+                for alias_doc in aliases:
+                    alias_data = alias_doc.to_dict()
+                    alias_name = alias_data.get('name', '')
+                    alias_col, button_col = st.columns([3, 1])
+                    alias_col.write(alias_name)
+                    if button_col.button(
+                        ManageCharacters.delete_alias_button,
+                        key=f"delete_alias_{alias_doc.id}",
+                    ):
+                        confirm_delete_alias(alias_data, alias_name)
+                if st.button(
+                    ManageCharacters.delete_character_button,
+                    key=f"delete_character_{character_ref.id}",
+                ):
+                    confirm_delete_character(character_doc.to_dict(), name)
+
+    element.button(ManageCharacters.done_button, width="stretch", on_click=adding_text)
+
+
 def user_entry_box(element, image_height, delta=50):
     if st.session_state.now_entering == 'text':
         text_entry(element, image_height, delta)
@@ -246,6 +338,8 @@ def user_entry_box(element, image_height, delta=50):
         character_entry(element)
     elif st.session_state.now_entering == 'alias':
         alias_entry(element)
+    elif st.session_state.now_entering == 'manage':
+        manage_characters_entry(element)
 
 # def create_current_page_from_db():
 #     st.session_state.current_page = Page(
@@ -277,6 +371,11 @@ if (
     st.session_state['current_page_number'] = 1
     st.session_state['now_entering'] = 'text'
     st.session_state['_page_text_editing'] = None
+    # Build the book-scoped character lookup so alias entry is restricted to
+    # characters in this book (rather than every character in the database).
+    st.session_state['book_character_dict'] = (
+        st.session_state.current_book.get_character_dict()
+    )
 
 if 'current_page_number' not in st.session_state:
     st.session_state['current_page_number'] = 1

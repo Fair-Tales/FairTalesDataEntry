@@ -38,16 +38,23 @@ class Alias(DataStructureBase):
 
         st.header(AliasForm.header)
 
-        character_options = list(
-            st.session_state['character_dict'].keys()
-        )
+        # Aliases may only be added to characters that belong to the book
+        # currently being edited, so scope the options to the book-specific
+        # lookup rather than the global character dict.
+        book_character_dict = st.session_state.get('book_character_dict', {})
+        character_options = list(book_character_dict.keys())
+
+        if not character_options:
+            st.warning(AliasForm.no_characters)
+            return
+
         character_index = 0
         if self.character is not None:
             _character_name = self.character.get().to_dict()['name']
             if _character_name in character_options:
                 character_index = character_options.index(_character_name)
 
-        self.character = st.selectbox(
+        selected_character = st.selectbox(
             "Select character",
             options=character_options,
             index=character_index
@@ -58,6 +65,13 @@ class Alias(DataStructureBase):
         submitted = st.form_submit_button("Save alias")
 
         if submitted:
+            # Resolve the selected name to its reference via the book-scoped
+            # dict (guarded with .get) so we link the right character even when
+            # two books contain characters that share a name.
+            self.character = book_character_dict.get(selected_character)
+            if self.character is None:
+                st.warning(AliasForm.no_characters)
+                return
             if st.session_state.firestore.document_exists(
                 collection='aliases',
                 doc_id=self.document_id
@@ -68,3 +82,9 @@ class Alias(DataStructureBase):
                 st.session_state['now_entering'] = 'text'
                 st.session_state.pop('current_alias', None)
                 st.rerun()
+
+    def delete(self):
+        """Delete this alias document from Firestore."""
+        st.session_state['firestore'].delete_document(
+            collection='aliases', doc_id=self.document_id
+        )

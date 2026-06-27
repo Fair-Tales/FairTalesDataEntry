@@ -198,7 +198,13 @@ class Book(DataStructureBase):
         'photos_uploaded': False,
         'photos_url': "",
         'comment': "",
-        'datetime_submitted': -1
+        'datetime_submitted': -1,
+        # List of Firestore references to the Character documents that appear in
+        # this book. A character may be referenced by more than one book, which
+        # is why the relationship is modelled as a list of references on the
+        # book rather than nesting characters inside it. Defaults to an empty
+        # list; older book documents predate this field and fall back to [].
+        'characters': []
     }
     fields.update({
         theme: False
@@ -234,4 +240,48 @@ class Book(DataStructureBase):
             add_book_entries(self)
         else:
             form_content(self)
-            
+
+    def add_character(self, character_ref):
+        """Link a character (by Firestore reference) to this book.
+
+        Re-assigns the ``characters`` list (rather than mutating in place) so
+        that the Field descriptor write-through persists the new list to
+        Firestore when the book is registered. No-op if already linked.
+        """
+        if all(ref.path != character_ref.path for ref in self.characters):
+            self.characters = self.characters + [character_ref]
+
+    def remove_character(self, character_ref):
+        """Unlink a character (by Firestore reference) from this book."""
+        self.characters = [
+            ref for ref in self.characters if ref.path != character_ref.path
+        ]
+
+    def get_character_dict(self):
+        """Return a {character name: reference} dict for this book's characters.
+
+        References to characters that no longer exist are skipped. For books
+        created before the ``characters`` list existed, the list is back-filled
+        by querying the characters collection for documents whose ``book`` field
+        points at this book, so existing data keeps working transparently.
+        """
+        refs = self.characters
+        if not refs and self.is_registered:
+            book_ref = self.get_ref()
+            refs = [
+                doc.reference
+                for doc in st.session_state['firestore'].query_stream(
+                    collection='characters', field='book', op='==', value=book_ref
+                )
+            ]
+            if refs:
+                # Persist the back-filled list so we only pay for this once.
+                self.characters = refs
+
+        character_dict = {}
+        for ref in refs:
+            doc = ref.get()
+            if doc.exists:
+                character_dict[doc.to_dict()['name']] = ref
+        return character_dict
+
