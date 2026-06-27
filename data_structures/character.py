@@ -10,6 +10,8 @@ class Character(DataStructureBase):
         'book': None,
         'name': "",
         'gender': "",
+        'ethnicity': "",
+        'disability': "",
         'protagonist': False,
         'human': True,
         'plural': False,
@@ -25,6 +27,8 @@ class Character(DataStructureBase):
     form_fields = {
         'name': 'Name',
         'gender': 'Gender',
+        'ethnicity': 'Ethnicity',
+        'disability': 'Disability',
         'protagonist': 'Is protagonist',
         'human': 'Is human',
         'plural': 'Is plural',
@@ -54,6 +58,30 @@ class Character(DataStructureBase):
             options=CharacterForm.gender_options,
             index=gender_index,
             help=CharacterForm.gender_help
+        )
+
+        ethnicity_index = (
+            CharacterForm.ethnicity_options.index(self.ethnicity)
+            if self.ethnicity is not None and self.ethnicity != ""
+            else 0
+        )
+        self.ethnicity = st.selectbox(
+            "Ethnicity",
+            options=CharacterForm.ethnicity_options,
+            index=ethnicity_index,
+            help=CharacterForm.ethnicity_help
+        )
+
+        disability_index = (
+            CharacterForm.disability_options.index(self.disability)
+            if self.disability is not None and self.disability != ""
+            else 0
+        )
+        self.disability = st.selectbox(
+            "Disability",
+            options=CharacterForm.disability_options,
+            index=disability_index,
+            help=CharacterForm.disability_help
         )
 
         self.protagonist = st.checkbox(

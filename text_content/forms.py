@@ -129,6 +129,40 @@ class CharacterForm:
         Please do not use the illustrations to infer gender and only select
         `Transgender` if this is explicit in the text.
     """
+
+    # TODO: confirm taxonomy with team
+    ethnicity_options = [
+        "Not specified",
+        "Asian",
+        "Black / African",
+        "Hispanic / Latino",
+        "Middle Eastern",
+        "Native / Indigenous",
+        "White / European",
+        "Mixed / Other",
+    ]
+    ethnicity_help = """
+        Please select the character's apparent ethnicity as represented in the text or illustrations.
+        If it is not clear, please select `Not specified`.
+        Note: this vocabulary is a placeholder — the final taxonomy will be confirmed by the team.
+    """
+
+    # TODO: confirm taxonomy with team
+    disability_options = [
+        "Not specified",
+        "Physical disability",
+        "Sensory disability",
+        "Cognitive / Learning disability",
+        "Mental health condition",
+        "Chronic illness",
+        "No disability",
+    ]
+    disability_help = """
+        Please select the character's apparent disability status as represented in the text.
+        If it is not clear, please select `Not specified`.
+        Note: this vocabulary is a placeholder — the final taxonomy will be confirmed by the team.
+    """
+
     character_exists = """
             This character already exists in the database.
             If you want to create a new alias for an existing character, please

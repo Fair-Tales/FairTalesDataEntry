@@ -1,5 +1,6 @@
 import streamlit as st
 from utilities import author_entry_to_name, page_layout, check_authentication_status, navigate_to
+from text_content import CharacterForm
 
 check_authentication_status()
 
@@ -17,7 +18,7 @@ def new_character():
         st.header("Please enter the details of the new character.")
 
         metadata = {
-            key: None for key in ['name', 'alias', 'gender', 'is_plural', 'is_human']
+            key: None for key in ['name', 'alias', 'gender', 'ethnicity', 'disability', 'is_plural', 'is_human']
         }
         metadata['name'] = st.text_input("Full name (as most commonly used)")
         metadata['alias'] = st.text_input("Enter their alias")
@@ -29,6 +30,16 @@ def new_character():
                 'Non-binary/Genderqueer/Gender non-conforming',
                 'Not specified'
             ]
+        )
+        metadata['ethnicity'] = st.selectbox(
+            "Ethnicity",
+            options=CharacterForm.ethnicity_options,
+            help=CharacterForm.ethnicity_help
+        )
+        metadata['disability'] = st.selectbox(
+            "Disability",
+            options=CharacterForm.disability_options,
+            help=CharacterForm.disability_help
         )
         metadata['is_plural'] = st.checkbox("Is this a group or collection of characters? (e.g. 'the cavemen')")
         metadata['is_human'] = st.checkbox("Is this character human?", value=True)
