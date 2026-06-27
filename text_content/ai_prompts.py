@@ -43,6 +43,17 @@ Respond with valid JSON only:
 Book text:
 """
 
+    person_lookup = (
+        "You are helping a children's book archivist. Using web search, look up "
+        "biographical information about {name}, a children's book {role}.\n\n"
+        "Find:\n"
+        "1. Birth year (4-digit integer, or null if not found or uncertain)\n"
+        "2. Gender identity, using exactly one of: "
+        '"Woman", "Man", "Non-binary", "Other", or "Unknown"\n\n'
+        "Respond with valid JSON only — no other text:\n"
+        '{{"birth_year": <integer or null>, "gender": "<string>"}}'
+    )
+
     page_extraction = """\
 Analyse this photo of a children's picture book page.
 

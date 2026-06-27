@@ -57,11 +57,14 @@ class AuthorForm:
     header = "Please enter author details."
     gender_options = ["Woman", "Man", "Non-binary", "Other", "Unknown"]
     gender_prompt = """
-        Please use a web search to enter the gender of the author to the best of your knowledge.
-        If it is not clear from a cursory search, please select `Unknown`.
+        Click "Look up birth year and gender" to auto-fill these fields using web search,
+        or select manually. If it is not clear, please select `Unknown`.
     """
+    lookup_help = (
+        "Use AI web search to suggest birth year and gender based on the name entered above."
+    )
     author_exists = """
-        This author already exists in the database. Please either select them from the 
+        This author already exists in the database. Please either select them from the
         dropdown menu above, or enter a unique name for your new author.
     """
 
@@ -69,11 +72,14 @@ class IllustratorForm:
     header = "Please enter illustrator details."
     gender_options = ["Woman", "Man", "Non-binary", "Other", "Unknown"]
     gender_prompt = """
-        Please use a web search to enter the gender of the illustrator to the best of your knowledge.
-        If it is not clear from a cursory search, please select `Unknown`.
+        Click "Look up birth year and gender" to auto-fill these fields using web search,
+        or select manually. If it is not clear, please select `Unknown`.
     """
+    lookup_help = (
+        "Use AI web search to suggest birth year and gender based on the name entered above."
+    )
     illustrator_exists = """
-        This illustrator already exists in the database. Please either select them from the 
+        This illustrator already exists in the database. Please either select them from the
         dropdown menu above, or enter a unique name for your new illustrator.
     """
 
