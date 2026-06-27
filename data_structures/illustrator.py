@@ -62,11 +62,9 @@ class Illustrator(DataStructureBase):
             self.birth_year = None
 
         st.write(IllustratorForm.gender_prompt)
-        gender_index = (
-            IllustratorForm.gender_options.index(self.gender)
-            if self.gender is not None and self.gender != ""
-            else 0
-        )
+        gender_index = 0
+        if self.gender in IllustratorForm.gender_options:
+            gender_index = IllustratorForm.gender_options.index(self.gender)
         self.gender = st.selectbox(
             "Gender",
             options=IllustratorForm.gender_options,

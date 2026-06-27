@@ -46,11 +46,9 @@ class Character(DataStructureBase):
         st.header(CharacterForm.header)
         self.name = st.text_input("Name", value=self.name)
 
-        gender_index = (
-            CharacterForm.gender_options.index(self.gender)
-            if self.gender is not None and self.gender != ""
-            else 0
-        )
+        gender_index = 0
+        if self.gender in CharacterForm.gender_options:
+            gender_index = CharacterForm.gender_options.index(self.gender)
         self.gender = st.selectbox(
             "Gender",
             options=CharacterForm.gender_options,
