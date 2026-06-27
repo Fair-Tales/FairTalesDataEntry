@@ -1,5 +1,5 @@
 import streamlit as st
-from utilities import author_entry_to_name, navigate_to
+from utilities import author_entry_to_name, navigate_to, split_name
 from text_content import Instructions, BookForm
 from .base_structure import DataStructureBase, Field
 from .author import Author
@@ -7,23 +7,42 @@ from .illustrator import Illustrator
 from .publisher import Publisher
 from datetime import date
 
+def _new_person(person_cls, extracted_key):
+    """Create a fresh Author/Illustrator, seeding forename/surname from a name
+    extracted by the photo-first flow (#59) if one is pending in session state.
+
+    The extracted name is consumed (popped) so it only pre-fills the sub-form
+    once. Returns the new, unregistered person object.
+    """
+    person = person_cls()
+    extracted = st.session_state.pop(extracted_key, None)
+    if extracted:
+        forename, surname = split_name(extracted)
+        person.forename = forename
+        person.surname = surname
+    return person
+
 def add_book_entries(self):
     if 'adding_book_entries' not in st.session_state or not st.session_state['adding_book_entries']:
         st.session_state['adding_book_entries'] = True
         st.rerun()
     else:
         if self.author is None:
-            st.session_state['current_author'] = Author()
+            st.session_state['current_author'] = _new_person(Author, 'extracted_author_name')
             navigate_to("./pages/add_author.py")
         else:
             st.session_state['current_author'] = self.author.get()
         if self.illustrator is None:
-            st.session_state['current_illustrator'] = Illustrator()
+            st.session_state['current_illustrator'] = _new_person(Illustrator, 'extracted_illustrator_name')
             navigate_to("./pages/add_illustrator.py")
         else:
             st.session_state['current_illustrator'] = self.illustrator.get()
         if self.publisher is None:
-            st.session_state['current_publisher'] = Publisher()
+            new_publisher = Publisher()
+            extracted_publisher = st.session_state.pop('extracted_publisher_name', None)
+            if extracted_publisher:
+                new_publisher.name = extracted_publisher
+            st.session_state['current_publisher'] = new_publisher
             navigate_to("./pages/add_publisher.py")
         else:
             st.session_state['current_publisher'] = self.publisher.get()

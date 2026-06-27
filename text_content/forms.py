@@ -91,6 +91,46 @@ class PublisherForm:
     """
 
 
+class BookPhotoEntry:
+    """Strings for the photo-initiated ("photos first") book entry flow (#59)."""
+
+    menu_label = "Add Book from Photos"
+    header = "Add a book from photos"
+    instructions = """
+        Upload photos of the book pages to get started. We'll read the title page
+        for you and use it to pre-fill the book details on the next step — you can
+        review and correct everything before saving.
+
+        Please include a clear photo of the **title page** (the inside page showing
+        the title, author and illustrator). Upload your photos in page order if you
+        can; if the title page is not the first photo, you can tell us which one it
+        is below.
+    """
+    upload_label = "Select the book's page photos to upload"
+    title_page_label = "Which photo is the title page?"
+    title_page_help = (
+        "Select the photo that shows the book's title, author and illustrator. "
+        "This is the image we send for automatic detail extraction."
+    )
+    extract_button = "Read title page and pre-fill details"
+    extracting = "Reading the title page..."
+    extract_failed = (
+        "Could not read the title page automatically ({error}). "
+        "You can still enter the details manually."
+    )
+    extract_empty = (
+        "We couldn't extract any details from that photo. Please check it is the "
+        "title page and try again, or enter the details manually on the next step."
+    )
+    no_api_key = (
+        "Automatic title-page extraction requires an Anthropic API key. "
+        "You can still enter the details manually."
+    )
+    extract_success = "Title page read. Please review and correct the details below."
+    reuse_notice = "Using the {count} photo(s) you already uploaded. Processing them now..."
+    cancel_text = "Cancel"
+
+
 class EnterText:
 
     header = "Please enter text and add characters"

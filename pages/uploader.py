@@ -8,7 +8,7 @@ from data_structures import Page
 from image_processing import (
     correct_book_page, check_crop_quality, get_rotation_angle, rotate_image
 )
-from text_content import Instructions, AIPrompts
+from text_content import Instructions, AIPrompts, BookPhotoEntry
 from utilities import (
     page_layout, check_authentication_status, extract_isbn, lookup_isbn
 )
@@ -84,6 +84,104 @@ def _process_page(raw_bytes, page_number, photos_url, fs, ai_client):
     return raw_bytes, None
 
 
+def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
+    """Run the upload + correction + extraction pipeline for one batch of page
+    photos (already read into memory, in page order).
+
+    Writes raw and corrected images to S3, registers Page docs, extracts text, and
+    performs the copyright-page ISBN lookup. Shared by both the manual file-upload
+    path and the photo-first reuse path (#59). The caller guards against re-running
+    via '_upload_pipeline_done', which this function sets on completion.
+    """
+    total = len(sort_file_names)
+    photos_url = f"sawimages/{st.session_state['current_book'].title}"
+
+    # Phase 1 — upload raw photos to S3
+    upload_status = st.empty()
+    upload_progress = st.progress(0)
+    for fi, raw_bytes in enumerate(raw_bytes_list):
+        upload_status.write(f"Saving photo {fi + 1} of {total}...")
+        with fs.open(f"{photos_url}/page_{fi + 1}.jpg", 'wb') as f:
+            f.write(raw_bytes)
+        upload_progress.progress((fi + 1) / total)
+
+    st.session_state.current_book.photos_uploaded = True
+    st.session_state.current_book.photos_url = photos_url
+    st.session_state.current_book.page_count = total
+    upload_status.write("Photos saved.")
+
+    # Phase 2 — image correction + text extraction per page
+    if 'ANTHROPIC_API_KEY' in st.secrets:
+        ai_client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
+        process_status = st.empty()
+        process_progress = st.progress(0)
+        copyright_text = None
+
+        for i, raw_bytes in enumerate(raw_bytes_list):
+            page_number = i + 1
+            process_status.write(
+                f"Processing page {page_number} of {total} "
+                f"(correcting image, extracting text)..."
+            )
+
+            bytes_for_extraction, method = _process_page(
+                raw_bytes, page_number, photos_url, fs, ai_client
+            )
+
+            page = Page(
+                page_number=page_number,
+                book=st.session_state['current_book'].title
+            )
+            page.register()
+
+            text, is_story, page_type = extract_page_info(
+                bytes_for_extraction, ai_client
+            )
+            if text:
+                page.text = text
+            page.contains_story = is_story
+
+            if page_type == 'copyright' and text and copyright_text is None:
+                copyright_text = text
+
+            if method:
+                process_status.write(
+                    f"✓ Page {page_number} of {total} — "
+                    f"auto-corrected ({method})"
+                )
+            else:
+                process_status.write(
+                    f"⚠ Page {page_number} of {total} — "
+                    "correction unavailable, using original"
+                )
+            process_progress.progress((i + 1) / total)
+
+        process_status.write("Processing complete.")
+
+        # ISBN lookup — use the copyright page text to fetch book metadata
+        # and pre-populate the Add Book form.
+        if copyright_text:
+            isbn = extract_isbn(copyright_text)
+            if isbn:
+                isbn_metadata = lookup_isbn(isbn)
+                if isbn_metadata:
+                    st.session_state['isbn_metadata'] = isbn_metadata
+                    st.info(
+                        f"Found book metadata via ISBN {isbn}: "
+                        f"{isbn_metadata['title']}"
+                    )
+    else:
+        # No API key — register pages without extraction
+        for i in range(total):
+            page = Page(
+                page_number=i + 1,
+                book=st.session_state['current_book'].title
+            )
+            page.register()
+
+    st.session_state['_upload_pipeline_done'] = True
+
+
 def upload_widget(on_submit='enter_text'):
 
     fs = s3fs.S3FileSystem(
@@ -94,121 +192,46 @@ def upload_widget(on_submit='enter_text'):
 
     # TODO: set file order (sort ascending? time modified?)
     def upload_page_photos():
-        uploaded_files = st.file_uploader(
-            "Select page photos to upload",
-            accept_multiple_files=True,
-        )
+        # Photos captured in the photo-first flow (#59) are reused here so the
+        # user does not have to upload them a second time.
+        stashed = st.session_state.get('photo_first_pages')
 
-        if uploaded_files:
-            file_dict = {file.name: file for file in uploaded_files}
-            sort_file_names = natsort.natsorted(list(file_dict.keys()), reverse=False)
-            total = len(sort_file_names)
-            photos_url = f"sawimages/{st.session_state['current_book'].title}"
+        if stashed:
+            # Only run the pipeline once (Streamlit re-runs on every interaction).
+            if not st.session_state.get('_upload_pipeline_done', False):
+                st.write(BookPhotoEntry.reuse_notice.format(count=len(stashed)))
+                sort_file_names = [name for name, _ in stashed]
+                raw_bytes_list = [data for _, data in stashed]
+                _process_photo_batch(raw_bytes_list, sort_file_names, fs)
+        else:
+            uploaded_files = st.file_uploader(
+                "Select page photos to upload",
+                accept_multiple_files=True,
+            )
+            if not uploaded_files:
+                return
 
             # Only run the pipeline once. Streamlit re-runs the script when the
             # user clicks Continue — the file uploader still holds the selected
             # files on that re-run, so without this guard the whole pipeline
             # would fire again before st.switch_page redirects.
             if not st.session_state.get('_upload_pipeline_done', False):
+                file_dict = {file.name: file for file in uploaded_files}
+                sort_file_names = natsort.natsorted(list(file_dict.keys()), reverse=False)
+                raw_bytes_list = [file_dict[name].getvalue() for name in sort_file_names]
+                _process_photo_batch(raw_bytes_list, sort_file_names, fs)
 
-                # Phase 1 — upload raw photos to S3, keep bytes in memory
-                upload_status = st.empty()
-                upload_progress = st.progress(0)
-                raw_bytes_list = []
-                for fi, name in enumerate(sort_file_names):
-                    upload_status.write(f"Saving photo {fi + 1} of {total}...")
-                    raw_bytes = file_dict[name].read()
-                    with fs.open(f"{photos_url}/page_{fi + 1}.jpg", 'wb') as f:
-                        f.write(raw_bytes)
-                    raw_bytes_list.append(raw_bytes)
-                    upload_progress.progress((fi + 1) / total)
+        st.write("Page photo upload complete, you may continue.")
+        submit = st.button('Continue')
 
-                st.session_state.current_book.photos_uploaded = True
-                st.session_state.current_book.photos_url = photos_url
-                st.session_state.current_book.page_count = total
-                upload_status.write("Photos saved.")
-
-                # Phase 2 — image correction + text extraction per page
-                if 'ANTHROPIC_API_KEY' in st.secrets:
-                    ai_client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
-                    process_status = st.empty()
-                    process_progress = st.progress(0)
-                    copyright_text = None
-
-                    for i, raw_bytes in enumerate(raw_bytes_list):
-                        page_number = i + 1
-                        process_status.write(
-                            f"Processing page {page_number} of {total} "
-                            f"(correcting image, extracting text)..."
-                        )
-
-                        bytes_for_extraction, method = _process_page(
-                            raw_bytes, page_number, photos_url, fs, ai_client
-                        )
-
-                        page = Page(
-                            page_number=page_number,
-                            book=st.session_state['current_book'].title
-                        )
-                        page.register()
-
-                        text, is_story, page_type = extract_page_info(
-                            bytes_for_extraction, ai_client
-                        )
-                        if text:
-                            page.text = text
-                        page.contains_story = is_story
-
-                        if page_type == 'copyright' and text and copyright_text is None:
-                            copyright_text = text
-
-                        if method:
-                            process_status.write(
-                                f"✓ Page {page_number} of {total} — "
-                                f"auto-corrected ({method})"
-                            )
-                        else:
-                            process_status.write(
-                                f"⚠ Page {page_number} of {total} — "
-                                "correction unavailable, using original"
-                            )
-                        process_progress.progress((i + 1) / total)
-
-                    process_status.write("Processing complete.")
-
-                    # ISBN lookup — use the copyright page text to fetch
-                    # book metadata and pre-populate the Add Book form.
-                    if copyright_text:
-                        isbn = extract_isbn(copyright_text)
-                        if isbn:
-                            isbn_metadata = lookup_isbn(isbn)
-                            if isbn_metadata:
-                                st.session_state['isbn_metadata'] = isbn_metadata
-                                st.info(
-                                    f"Found book metadata via ISBN {isbn}: "
-                                    f"{isbn_metadata['title']}"
-                                )
-                else:
-                    # No API key — register pages without extraction
-                    for i in range(total):
-                        page = Page(
-                            page_number=i + 1,
-                            book=st.session_state['current_book'].title
-                        )
-                        page.register()
-
-                st.session_state['_upload_pipeline_done'] = True
-
-            st.write("Page photo upload complete, you may continue.")
-            submit = st.button('Continue')
-
-            if submit:
-                st.session_state.pop('_upload_pipeline_done', None)
-                st.session_state.pop('book_pages_dict', None)
-                if on_submit == 'enter_text':
-                    st.switch_page("./pages/enter_text.py")
-                else:
-                    st.success(Instructions.upload_success_return)
+        if submit:
+            st.session_state.pop('_upload_pipeline_done', None)
+            st.session_state.pop('book_pages_dict', None)
+            st.session_state.pop('photo_first_pages', None)
+            if on_submit == 'enter_text':
+                st.switch_page("./pages/enter_text.py")
+            else:
+                st.success(Instructions.upload_success_return)
 
     upload_page_photos()
 
