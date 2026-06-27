@@ -165,3 +165,20 @@ class UserForm:
     save_success = "Your account settings have been updated."
     page_header = "Your Account"
     page_intro = "Update your personal details below. Changes are saved when you click 'Save changes'."
+
+
+class ReportFeedback:
+
+    page_title = "Report a Bug / Request a Feature"
+    instruction = (
+        "Spotted a bug or have an idea? Tell us briefly what happened and what you "
+        "expected — or describe the feature you'd like. If it's a bug, include the "
+        "page and the steps so we can reproduce it."
+    )
+    type_label = "Is this a bug report or a feature request?"
+    type_options = ["Bug", "Feature"]
+    text_label = "Your report"
+    text_placeholder = "Describe the bug or feature here…"
+    submit_label = "Submit"
+    success_message = "Thank you — your report has been submitted!"
+    empty_text_warning = "Please enter some text before submitting."

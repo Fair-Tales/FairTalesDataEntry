@@ -66,6 +66,7 @@ def page_layout(current_page=None):
     st.sidebar.page_link("pages/user_home.py", label="Home")
     st.sidebar.page_link("pages/account_settings.py", label="Settings")
     st.sidebar.page_link("pages/donate.py", label="Donate")
+    st.sidebar.page_link("pages/report_feedback.py", label="Report a Bug / Feature")
     if 'admin' in st.session_state and st.session_state['admin']:
         st.sidebar.page_link("pages/admin.py", label="Admin")
     history = st.session_state.get('_page_history', [])
