@@ -50,6 +50,9 @@ Pressing Enter or saying "yes" / "ok" / "sure" does not count.
 (add your layout here)
 ```
 
+## Conventions
+- **User-facing text** — instruction strings, labels, prompts, alerts, and help text — must be defined in the `text_content` module (e.g. `EnterText`, `Alerts`, `BookForm`, `Instructions`, `GenderRegistration`), not written inline in pages/components. Pages reference the text from there.
+
 ## Decisions
 Significant technical decisions are logged in `DECISIONS.md`. Check it before proposing
 changes to tooling, layout, or data handling.
