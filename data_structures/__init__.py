@@ -5,3 +5,4 @@ from data_structures.illustrator import Illustrator
 from data_structures.page import Page
 from data_structures.character import Character
 from data_structures.alias import Alias
+from data_structures.user import User
