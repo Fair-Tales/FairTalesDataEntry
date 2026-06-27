@@ -18,23 +18,29 @@ st.page_link("pages/validation.py", label="→ Go to data validation")
 st.divider()
 
 st.header("User data")
-st.write("Download email addresses and newsletter opt-in status for confirmed users.")
+st.write("Download all available fields for confirmed users (excluding sensitive fields such as password and confirmation token) for analysis.")
 
 if st.button("Prepare user data download"):
     db = FirestoreWrapper().connect_user(auth=False)
     users = db.collection('users').where('is_confirmed', '==', True).stream()
 
-    buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=['email', 'name', 'newsletter_opt_in', 'account_creation_date', 'trust_rating'])
-    writer.writeheader()
+    # Export every available field for analysis, except sensitive ones.
+    sensitive_fields = {'password', 'confirmation_token'}
+    rows = []
+    all_fields = set()
     for user in users:
-        d = user.to_dict()
+        d = {k: v for k, v in user.to_dict().items() if k not in sensitive_fields}
+        rows.append(d)
+        all_fields.update(d.keys())
+
+    buf = io.StringIO()
+    fieldnames = sorted(all_fields)
+    writer = csv.DictWriter(buf, fieldnames=fieldnames, restval='', extrasaction='ignore')
+    writer.writeheader()
+    for d in rows:
         writer.writerow({
-            'email': d.get('username', ''),
-            'name': d.get('name', ''),
-            'newsletter_opt_in': d.get('newsletter_opt_in', False),
-            'account_creation_date': str(d.get('account_creation_date', '')),
-            'trust_rating': d.get('trust_rating', 0),
+            k: (v.id if hasattr(v, 'id') else ('' if v is None else str(v)))
+            for k, v in d.items()
         })
 
     st.download_button(
