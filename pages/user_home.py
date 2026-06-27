@@ -10,67 +10,59 @@ check_authentication_status()
 # TODO: migrate to a proper search service like Algolia?
 def book_search():
     book_search_string = st.text_input(
-        "Search our database by book title.",
+        "Search by book title — enter a full or partial title and press Enter to find close matches.",
         value="",
         help="You can enter either all or part of the title."
     )
     if len(book_search_string) > 0:
+        search_term = book_search_string.lower()
 
-        search_title = book_search_string.lower()
-
-        #old_titles = [
-        #    title for title in old_books
-        #    if book_search_string.lower() in title.lower()
-        #]
-        #if len(old_titles) > 0:
-        #    st.write(f"These titles were found from the original dataset: {old_titles}")
-
-        #else:
-        titles = [
+        matching_titles = [
             title for title in st.session_state['book_dict'].keys()
-            if search_title in title.lower()
+            if search_term in title.lower()
         ]
 
-        books = [
-            st.session_state.firestore.get_by_field(
-                'books', 'title', title
-            )
-            for title in titles
-        ]
-
-        if len(books) > 0:
-            books = pd.concat(books)
-            books.author = [
-                ' '.join([
-                    a.get().to_dict()['forename'],
-                    a.get().to_dict()['surname']
-                ])
-                for a in books.author
-            ]
-            books.publisher = [
-                a.get().to_dict()['name']
-                for a in books.publisher
-                ]
-            books.illustrator = [
-                ' '.join([
-                    a.get().to_dict()['forename'],
-                    a.get().to_dict()['surname']
-                ])
-                for a in books.illustrator
-            ]
-            st.write('Results:')
-            st.write(books[['title', 'author', 'publisher', 'illustrator']])
-        else:
+        if len(matching_titles) == 0:
             st.warning(Alerts.no_matching_book)
-        # # TODO: combine author names...
-        # if len(books) > 0:
-        #     books.author = [
-        #         a.get().to_dict()['surname']
-        #         for a in books.author
-        #     ]
-        #
-        #     st.write("Results:")
-        #     st.write(books)
+        else:
+            st.write(f"Results ({len(matching_titles)} found):")
+            for title in matching_titles:
+                book_ref = st.session_state['book_dict'][title]
+                book_data = book_ref.get().to_dict()
+
+                author_ref = book_data.get('author')
+                if author_ref:
+                    author_data = author_ref.get().to_dict()
+                    author_name = ' '.join([
+                        author_data.get('forename', ''),
+                        author_data.get('surname', '')
+                    ]).strip() or "Unknown"
+                else:
+                    author_name = "Unknown"
+
+                published = book_data.get('published', '')
+                year_str = f" ({published})" if published else ""
+
+                with st.expander(f"{title}{year_str}  —  {author_name}"):
+                    publisher_ref = book_data.get('publisher')
+                    if publisher_ref:
+                        publisher_data = publisher_ref.get().to_dict()
+                        publisher_name = publisher_data.get('name', 'Unknown')
+                    else:
+                        publisher_name = "Unknown"
+
+                    illustrator_ref = book_data.get('illustrator')
+                    if illustrator_ref:
+                        illustrator_data = illustrator_ref.get().to_dict()
+                        illustrator_name = ' '.join([
+                            illustrator_data.get('forename', ''),
+                            illustrator_data.get('surname', '')
+                        ]).strip() or "Unknown"
+                    else:
+                        illustrator_name = "Unknown"
+
+                    st.write(f"**Publisher:** {publisher_name}")
+                    st.write(f"**Illustrator:** {illustrator_name}")
 
 def author_search():
     author_search_string = st.text_input(
