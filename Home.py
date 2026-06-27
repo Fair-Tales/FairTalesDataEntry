@@ -112,6 +112,7 @@ def navigate_pages():
             st.Page("./pages/book_edit_home.py"),
             st.Page("./pages/confirm_entry.py"),
             st.Page("./pages/confirm.py"),
+            st.Page("./pages/reset_password.py"),
             st.Page("./pages/enter_text.py"),
             st.Page("./pages/page_photo_upload.py"),
             st.Page("./pages/qr_landing.py"),

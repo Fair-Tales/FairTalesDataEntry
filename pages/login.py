@@ -1,7 +1,16 @@
 import streamlit as st
-from utilities import page_layout, clear_page_history, authenticate_user, is_authenticated, get_admin, get_user, send_confirmation_email
-from text_content import Terms, Alerts
+import secrets
+from datetime import datetime, timedelta, timezone
+from utilities import (
+    page_layout, clear_page_history, authenticate_user, is_authenticated,
+    get_admin, get_user, send_confirmation_email, send_password_reset_email,
+    FirestoreWrapper,
+)
+from text_content import Terms, Alerts, PasswordReset
 from streamlit_option_menu import option_menu
+
+# Validity window for an emailed password-reset link.
+PASSWORD_RESET_VALIDITY = timedelta(hours=1)
 
 
 def confirm(username, password):
@@ -36,6 +45,36 @@ def _resend_confirmation(username):
             user_data['name'],
         )
         st.success(Alerts.confirmation_email_resent)
+
+def _request_password_reset(email):
+    """Generate, store and email a password-reset token for ``email``.
+
+    Security: to avoid account enumeration the caller always shows the same
+    acknowledgement regardless of whether an account exists, so this function
+    silently returns when no matching user is found.  A cryptographically random,
+    URL-safe token is stored on the user document together with an expiry; the
+    reset page validates both before allowing a password change.
+    """
+    user = get_user(email)
+    if user is None:
+        return
+
+    user_data = user.to_dict()
+    reset_token = secrets.token_urlsafe(32)
+    expiry = datetime.now(timezone.utc) + PASSWORD_RESET_VALIDITY
+
+    db = FirestoreWrapper().connect_user(auth=False)
+    db.collection("users").document(user_data['username']).update({
+        'reset_token': reset_token,
+        'reset_token_expiry': expiry,
+    })
+    send_password_reset_email(
+        user_data['username'],
+        user_data['username'],
+        reset_token,
+        user_data['name'],
+    )
+
 
 def logout():
     st.session_state['authentication_status'] = False
@@ -77,17 +116,17 @@ else:
                 _resend_confirmation(st.session_state['unconfirmed_username'])
 
         with st.expander("Forgot your password?"):
-            reset_email = st.text_input("Enter your email address", key='reset_email')
-            if st.button("Request password reset"):
-                if reset_email.strip():
-                    # TODO: implement full token-based reset flow
-                    st.info(
-                        "Password reset is not yet automated. Please email "
-                        "dataentry.kidsbooks@gmail.com with your username and we will "
-                        "reset your password manually."
-                    )
+            reset_email = st.text_input(
+                PasswordReset.request_email_label, key='reset_email'
+            ).lower().strip()
+            if st.button(PasswordReset.request_button_text):
+                if reset_email:
+                    _request_password_reset(reset_email)
+                    # Always show the same acknowledgement, whether or not an
+                    # account exists, to avoid leaking which emails are registered.
+                    st.info(PasswordReset.request_acknowledgement)
                 else:
-                    st.warning("Please enter your email address.")
+                    st.warning(PasswordReset.request_blank_email)
 
     else:
         st.header("Register")
