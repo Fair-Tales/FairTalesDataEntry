@@ -60,11 +60,9 @@ class Character(DataStructureBase):
             help=CharacterForm.gender_help
         )
 
-        ethnicity_index = (
-            CharacterForm.ethnicity_options.index(self.ethnicity)
-            if self.ethnicity is not None and self.ethnicity != ""
-            else 0
-        )
+        ethnicity_index = 0
+        if self.ethnicity in CharacterForm.ethnicity_options:
+            ethnicity_index = CharacterForm.ethnicity_options.index(self.ethnicity)
         self.ethnicity = st.selectbox(
             "Ethnicity",
             options=CharacterForm.ethnicity_options,
@@ -72,11 +70,9 @@ class Character(DataStructureBase):
             help=CharacterForm.ethnicity_help
         )
 
-        disability_index = (
-            CharacterForm.disability_options.index(self.disability)
-            if self.disability is not None and self.disability != ""
-            else 0
-        )
+        disability_index = 0
+        if self.disability in CharacterForm.disability_options:
+            disability_index = CharacterForm.disability_options.index(self.disability)
         self.disability = st.selectbox(
             "Disability",
             options=CharacterForm.disability_options,

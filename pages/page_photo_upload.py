@@ -42,13 +42,13 @@ def go_to_phone():
     st.write("When you have finished, you can continue below to enter the text for this book, or return to the menu.")
 
     subcol1, subcol2 = st.columns(2)
-    if subcol1.button("Continue", use_container_width=True):
+    if subcol1.button("Continue", width="stretch"):
         if st.session_state.current_book.photos_uploaded:
             st.session_state['current_page_number'] = 1
             st.switch_page("./pages/enter_text.py")
         else:
             st.warning(Alerts.please_uploaded_photos)
-    if subcol2.button("Back to menu", use_container_width=True):
+    if subcol2.button("Back to menu", width="stretch"):
         st.switch_page("./pages/book_edit_home.py")
 
 

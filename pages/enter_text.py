@@ -1,3 +1,5 @@
+import io
+
 import streamlit as st
 from PIL import Image
 from streamlit_dimensions import st_dimensions
@@ -37,7 +39,8 @@ def load_image(book, page_number, use_cropped=True):
             return Image.open(fs.open(
                 f"sawimages/{book}/page_{page_number}_cropped.jpg", mode='rb'
             ))
-        except Exception:
+        except FileNotFoundError:
+            # No corrected version exists yet; fall back to the original below.
             pass
     return Image.open(fs.open(
         f"sawimages/{book}/page_{page_number}.jpg", mode='rb'
@@ -48,7 +51,7 @@ def cropped_exists(book, page_number):
     try:
         fs.info(f"sawimages/{book}/page_{page_number}_cropped.jpg")
         return True
-    except Exception:
+    except FileNotFoundError:
         return False
 
 
@@ -66,9 +69,6 @@ def enlarged_image_dialog(use_cropped):
 
 @st.dialog("Edit image", width="large")
 def manual_correction_dialog():
-    import io
-    import s3fs as _s3fs
-
     book = st.session_state['current_book'].title
     page_number = st.session_state.current_page_number
 
@@ -116,23 +116,18 @@ def manual_correction_dialog():
     st.image(img, width="stretch", caption="Preview")
 
     save_col, discard_col = st.columns(2)
-    if save_col.button("💾 Save as corrected image", use_container_width=True):
+    if save_col.button("💾 Save as corrected image", width="stretch"):
         buf = io.BytesIO()
         img.save(buf, format='JPEG', quality=95)
-        fs_save = _s3fs.S3FileSystem(
-            anon=False,
-            key=st.secrets['AWS_ACCESS_KEY_ID'],
-            secret=st.secrets['AWS_SECRET_ACCESS_KEY']
-        )
         cropped_path = f"sawimages/{book}/page_{page_number}_cropped.jpg"
-        with fs_save.open(cropped_path, 'wb') as f:
+        with fs.open(cropped_path, 'wb') as f:
             f.write(buf.getvalue())
         load_image.clear()
         # Close the dialog and rerun the main page so the corrected image is
         # shown immediately (st.rerun() inside an st.dialog dismisses it).
         st.rerun()
 
-    if discard_col.button("✕ Discard", use_container_width=True):
+    if discard_col.button("✕ Discard", width="stretch"):
         st.rerun()
 
 
@@ -152,7 +147,7 @@ def display_image():
             col1.caption("✓ Auto-corrected")
     else:
         col1.caption("⚠ Auto-correction unavailable — showing original photo")
-        if col1.button("✏ Edit image", use_container_width=True):
+        if col1.button("✏ Edit image", width="stretch"):
             # Start each editing session from a clean slate: clear any rotation/
             # crop state left from a previous open (including closing via the
             # dialog's native ✕, which we can't otherwise hook into).
