@@ -76,6 +76,9 @@ class Illustrator(DataStructureBase):
         submitted = st.form_submit_button("Submit")
 
         if submitted:
+            if not self.forename.strip() or not self.surname.strip():
+                st.warning("Illustrator first name and surname are required.")
+                return
             if st.session_state.firestore.document_exists(
                 collection='illustrators',
                 doc_id=self.document_id

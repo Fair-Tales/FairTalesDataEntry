@@ -109,6 +109,10 @@ def form_content(self):
 
     if submitted:
 
+        if not _title.strip():
+            st.warning("Book title is required.")
+            return
+
         st.session_state['current_book'] = self
         self.title = _title
         self.published = _published
