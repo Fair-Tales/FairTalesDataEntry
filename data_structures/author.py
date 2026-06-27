@@ -62,11 +62,9 @@ class Author(DataStructureBase):
             self.birth_year = None
 
         st.write(AuthorForm.gender_prompt)
-        gender_index = (
-            AuthorForm.gender_options.index(self.gender)
-            if self.gender is not None and self.gender != ""
-            else 0
-        )
+        gender_index = 0
+        if self.gender in AuthorForm.gender_options:
+            gender_index = AuthorForm.gender_options.index(self.gender)
         self.gender = st.selectbox(
             "Gender",
             options=AuthorForm.gender_options,

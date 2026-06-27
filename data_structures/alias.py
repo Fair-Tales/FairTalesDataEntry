@@ -41,13 +41,11 @@ class Alias(DataStructureBase):
         character_options = list(
             st.session_state['character_dict'].keys()
         )
-        character_index = (
-            character_options.index(
-                self.character.get().to_dict()['name']
-            )
-            if self.character is not None and self.character.get().to_dict()['name'] in character_options
-            else 0
-        )
+        character_index = 0
+        if self.character is not None:
+            _character_name = self.character.get().to_dict()['name']
+            if _character_name in character_options:
+                character_index = character_options.index(_character_name)
 
         self.character = st.selectbox(
             "Select character",
