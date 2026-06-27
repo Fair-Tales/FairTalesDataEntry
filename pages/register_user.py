@@ -35,12 +35,12 @@ def register_user(_username, _name, _password, _gender, _birth_year):
         st.switch_page("./pages/register_user_done.py")
 
 
-def is_valid_email(email):
+def is_valid_email(address):
     """Basic RFC 5322 email validation using the standard library."""
-    if not email or len(email) > 254:
+    if not address or len(address) > 254:
         return False
     try:
-        parsed = email.utils.parseaddr(email)
+        parsed = email.utils.parseaddr(address)
         if not parsed[1] or '@' not in parsed[1]:
             return False
         local, domain = parsed[1].rsplit('@', 1)
