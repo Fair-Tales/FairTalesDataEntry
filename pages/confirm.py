@@ -1,7 +1,6 @@
 import streamlit as st
-from utilities import FirestoreWrapper, page_layout, check_authentication_status
+from utilities import FirestoreWrapper, page_layout
 
-check_authentication_status()
 page_layout()
 
 token = st.query_params.token
@@ -14,14 +13,14 @@ if user_ref.get().to_dict()['is_confirmed']:
     st.warning("User account already confirmed. Please proceed to login by selecting `Home` in navigation menu.")
 else:
     try:
-
         if token == user_ref.get().to_dict()['confirmation_token']:
             user_ref.update({
                 'is_confirmed': True
             })
-        st.success(
-            "User registration successful! You can now proceed to login by selecting `Home` from the navigation menu."
-        )
-
-    except:
+            st.success(
+                "User registration successful! You can now proceed to login by selecting `Home` from the navigation menu."
+            )
+        else:
+            st.error("Invalid or expired confirmation link. Please request a new confirmation email.")
+    except Exception:
         st.error("Registration failed. Please try again.")
