@@ -210,11 +210,13 @@ class FormConfirmation:
     @classmethod
     def display_confirmation(cls, data):
 
-        df = pd.DataFrame(
-            [(field, "" if value is None else str(value)) for field, value in data.items()],
-            columns=["Field", "Value"],
-        )
-        st.table(df.set_index("Field"))
+        # Compact, borderless key/value summary in a constrained-width column,
+        # rather than a full-width bordered table.
+        summary_col, _ = st.columns([2, 1])
+        for field, value in data.items():
+            label = field.replace('_', ' ').capitalize()
+            display_value = "" if value is None else value
+            summary_col.markdown(f"**{label}:** {display_value}")
         col1, col2 = st.columns(2)
         confirm_button = col1.button("Confirm")
         edit_button = col2.button("Edit")
