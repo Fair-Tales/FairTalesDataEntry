@@ -1,5 +1,13 @@
 import streamlit as st
-from utilities import is_authenticated, FirestoreWrapper, author_entry_to_name
+from utilities import (
+    is_authenticated,
+    FirestoreWrapper,
+    load_author_dict,
+    load_publisher_dict,
+    load_illustrator_dict,
+    load_book_dict,
+    load_character_dict,
+)
 from data_structures import Author, Book, Illustrator, Publisher
 
 # TODO: make better use of st-pages to show/hide and use icons: https://github.com/blackary/st_pages?tab=readme-ov-file
@@ -63,33 +71,19 @@ def initialise():
     st.session_state['illustrator'] = Illustrator()
     st.session_state['active_form_to_confirm'] = None
 
-    firestore = FirestoreWrapper(auth=False)
-    st.session_state['author_dict'] = {
-        author_entry_to_name(author): author.reference
-        for author in
-        firestore.get_all_documents_stream(collection='authors')
-    }
-    st.session_state['publisher_dict'] = {
-        publisher.to_dict()['name'].replace('_', ' '): publisher.reference
-        for publisher in
-        firestore.get_all_documents_stream(collection='publishers')
-    }
-    st.session_state['illustrator_dict'] = {
-        author_entry_to_name(illustrator): illustrator.reference
-        for illustrator in
-        firestore.get_all_documents_stream(collection='illustrators')
-    }
-    st.session_state['book_dict'] = {
-        book.to_dict()['title']: book.reference
-        for book in
-        firestore.get_all_documents_stream(collection='books')
-    }
-    #print(st.session_state['book_dict'])
-    st.session_state['character_dict'] = {
-        character.to_dict()['name']: character.reference
-        for character in
-        firestore.get_all_documents_stream(collection='characters')
-    }
+    # Lookup dicts are served from cached resource loaders (see utilities.py)
+    # rather than re-streaming every collection on each session init (issue #53).
+    # We shallow-copy each cached dict into session_state so that in-session
+    # mutations (a freshly registered author/book/etc. added by the
+    # FormConfirmation.confirm_new_* methods or Character.register) only affect
+    # this session and never poison the shared cache. Those writes also call the
+    # matching ``load_*_dict.clear()`` so subsequent sessions re-read from
+    # Firestore — preserving write-through freshness.
+    st.session_state['author_dict'] = dict(load_author_dict())
+    st.session_state['publisher_dict'] = dict(load_publisher_dict())
+    st.session_state['illustrator_dict'] = dict(load_illustrator_dict())
+    st.session_state['book_dict'] = dict(load_book_dict())
+    st.session_state['character_dict'] = dict(load_character_dict())
 
 def navigate_pages():
     

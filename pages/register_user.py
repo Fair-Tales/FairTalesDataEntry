@@ -27,10 +27,14 @@ def register_user(_username, _name, _password, _gender, _birth_year, _newsletter
         "admin": False,
         "newsletter_opt_in": _newsletter_opt_in
     }
-    db = FirestoreWrapper().connect_user(auth=False)
-    if db.collection('users').document(_username).get().exists:
+    # Use the general FirestoreWrapper.document_exists() helper for the
+    # existence check (issue #53) rather than an inline get().exists. auth=False
+    # because the user is not yet authenticated during registration.
+    firestore_wrapper = FirestoreWrapper(auth=False)
+    if firestore_wrapper.document_exists(collection='users', doc_id=_username):
         st.warning(Alerts.user_exists)
     else:
+        db = firestore_wrapper.connect_user(auth=False)
         db.collection("users").document(_username).set(user_data)
         send_confirmation_email(_username, _username, confirmation_token, _name)
         st.switch_page("./pages/register_user_done.py")

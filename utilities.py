@@ -334,6 +334,83 @@ class FirestoreWrapper:
         doc_ref.update({field: value})
 
 
+# ---------------------------------------------------------------------------
+# Cached lookup-dict loaders (issue #53 — reduce Firestore read traffic).
+#
+# Previously Home.initialise() streamed the whole of every lookup collection
+# (authors, publishers, illustrators, books, characters) on *every* session
+# init. These functions move that work behind Streamlit's cache so the data is
+# fetched once and shared across sessions/reruns instead of re-read each load.
+#
+# Why @st.cache_resource and NOT @st.cache_data:
+#   The dict *values* are Firestore ``DocumentReference`` objects bound to a
+#   live ``firestore.Client``. ``@st.cache_data`` pickles its return value, and
+#   a client-bound DocumentReference is explicitly unpicklable
+#   ("Pickling client objects is explicitly not supported"), so cache_data
+#   would raise at runtime. ``@st.cache_resource`` stores the object by
+#   reference without serialising, which both works and keeps the underlying
+#   client alive for as long as the refs are cached. The cached dict is
+#   shallow-copied into session_state by the caller so in-session mutations
+#   (adding a freshly registered author/book/etc.) never poison the shared
+#   cache.
+#
+# FRESHNESS / INVALIDATION — IMPORTANT:
+#   The TTL is a safety net only. Whenever a write *adds* an entry to one of
+#   these collections (the FormConfirmation.confirm_new_* methods and
+#   Character.register), the caller MUST call the matching ``load_*_dict.clear()``
+#   so the next session re-reads from Firestore. The current session continues
+#   to see its own newly added entry because the entry is also written into the
+#   session_state copy in place (unchanged existing behaviour). This preserves
+#   the write-through freshness guarantee while removing the per-session full
+#   re-read.
+_LOOKUP_CACHE_TTL_SECONDS = 600  # 10 minutes; bounds staleness from external edits.
+
+
+@st.cache_resource(ttl=_LOOKUP_CACHE_TTL_SECONDS, show_spinner=False)
+def load_author_dict():
+    firestore_wrapper = FirestoreWrapper(auth=False)
+    return {
+        author_entry_to_name(author): author.reference
+        for author in firestore_wrapper.get_all_documents_stream(collection='authors')
+    }
+
+
+@st.cache_resource(ttl=_LOOKUP_CACHE_TTL_SECONDS, show_spinner=False)
+def load_publisher_dict():
+    firestore_wrapper = FirestoreWrapper(auth=False)
+    return {
+        publisher.to_dict()['name'].replace('_', ' '): publisher.reference
+        for publisher in firestore_wrapper.get_all_documents_stream(collection='publishers')
+    }
+
+
+@st.cache_resource(ttl=_LOOKUP_CACHE_TTL_SECONDS, show_spinner=False)
+def load_illustrator_dict():
+    firestore_wrapper = FirestoreWrapper(auth=False)
+    return {
+        author_entry_to_name(illustrator): illustrator.reference
+        for illustrator in firestore_wrapper.get_all_documents_stream(collection='illustrators')
+    }
+
+
+@st.cache_resource(ttl=_LOOKUP_CACHE_TTL_SECONDS, show_spinner=False)
+def load_book_dict():
+    firestore_wrapper = FirestoreWrapper(auth=False)
+    return {
+        book.to_dict()['title']: book.reference
+        for book in firestore_wrapper.get_all_documents_stream(collection='books')
+    }
+
+
+@st.cache_resource(ttl=_LOOKUP_CACHE_TTL_SECONDS, show_spinner=False)
+def load_character_dict():
+    firestore_wrapper = FirestoreWrapper(auth=False)
+    return {
+        character.to_dict()['name']: character.reference
+        for character in firestore_wrapper.get_all_documents_stream(collection='characters')
+    }
+
+
 # TODO: check that required fields (e.g. book title) are not blank
 # TODO: fix warnings in table display (arrows?)
 class FormConfirmation:
@@ -384,6 +461,10 @@ class FormConfirmation:
                 st.session_state['book_dict'][
                     st.session_state['current_book'].title
                 ] = st.session_state['current_book'].get_ref()
+                # Invalidate the shared cache so other/new sessions re-read the
+                # newly registered book (this session already sees it via the
+                # in-place session_state update above).
+                load_book_dict.clear()
                 st.session_state.pop('isbn_metadata', None)
 
                 if st.session_state.current_book.photos_uploaded:
@@ -408,6 +489,8 @@ class FormConfirmation:
             st.session_state['author_dict'][
                 st.session_state['current_author'].name
             ] = st.session_state['current_author'].get_ref()
+            # Invalidate shared cache so new/other sessions re-read this author.
+            load_author_dict.clear()
 
             st.session_state['current_book'].author = (
                 st.session_state['current_author'].name
@@ -431,6 +514,8 @@ class FormConfirmation:
             st.session_state['illustrator_dict'][
                 st.session_state['current_illustrator'].name
             ] = st.session_state['current_illustrator'].get_ref()
+            # Invalidate shared cache so new/other sessions re-read this illustrator.
+            load_illustrator_dict.clear()
 
             st.session_state['current_book'].illustrator = (
                 st.session_state['current_illustrator'].name
@@ -454,6 +539,8 @@ class FormConfirmation:
             st.session_state['publisher_dict'][
                 st.session_state['current_publisher'].name
             ] = st.session_state['current_publisher'].get_ref()
+            # Invalidate shared cache so new/other sessions re-read this publisher.
+            load_publisher_dict.clear()
 
             st.session_state['current_book'].publisher = (
                 st.session_state['current_publisher'].name
