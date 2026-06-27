@@ -317,7 +317,7 @@ class FormConfirmation:
         )
 
         if confirm_button:
-            if st.session_state['current_book'].author == "None of these (create a new author).":
+            if st.session_state['current_book'].author is None:
                 navigate_to("./pages/add_author.py")
 
             else:
