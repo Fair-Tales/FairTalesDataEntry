@@ -43,11 +43,11 @@ def form_content(self):
     author_options = ["None of these (create a new author now)."] + list(
         st.session_state['author_dict'].keys()
     )
-    author_index = (
-        author_options.index(author_entry_to_name(st.session_state['current_author']))
-        if 'current_author' in st.session_state
-        else 0
-    )
+    author_index = 0
+    if 'current_author' in st.session_state:
+        _author_name = author_entry_to_name(st.session_state['current_author'])
+        if _author_name in author_options:
+            author_index = author_options.index(_author_name)
 
     _author = st.selectbox(
         "Select from existing authors",
@@ -60,11 +60,11 @@ def form_content(self):
         st.session_state['publisher_dict'].keys()
     )
 
-    publisher_index = (
-        publisher_options.index(st.session_state['current_publisher'].to_dict()['name'].replace('_', ' '))
-        if 'current_publisher' in st.session_state
-        else 0
-    )
+    publisher_index = 0
+    if 'current_publisher' in st.session_state:
+        _publisher_name = st.session_state['current_publisher'].to_dict()['name'].replace('_', ' ')
+        if _publisher_name in publisher_options:
+            publisher_index = publisher_options.index(_publisher_name)
 
     _publisher = st.selectbox(
         "Select from existing publishers",
@@ -78,11 +78,11 @@ def form_content(self):
         st.session_state['illustrator_dict'].keys()
         )
     
-    illustrator_index = (
-        illustrator_options.index(author_entry_to_name(st.session_state['current_illustrator']))
-        if 'current_illustrator' in st.session_state
-        else 0
-        )
+    illustrator_index = 0
+    if 'current_illustrator' in st.session_state:
+        _illustrator_name = author_entry_to_name(st.session_state['current_illustrator'])
+        if _illustrator_name in illustrator_options:
+            illustrator_index = illustrator_options.index(_illustrator_name)
 
     _illustrator = st.selectbox(
         "Select from existing illustrators",
