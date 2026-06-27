@@ -52,6 +52,7 @@ Pressing Enter or saying "yes" / "ok" / "sure" does not count.
 
 ## Conventions
 - **User-facing text** — instruction strings, labels, prompts, alerts, and help text — must be defined in the `text_content` module (e.g. `EnterText`, `Alerts`, `BookForm`, `Instructions`, `GenderRegistration`), not written inline in pages/components. Pages reference the text from there.
+- **Persistent data structures use write-through `Field` descriptors.** Entities stored in Firestore (`Book`, `Author`, `Illustrator`, `Publisher`, `Page`, `Character`, `Alias`) subclass `DataStructureBase` and declare their attributes as `Field()` descriptors (see `data_structures/base_structure.py`). Assigning to an attribute (e.g. `book.title = "X"`) runs `Field.__set__`, which stores the value and — unless the object is mid-load (`reading_from_db`) — calls `update_record()`, writing **that single field** to Firestore when the object `is_registered`. Reference fields (`author`/`illustrator`/`publisher`/`book`/`character`) may be assigned a string key, which is resolved to a reference via the session lookup dicts. A structure's `to_form()` binds form widgets to these fields, so **editing a form field writes through to the database**; `register()` performs the initial full save. New persisted entities must follow this pattern — subclass `DataStructureBase` and define `fields`, `form_fields`, `ref_fields`, `to_form()`, and `document_id` — rather than writing Firestore documents directly.
 
 ## Decisions
 Significant technical decisions are logged in `DECISIONS.md`. Check it before proposing
