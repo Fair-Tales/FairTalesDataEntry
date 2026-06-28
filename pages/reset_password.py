@@ -7,7 +7,7 @@ from google.cloud import firestore
 
 from utilities import FirestoreWrapper, page_layout, hash_password
 from text_content import PasswordReset
-from Home import initialise
+from Home import ensure_session
 
 # NOTE: This page is intentionally reachable WHILE LOGGED OUT.  Do NOT add
 # check_authentication_status() here — a user resetting a forgotten password is
@@ -81,7 +81,7 @@ if _is_expired(expiry):
 if 'initialised' not in st.session_state:
     st.session_state['initialised'] = True
     st.session_state['admin'] = False
-    initialise()
+    ensure_session()
 
 # Token is valid and unexpired — let the user set a new password.
 with st.form("reset_password_form"):
