@@ -54,6 +54,73 @@ Book text:
         '{{"birth_year": <integer or null>, "gender": "<string>"}}'
     )
 
+    # --- Character + alias detection (issue #52) ---------------------------
+    # Two-pass approach:
+    #   Pass 1 (character_extraction): run once per story page to list every
+    #           character reference appearing on that page, verbatim.
+    #   Pass 2 (character_consolidation): collapse references from all pages
+    #           into distinct characters, choosing a main name and recording
+    #           the remaining references as aliases.
+
+    character_extraction = """\
+You are analysing ONE page of a children's picture book to identify every \
+character that is mentioned in the text.
+
+List every distinct reference to a character on this page, exactly as it \
+appears in the text. Include:
+- proper names (e.g. "Tom")
+- nicknames (e.g. "Tommy")
+- descriptive references (e.g. "the boy", "the little rabbit", "Mum")
+- groups of characters (e.g. "the children", "the witches")
+
+Do NOT invent characters that are not referred to in the text. If the same \
+reference appears several times, list it once.
+
+Respond with valid JSON only — no other text before or after:
+{{"mentions": ["the boy", "Tom", "his mother"]}}
+
+If there are no characters referred to on this page, respond with \
+{{"mentions": []}}.
+
+Page text:
+{page_text}"""
+
+    character_consolidation = """\
+You are consolidating the character references collected from across ALL pages \
+of a SINGLE children's picture book. Below is a JSON array; each entry lists \
+the references found on one page.
+
+Your task: group references that refer to the SAME character into one entry. \
+For example "the boy", "Tom" and "Tommy" are probably the same character and \
+should be merged — choose ONE as the main name and record the others as \
+aliases. Track characters across pages: a character introduced as "the boy" on \
+page 1 and named "Tom" on page 3 is one character.
+
+For each distinct character provide:
+- "name": the clearest, most specific name (prefer a proper name over a \
+description).
+- "aliases": the OTHER references used for this character (exclude the chosen \
+name; may be an empty list).
+- "gender": exactly one of "Female", "Male", "Non-specific", "Transgender". \
+Infer ONLY from gendered pronouns or words in the references; use \
+"Non-specific" when unclear. Only use "Transgender" if it is explicit.
+- "human": true if the character is a person, false if an animal, object or \
+other creature.
+- "plural": true if this refers to a group or collection of characters \
+(e.g. "the children").
+- "protagonist": true only for the clear main character of the story.
+
+Be conservative: only merge references you are confident refer to the same \
+character. When in doubt keep them separate — the user will review and can \
+merge further.
+
+Respond with valid JSON only — no other text before or after:
+{{"characters": [{{"name": "Tom", "aliases": ["the boy", "Tommy"], \
+"gender": "Male", "human": true, "plural": false, "protagonist": true}}]}}
+
+Character references by page:
+{mentions_json}"""
+
     page_extraction = """\
 Analyse this photo of a children's picture book page.
 
