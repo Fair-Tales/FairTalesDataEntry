@@ -209,6 +209,19 @@ def managing_characters():
     st.session_state.now_entering = 'manage'
 
 
+def start_editing_character(character_id):
+    """Open the inline edit form for the given character in the manage view."""
+    # Drop any stale character-form widget state so the edit form re-seeds from
+    # the character's stored values rather than a previous render (#80).
+    clear_entity_form_state("character_form_")
+    st.session_state['_editing_character_id'] = character_id
+
+
+def cancel_editing_character():
+    """Close the inline character edit form without changes."""
+    st.session_state.pop('_editing_character_id', None)
+
+
 @st.dialog(ManageCharacters.delete_character_dialog_title)
 def confirm_delete_character(character_doc_dict, name):
     st.write(ManageCharacters.delete_character_warning.format(name=name))
@@ -359,6 +372,27 @@ def manage_characters_entry(element):
                         key=f"delete_alias_{alias_doc.id}",
                     ):
                         confirm_delete_alias(alias_data, alias_name)
+                if st.session_state.get('_editing_character_id') == character_ref.id:
+                    # Inline edit form: reconstruct the character from its stored
+                    # document so edits write through (and a rename migrates) via
+                    # Character.edit_form.
+                    character = Character(db_object=character_doc.to_dict())
+                    with st.form(f"edit_character_{character_ref.id}"):
+                        character.edit_form()
+                    st.button(
+                        ManageCharacters.cancel_edit_button,
+                        width="stretch",
+                        on_click=cancel_editing_character,
+                        key=f"cancel_edit_character_{character_ref.id}",
+                    )
+                else:
+                    st.button(
+                        ManageCharacters.edit_character_button,
+                        width="stretch",
+                        on_click=start_editing_character,
+                        args=(character_ref.id,),
+                        key=f"edit_character_{character_ref.id}",
+                    )
                 if st.button(
                     ManageCharacters.delete_character_button,
                     key=f"delete_character_{character_ref.id}",
