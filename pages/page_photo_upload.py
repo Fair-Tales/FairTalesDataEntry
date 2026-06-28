@@ -2,7 +2,7 @@ import s3fs
 import streamlit as st
 from six import BytesIO
 from streamlit_option_menu import option_menu
-from text_content import Alerts
+from text_content import Alerts, PhotoUpload
 from utilities import page_layout, check_authentication_status
 from text_content import Instructions
 from data_structures import Page
@@ -37,18 +37,18 @@ def go_to_phone():
     temp = BytesIO()
     img.save(temp)
     st.image(temp.getvalue())
-    st.write("Or you can use the following link: [%s](%s)" % (req.url, req.url))
+    st.write(PhotoUpload.link_line % (req.url, req.url))
 
-    st.write("When you have finished, you can continue below to enter the text for this book, or return to the menu.")
+    st.write(PhotoUpload.finished_instruction)
 
     subcol1, subcol2 = st.columns(2)
-    if subcol1.button("Continue", width="stretch"):
+    if subcol1.button(PhotoUpload.continue_button, width="stretch"):
         if st.session_state.current_book.photos_uploaded:
             st.session_state['current_page_number'] = 1
             st.switch_page("./pages/enter_text.py")
         else:
             st.warning(Alerts.please_uploaded_photos)
-    if subcol2.button("Back to menu", width="stretch"):
+    if subcol2.button(PhotoUpload.back_to_menu_button, width="stretch"):
         st.switch_page("./pages/book_edit_home.py")
 
 
@@ -61,16 +61,16 @@ def already_uploaded_options():
     """Let the user skip the upload step or choose to replace existing photos."""
     st.info(Instructions.photos_already_uploaded)
     skip_col, replace_col = st.columns(2)
-    if skip_col.button("Continue to enter text", width="stretch"):
+    if skip_col.button(PhotoUpload.continue_to_text_button, width="stretch"):
         st.session_state.pop('_replacing_photos', None)
         st.session_state['current_page_number'] = 1
         st.switch_page("./pages/enter_text.py")
-    if replace_col.button("Replace / re-upload photos", width="stretch"):
+    if replace_col.button(PhotoUpload.replace_button, width="stretch"):
         # Scope the override to this book so re-opening a *different* book still
         # offers the skip choice rather than dropping straight into uploading.
         st.session_state['_replacing_photos'] = st.session_state.current_book.document_id
         st.rerun()
-    if st.button("Back to menu", width="stretch"):
+    if st.button(PhotoUpload.back_to_menu_button, width="stretch"):
         st.switch_page("./pages/book_edit_home.py")
 
 
@@ -104,7 +104,7 @@ def show_upload_options():
 page_layout()
 
 st.title(
-    f"Enter book data: {st.session_state.current_book.title}"
+    PhotoUpload.enter_book_data_title.format(title=st.session_state.current_book.title)
 )
 
 # If photos already exist for this book, offer to skip to text entry or to

@@ -94,6 +94,7 @@ class AuthorForm:
     submit_button = "Submit"
     lookup_button = "Look up birth year and gender"
     name_required = "Author first name and surname are required."
+    cancel_text = "Cancel entering new author."
 
 class IllustratorForm:
     header = "Please enter illustrator details."
@@ -121,6 +122,7 @@ class IllustratorForm:
     submit_button = "Submit"
     lookup_button = "Look up birth year and gender"
     name_required = "Illustrator first name and surname are required."
+    cancel_text = "Cancel entering new illustrator."
 
 class PublisherForm:
     header = "Please enter publisher details."
@@ -137,6 +139,7 @@ class PublisherForm:
     founding_year_earlier = "Earlier year"
     submit_button = "Submit"
     name_required = "Publisher name is required."
+    cancel_text = "Cancel entering new publisher."
 
 
 class BookPhotoEntry:
@@ -600,3 +603,156 @@ class Login:
     forgot_password_expander = "Forgot your password?"
     register_header = "Register"
     accept_checkbox = "Accept"
+
+
+class BookEditHome:
+    """Strings for the book edit/home page (pages/book_edit_home.py)."""
+
+    # %s placeholders / format fields filled at render time.
+    editing_book_title = "Editing book: {title}"
+    no_api_key = "AI theme suggestion requires an Anthropic API key."
+    no_story_text = "No story text found. Please enter text for the book pages first."
+    analysing_spinner = "Analysing book text for themes..."
+    detection_failed = "Theme detection failed: {error}"
+    themes_suggested = "Themes suggested: {themes}. Reasoning: {reasoning}"
+    no_new_themes = "No new themes to add. Reasoning: {reasoning}"
+
+    # option_menu items (also used as the navigation dispatch keys)
+    menu_instructions = "Instructions"
+    menu_edit_metadata = "Edit metadata"
+    menu_upload_photos = "Upload photos"
+    menu_enter_text = "Enter text"
+
+    suggest_themes_button = "🏷 Suggest themes"
+    back_to_home_button = "Back to home menu."
+    finish_submit_button = "Finish and submit book"
+
+
+class Admin:
+    """Strings for the admin page (pages/admin.py)."""
+
+    not_admin = "This page is only accessible to admin users."
+    title = "Admin"
+    validation_link_label = "→ Go to data validation"
+
+    user_data_header = "User data"
+    user_data_description = "Download all available fields for confirmed users (excluding sensitive fields such as password and confirmation token) for analysis."
+    prepare_user_download_button = "Prepare user data download"
+    download_user_button = "⬇ Download user list (CSV)"
+    user_file_name = "fairtales_users.csv"
+
+    book_export_header = "Book database export"
+    book_export_description = "Download a ZIP of CSV files — one per collection — for research use. May take a moment for large datasets."
+    prepare_book_download_button = "Prepare book data download"
+    download_book_button = "⬇ Download book database (ZIP of CSVs)"
+    book_file_name = "fairtales_book_data.zip"
+
+
+class RegisterUser:
+    """Strings for the registration form (pages/register_user.py and
+    pages/register_user_done.py)."""
+
+    title = "User Registration"
+    email_label = "Email"
+    name_label = "Name"
+    password_label = "Password"
+    birth_year_label = "What is your birth year?"
+    birth_year_placeholder = "Select year of birth"
+    # Validation field name shown in the "{field} cannot be empty" warning.
+    birth_year_field = "Birth year"
+    newsletter_label = (
+        "Keep me updated with research findings and project news from Fair Tales "
+        "(max. one email per month). You can opt out at any time."
+    )
+    register_button = "Register"
+
+
+class PhotoUpload:
+    """Strings for the photo-upload page (pages/page_photo_upload.py)."""
+
+    enter_book_data_title = "Enter book data: {title}"
+    link_line = "Or you can use the following link: [%s](%s)"
+    finished_instruction = "When you have finished, you can continue below to enter the text for this book, or return to the menu."
+    continue_button = "Continue"
+    back_to_menu_button = "Back to menu"
+    continue_to_text_button = "Continue to enter text"
+    replace_button = "Replace / re-upload photos"
+
+
+class ReviewBooks:
+    """Strings for the review-my-books page (pages/review_my_books.py)."""
+
+    header = "Review my books"
+    select_label = "My entered books:"
+    edit_button = "Edit this book."
+    cancel_button = "Cancel editing books."
+
+
+class Confirm:
+    """Strings for the email-confirmation page (pages/confirm.py)."""
+
+    already_confirmed = "User account already confirmed. Please proceed to login by selecting `Home` in navigation menu."
+    success = "User registration successful! You can now proceed to login by selecting `Home` from the navigation menu."
+    invalid_link = "Invalid or expired confirmation link. Please request a new confirmation email."
+    failed = "Registration failed. Please try again."
+
+
+class UserHome:
+    """Strings for the user home / search page (pages/user_home.py)."""
+
+    book_search_label = "Search by book title — enter a full or partial title and press Enter to find close matches."
+    book_search_help = "You can enter either all or part of the title."
+    results_found = "Results ({count} found):"
+    unknown = "Unknown"
+    not_recorded = "Not recorded"
+    unknown_title = "Unknown title"
+    publisher_label = "**Publisher:** {name}"
+    illustrator_label = "**Illustrator:** {name}"
+    book_expander = "{title}{year_str}  —  {author}"
+    author_expander = "{name}  —  b. {birth_year}  |  {gender}"
+    no_books_for_author = "No books found for this author."
+    books_label = "**Books:**"
+
+    # option_menu items (also used as the navigation dispatch keys)
+    menu_search_books = "Search Books"
+    menu_search_authors = "Search Authors"
+    menu_add_book = "Add a Book"
+    menu_edit_books = "Edit my Books"
+
+
+class Uploader:
+    """Strings for the shared upload widget (pages/uploader.py)."""
+
+    select_photos_label = "Select page photos to upload"
+    saving_photo = "Saving photo {current} of {total}..."
+    photos_saved = "Photos saved."
+    processing_page = "Processing page {page} of {total} (correcting image, extracting text)..."
+    page_corrected = "✓ Page {page} of {total} — auto-corrected ({method})"
+    page_correction_unavailable = "⚠ Page {page} of {total} — correction unavailable, using original"
+    processing_complete = "Processing complete."
+    isbn_metadata_found = "Found book metadata via ISBN {isbn}: {title}"
+    upload_complete = "Page photo upload complete, you may continue."
+    continue_button = "Continue"
+
+
+class BookDataEntry:
+    """Strings for the legacy book-data-entry page (pages/book_data_entry.py)."""
+
+    # option_menu items (also used as the navigation dispatch keys)
+    menu_upload_photos = "Upload page photos"
+    menu_enter_text = "Enter text"
+    menu_add_character = "Add a Character"
+    save_button = "Save"
+    not_implemented = "Not implemented yet!"
+
+
+class QrLanding:
+    """Strings for the QR deep-link upload page (pages/qr_landing.py)."""
+
+    title = "Photo uploader."
+
+
+class Validation:
+    """Strings for the data-validation page (pages/validation.py)."""
+
+    intro = "Here you may validate inputted data"

@@ -4,25 +4,25 @@ import csv
 import streamlit as st
 from google.api_core.exceptions import GoogleAPIError
 from utilities import page_layout, check_authentication_status, FirestoreWrapper
-from text_content import FeedbackExport
+from text_content import FeedbackExport, Admin
 
 check_authentication_status()
 
 if not st.session_state.get('admin', False):
-    st.error("This page is only accessible to admin users.")
+    st.error(Admin.not_admin)
     st.stop()
 
 page_layout()
 
-st.title("Admin")
+st.title(Admin.title)
 
-st.page_link("pages/validation.py", label="→ Go to data validation")
+st.page_link("pages/validation.py", label=Admin.validation_link_label)
 st.divider()
 
-st.header("User data")
-st.write("Download all available fields for confirmed users (excluding sensitive fields such as password and confirmation token) for analysis.")
+st.header(Admin.user_data_header)
+st.write(Admin.user_data_description)
 
-if st.button("Prepare user data download"):
+if st.button(Admin.prepare_user_download_button):
     db = FirestoreWrapper().connect_user(auth=False)
     users = db.collection('users').where('is_confirmed', '==', True).stream()
 
@@ -46,18 +46,18 @@ if st.button("Prepare user data download"):
         })
 
     st.download_button(
-        label="⬇ Download user list (CSV)",
+        label=Admin.download_user_button,
         data=buf.getvalue().encode('utf-8'),
-        file_name="fairtales_users.csv",
+        file_name=Admin.user_file_name,
         mime="text/csv"
     )
 
 st.divider()
 
-st.header("Book database export")
-st.write("Download a ZIP of CSV files — one per collection — for research use. May take a moment for large datasets.")
+st.header(Admin.book_export_header)
+st.write(Admin.book_export_description)
 
-if st.button("Prepare book data download"):
+if st.button(Admin.prepare_book_download_button):
     collections = ['books', 'authors', 'illustrators', 'publishers', 'characters', 'pages', 'aliases']
 
     zip_buf = io.BytesIO()
@@ -87,9 +87,9 @@ if st.button("Prepare book data download"):
                 zf.writestr(f"{collection_name}_error.txt", str(e))
 
     st.download_button(
-        label="⬇ Download book database (ZIP of CSVs)",
+        label=Admin.download_book_button,
         data=zip_buf.getvalue(),
-        file_name="fairtales_book_data.zip",
+        file_name=Admin.book_file_name,
         mime="application/zip"
     )
 

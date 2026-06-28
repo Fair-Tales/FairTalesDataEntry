@@ -9,7 +9,7 @@ from image_processing import (
     correct_book_page, check_crop_quality, get_rotation_angle, rotate_image,
     exif_transpose_bytes,
 )
-from text_content import Instructions, AIPrompts, BookPhotoEntry
+from text_content import Instructions, AIPrompts, BookPhotoEntry, Uploader
 from utilities import (
     page_layout, check_authentication_status, extract_isbn, lookup_isbn
 )
@@ -100,7 +100,7 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
     upload_progress = st.progress(0)
     corrected_bytes_list = []
     for fi, raw_bytes in enumerate(raw_bytes_list):
-        upload_status.write(f"Saving photo {fi + 1} of {total}...")
+        upload_status.write(Uploader.saving_photo.format(current=fi + 1, total=total))
         # Normalise orientation so the stored photo and every downstream stage
         # (correction, extraction, display) work on correctly-oriented pixels
         # (fixes portrait photos, #51). Idempotent — a no-op once the EXIF tag is
@@ -117,7 +117,7 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
     st.session_state.current_book.photos_uploaded = True
     st.session_state.current_book.photos_url = photos_url
     st.session_state.current_book.page_count = total
-    upload_status.write("Photos saved.")
+    upload_status.write(Uploader.photos_saved)
 
     # Phase 2 — image correction + text extraction per page
     if 'ANTHROPIC_API_KEY' in st.secrets:
@@ -129,8 +129,7 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
         for i, raw_bytes in enumerate(raw_bytes_list):
             page_number = i + 1
             process_status.write(
-                f"Processing page {page_number} of {total} "
-                f"(correcting image, extracting text)..."
+                Uploader.processing_page.format(page=page_number, total=total)
             )
 
             bytes_for_extraction, method = _process_page(
@@ -155,17 +154,15 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
 
             if method:
                 process_status.write(
-                    f"✓ Page {page_number} of {total} — "
-                    f"auto-corrected ({method})"
+                    Uploader.page_corrected.format(page=page_number, total=total, method=method)
                 )
             else:
                 process_status.write(
-                    f"⚠ Page {page_number} of {total} — "
-                    "correction unavailable, using original"
+                    Uploader.page_correction_unavailable.format(page=page_number, total=total)
                 )
             process_progress.progress((i + 1) / total)
 
-        process_status.write("Processing complete.")
+        process_status.write(Uploader.processing_complete)
 
         # ISBN lookup — use the copyright page text to fetch book metadata
         # and pre-populate the Add Book form.
@@ -176,8 +173,7 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
                 if isbn_metadata:
                     st.session_state['isbn_metadata'] = isbn_metadata
                     st.info(
-                        f"Found book metadata via ISBN {isbn}: "
-                        f"{isbn_metadata['title']}"
+                        Uploader.isbn_metadata_found.format(isbn=isbn, title=isbn_metadata['title'])
                     )
     else:
         # No API key — register pages without extraction
@@ -214,7 +210,7 @@ def upload_widget(on_submit='enter_text'):
                 _process_photo_batch(raw_bytes_list, sort_file_names, fs)
         else:
             uploaded_files = st.file_uploader(
-                "Select page photos to upload",
+                Uploader.select_photos_label,
                 accept_multiple_files=True,
             )
             if not uploaded_files:
@@ -230,8 +226,8 @@ def upload_widget(on_submit='enter_text'):
                 raw_bytes_list = [file_dict[name].getvalue() for name in sort_file_names]
                 _process_photo_batch(raw_bytes_list, sort_file_names, fs)
 
-        st.write("Page photo upload complete, you may continue.")
-        submit = st.button('Continue')
+        st.write(Uploader.upload_complete)
+        submit = st.button(Uploader.continue_button)
 
         if submit:
             st.session_state.pop('_upload_pipeline_done', None)

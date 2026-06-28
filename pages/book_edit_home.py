@@ -3,7 +3,7 @@ from datetime import datetime
 import anthropic
 import streamlit as st
 from streamlit_option_menu import option_menu
-from text_content import Alerts, Instructions, AIPrompts, BookForm
+from text_content import Alerts, Instructions, AIPrompts, BookForm, BookEditHome
 from utilities import check_authentication_status, page_layout, confirm_submit, check_authentication_status
 
 check_authentication_status()
@@ -32,7 +32,7 @@ def enter_text():
 
 def suggest_themes():
     if 'ANTHROPIC_API_KEY' not in st.secrets:
-        st.warning("AI theme suggestion requires an Anthropic API key.")
+        st.warning(BookEditHome.no_api_key)
         return
 
     book_id = st.session_state.current_book.document_id
@@ -50,13 +50,13 @@ def suggest_themes():
                 story_text_parts.append(data['text'].strip())
 
     if not story_text_parts:
-        st.warning("No story text found. Please enter text for the book pages first.")
+        st.warning(BookEditHome.no_story_text)
         return
 
     full_text = "\n\n".join(story_text_parts)
     prompt = AIPrompts.theme_detection + full_text
 
-    with st.spinner("Analysing book text for themes..."):
+    with st.spinner(BookEditHome.analysing_spinner):
         try:
             client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
             response = client.messages.create(
@@ -71,7 +71,7 @@ def suggest_themes():
                     raw = raw[4:]
             result = json.loads(raw)
         except Exception as e:
-            st.error(f"Theme detection failed: {e}")
+            st.error(BookEditHome.detection_failed.format(error=e))
             return
 
     theme_keys = list(BookForm.theme_options.keys())
@@ -82,14 +82,14 @@ def suggest_themes():
             added.append(BookForm.theme_options[key])
 
     if added:
-        st.success(f"Themes suggested: {', '.join(added)}. Reasoning: {result.get('reasoning', '')}")
+        st.success(BookEditHome.themes_suggested.format(themes=', '.join(added), reasoning=result.get('reasoning', '')))
     else:
-        st.info(f"No new themes to add. Reasoning: {result.get('reasoning', '')}")
+        st.info(BookEditHome.no_new_themes.format(reasoning=result.get('reasoning', '')))
 
 
 page_layout()
 
-st.title(f"Editing book: {st.session_state.current_book.title}")
+st.title(BookEditHome.editing_book_title.format(title=st.session_state.current_book.title))
 
 # Reassure the user that their edits are persisted (issue #53). last_updated is
 # only a datetime for a book that has been saved; a brand-new book leaves the
@@ -100,7 +100,7 @@ if isinstance(st.session_state.current_book.last_updated, datetime):
 check_authentication_status()
 
 edit_option = option_menu(
-    None, ["Instructions", "Edit metadata", "Upload photos", "Enter text"],
+    None, [BookEditHome.menu_instructions, BookEditHome.menu_edit_metadata, BookEditHome.menu_upload_photos, BookEditHome.menu_enter_text],
     default_index=0,
     icons=['info-circle', 'list-stars', 'image', 'pencil-square'],
     menu_icon="cast", orientation="horizontal",
@@ -112,10 +112,10 @@ edit_option = option_menu(
 )
 
 edit_navigation_dict = {
-    "Instructions": instructions,
-    "Edit metadata": edit_book_details,
-    "Upload photos": add_photos,
-    "Enter text": enter_text
+    BookEditHome.menu_instructions: instructions,
+    BookEditHome.menu_edit_metadata: edit_book_details,
+    BookEditHome.menu_upload_photos: add_photos,
+    BookEditHome.menu_enter_text: enter_text
 }
 
 edit_navigation_dict[edit_option]()
@@ -124,13 +124,13 @@ if (
     st.session_state.current_book.page_count > 0
     and st.session_state.current_book.photos_uploaded
 ):
-    if st.button("🏷 Suggest themes"):
+    if st.button(BookEditHome.suggest_themes_button):
         suggest_themes()
 
-if st.button("Back to home menu."):
+if st.button(BookEditHome.back_to_home_button):
     st.switch_page("./pages/user_home.py")
 
-if st.button("Finish and submit book"):
+if st.button(BookEditHome.finish_submit_button):
     confirm_submit()
 
 
