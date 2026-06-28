@@ -196,6 +196,87 @@ class BookPhotoEntry:
     cancel_text = "Cancel"
 
 
+class BatchBookEntry:
+    """Strings for the batch multi-book photo upload flow (#84).
+
+    The user uploads ONE batch of photos covering SEVERAL books (taken in
+    sequence); the app splits them into per-book groups, reads each book's
+    details, lets the user review the split, then creates a separate book
+    record per group.
+    """
+
+    menu_label = "Batch Upload"
+    header = "Batch upload — add several books at once"
+    instructions = """
+        Upload a single batch of photos that covers **several books**, taken in
+        order. We'll split the photos into separate books and create a record for
+        each one.
+
+        **To mark where one book ends and the next begins, cover the camera lens
+        and take a fully black photo between books.** We use those black photos as
+        separators and discard them. If you didn't take separator photos, we'll try
+        to detect each book's cover page automatically instead.
+
+        Upload all the photos in order, then review the detected books before we
+        create them.
+    """
+    upload_label = "Select all the page photos for the batch (in order)"
+    no_api_key = (
+        "Without an Anthropic API key we can still split books on the black "
+        "separator photos, but we can't auto-detect covers, read titles, or "
+        "extract page text — those steps will be skipped."
+    )
+    detect_button = "Detect books"
+    detecting = "Splitting the batch and reading each book..."
+    reading_book = "Reading book {n} of {total}..."
+    no_photos = "Please upload the batch photos first."
+    no_books_detected = (
+        "We couldn't split this batch into any books. Please check your photos "
+        "and try again."
+    )
+
+    # --- Review step ---
+    review_header = "Review the detected books"
+    method_black_frame = (
+        "Split into **{count}** book(s) using the black separator photos "
+        "(the separators have been discarded)."
+    )
+    method_cover_page = (
+        "No black separator photos were found, so we split into **{count}** "
+        "book(s) by detecting each book's cover page. Please check the split "
+        "carefully before continuing."
+    )
+    method_single = (
+        "We found no separators or distinct covers, so we've treated the whole "
+        "batch as a **single** book. Please check this is correct."
+    )
+    book_summary = "Book {n}: {title} — {pages} page(s)"
+    untitled_title = "Untitled book {n}"
+    detail_author = "Author: {value}"
+    detail_illustrator = "Illustrator: {value}"
+    detail_publisher = "Publisher: {value}"
+    detail_year = "First published: {value}"
+    confirm_button = "Create {count} book(s)"
+    start_over_button = "Start over"
+    cancel_button = "Cancel"
+
+    # --- Processing step ---
+    creating = "Creating books and processing pages..."
+    processing_page = "{title}: processing page {page} of {total}..."
+
+    # --- Done step ---
+    done_header = "Books created"
+    done_summary = "Created **{count}** book(s) from the batch:"
+    done_book_line = "- {title} ({pages} page(s))"
+    done_note = (
+        "Each book has been saved with its pages and any details we could read. "
+        "Open **Edit my books** to review, add authors / illustrators / "
+        "publishers, and finish each one."
+    )
+    done_home_button = "Back to home"
+    done_another_button = "Upload another batch"
+
+
 class EnterText:
 
     header = "Please enter text and add characters"

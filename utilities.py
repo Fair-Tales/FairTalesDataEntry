@@ -861,6 +861,152 @@ def extract_photo_first_metadata(pages, client, title_page_hint=None,
     return metadata
 
 
+def locate_cover_pages(pages, client):
+    """Stage-2 fallback for batch splitting (#84): find the cover/title page that
+    starts each book in a sequential multi-book photo batch.
+
+    Used only when no black separator frames were detected (see
+    ``split_photo_batch``). A single cheap Claude Haiku call is sent ALL page
+    images and asked which page numbers begin a new book (front cover / title
+    page). Returns a sorted list of distinct 1-based positions into ``pages`` (an
+    empty list when none could be identified or the reply could not be parsed).
+    Anthropic API errors propagate to the caller.
+    """
+    from text_content import AIPrompts
+
+    pages = list(pages)
+    if not pages:
+        return []
+
+    content = []
+    for index, (_name, image_bytes) in enumerate(pages):
+        content.append({"type": "text", "text": f"Page {index + 1}:"})
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": base64.standard_b64encode(image_bytes).decode('utf-8'),
+            },
+        })
+    content.append({"type": "text", "text": AIPrompts.locate_cover_pages})
+
+    response = client.messages.create(
+        model="claude-haiku-4-5",
+        max_tokens=256,
+        messages=[{"role": "user", "content": content}],
+    )
+
+    try:
+        raw = response.content[0].text.strip()
+    except (IndexError, AttributeError):
+        return []
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    try:
+        result = json.loads(raw.strip())
+    except (json.JSONDecodeError, ValueError):
+        return []
+
+    covers = result.get('cover_pages') if isinstance(result, dict) else None
+    if not isinstance(covers, list):
+        return []
+    seen = set()
+    positions = []
+    for value in covers:
+        try:
+            page = int(value)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= page <= len(pages) and page not in seen:
+            seen.add(page)
+            positions.append(page)
+    return sorted(positions)
+
+
+def split_photo_batch(pages, client, black_threshold=10.0):
+    """Split one sequential photo batch covering MULTIPLE books into per-book
+    groups (#84). Assumes the photos are in capture order.
+
+    Two-stage algorithm (everything assumes sequential photo order):
+      Stage 1 (primary): black separator frames. Between books the user covers
+        the lens and takes a fully black photo; ``image_processing.is_black_frame``
+        flags those. Each black frame is a book boundary and is DISCARDED (never
+        stored as a page). If ANY black separators are found, the batch is split
+        on them and Stage 2 is not run.
+      Stage 2 (fallback): when NO black separators are present, a single Claude
+        Haiku pass (``locate_cover_pages``) finds the cover/title page that starts
+        each book, and the batch is split immediately before each detected cover.
+
+    If neither stage yields more than one book the whole batch is treated as a
+    single book.
+
+    Args:
+        pages: ordered list of (name, image_bytes) tuples.
+        client: an ``anthropic.Anthropic`` client, or None. Used only by the
+            Stage-2 fallback; when None (no API key) Stage 1 still runs and the
+            batch falls back to a single book if no separators are found.
+        black_threshold: mean-brightness threshold passed to ``is_black_frame``.
+
+    Returns a dict::
+
+        {'groups': list[list[(name, bytes)]],   # one inner list per detected book
+         'method': 'black_frame' | 'cover_page' | 'single'}
+
+    Empty groups (e.g. two adjacent separators, or a leading separator) are
+    dropped.
+    """
+    from image_processing import is_black_frame
+
+    pages = list(pages)
+    if not pages:
+        return {'groups': [], 'method': 'single'}
+
+    # Stage 1 — split on black separator frames, discarding the separators.
+    groups = []
+    current = []
+    found_separator = False
+    for name, image_bytes in pages:
+        if is_black_frame(image_bytes, mean_threshold=black_threshold):
+            found_separator = True
+            if current:
+                groups.append(current)
+                current = []
+            continue
+        current.append((name, image_bytes))
+    if current:
+        groups.append(current)
+
+    if found_separator:
+        groups = [group for group in groups if group]
+        return {'groups': groups, 'method': 'black_frame'}
+
+    # Stage 2 — no separators: fall back to cover/title-page detection. Needs the
+    # AI client; without it we can't classify covers, so treat as a single book.
+    if client is None:
+        return {'groups': [pages], 'method': 'single'}
+
+    covers = locate_cover_pages(pages, client)
+    boundaries = sorted({c for c in covers if 1 <= c <= len(pages)})
+    # The first group always starts at page 1, even if the first detected cover
+    # is later in the batch (the leading pages belong to the first book).
+    if not boundaries or boundaries[0] != 1:
+        boundaries = [1] + boundaries
+    # A single boundary means one book — nothing meaningful was split.
+    if len(boundaries) <= 1:
+        return {'groups': [pages], 'method': 'single'}
+
+    groups = []
+    for i, start in enumerate(boundaries):
+        end = boundaries[i + 1] - 1 if i + 1 < len(boundaries) else len(pages)
+        group = pages[start - 1:end]
+        if group:
+            groups.append(group)
+    return {'groups': groups, 'method': 'cover_page'}
+
+
 def fuzzy_match_name(name, options, cutoff=0.8):
     """Return the closest matching key in ``options`` for ``name``, or None.
 

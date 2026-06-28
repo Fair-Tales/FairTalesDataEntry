@@ -1,7 +1,7 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
 from st_keyup import st_keyup
-from text_content import Alerts, Instructions, old_books, BookPhotoEntry, UserHome
+from text_content import Alerts, Instructions, old_books, BookPhotoEntry, BatchBookEntry, UserHome
 from utilities import check_authentication_status, page_layout, navigate_to, clear_page_history, clear_entity_form_state
 from data_structures import Book
 import pandas as pd
@@ -153,6 +153,12 @@ def add_book_from_photos():
     clear_entity_form_state("book_form_")
     navigate_to("./pages/add_book_photos.py")
 
+def add_books_batch():
+    # Clear any leftover batch-flow state so a new batch starts at the upload step.
+    for _key in ('batch_step', 'batch_method', 'batch_detected', 'batch_results'):
+        st.session_state.pop(_key, None)
+    navigate_to("./pages/add_books_batch.py")
+
 def review_my_books():
     navigate_to("./pages/review_my_books.py")
 
@@ -166,13 +172,13 @@ st.write(Instructions.advise_to_search)
 
 selected_option = option_menu(
     None,
-    [UserHome.menu_search_books, UserHome.menu_search_authors, UserHome.menu_add_book, BookPhotoEntry.menu_label, UserHome.menu_edit_books],
+    [UserHome.menu_search_books, UserHome.menu_search_authors, UserHome.menu_add_book, BookPhotoEntry.menu_label, BatchBookEntry.menu_label, UserHome.menu_edit_books],
     default_index=0,
-    icons=['search', 'search', 'database-add', 'camera', 'pencil-square'],
+    icons=['search', 'search', 'database-add', 'camera', 'images', 'pencil-square'],
     menu_icon="cast", orientation="horizontal",
     key="user_option_menu",
     styles={
-        # The menu now has 5 items and wraps to a second row on narrow phone
+        # The menu now has 6 items and wraps to a second row on narrow phone
         # screens. Vertical margin gives the wrapped row breathing room so its
         # icon isn't clipped by the row above; the smaller font reduces wrapping.
         "container": {"flex-wrap": "wrap", "padding": "0.25rem 0"},
@@ -186,6 +192,7 @@ navigation_dict = {
     UserHome.menu_search_authors: author_search,
     UserHome.menu_add_book: add_book,
     BookPhotoEntry.menu_label: add_book_from_photos,
+    BatchBookEntry.menu_label: add_books_batch,
     UserHome.menu_edit_books: review_my_books
 }
 
