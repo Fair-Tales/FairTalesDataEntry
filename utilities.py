@@ -107,9 +107,81 @@ def get_user(username):
     else:
         return None
     
-def get_admin(username):
+# ---------------------------------------------------------------------------
+# Role tiers (issue #83).
+#
+# Every user has one of three permission tiers, stored as a ``role`` string on
+# their Firestore user document:
+#   'archivist' (default) — view results; enter single books (manual + photo);
+#                           edit ONLY books they uploaded (entered_by == them).
+#   'team'                — everything an archivist can do, PLUS edit books
+#                           uploaded by others and access the validation
+#                           workflow (the validation workflow itself is #47;
+#                           this change only gates access to that page).
+#   'admin'               — everything above, PLUS delete users/books, export /
+#                           download data, and the admin page.
+#
+# BACK-COMPAT: older user documents predate the ``role`` field. A legacy user
+# with ``admin: true`` and no ``role`` resolves to 'admin'; a user with neither
+# resolves to 'archivist'. This is resolved at read time (``resolve_role``), so
+# NO data migration is required.
+#
+# NOTE: there is no in-app role-management UI yet — admins set a user's ``role``
+# directly on the Firestore user document for now. A management UI is tracked by
+# #47 / #69 and is out of scope here.
+ROLE_ARCHIVIST = 'archivist'
+ROLE_TEAM = 'team'
+ROLE_ADMIN = 'admin'
+VALID_ROLES = (ROLE_ARCHIVIST, ROLE_TEAM, ROLE_ADMIN)
+
+
+def resolve_role(user_dict):
+    """Resolve a user's effective role from their raw user dict (back-compat).
+
+    A valid stored ``role`` wins; otherwise a legacy ``admin: true`` flag maps
+    to 'admin'; otherwise the default 'archivist'. Every lookup is guarded with
+    a ``.get`` default so a missing field never raises.
+    """
+    role = user_dict.get('role')
+    if role in VALID_ROLES:
+        return role
+    if user_dict.get('admin', False):
+        return ROLE_ADMIN
+    return ROLE_ARCHIVIST
+
+
+def get_role(username):
+    """Return the effective role string for ``username`` (back-compat aware).
+
+    Falls back to 'archivist' when the user document cannot be found.
+    """
     user = get_user(username)
-    return user.to_dict().get('admin', False)
+    if user is None:
+        return ROLE_ARCHIVIST
+    return resolve_role(user.to_dict())
+
+
+def get_admin(username):
+    """Back-compat shim: True when ``username`` resolves to the admin role."""
+    return get_role(username) == ROLE_ADMIN
+
+
+def is_admin():
+    """True when the current session's role is admin (guarded session read).
+
+    Gates admin-only actions: deleting users/books, exporting/downloading data,
+    and the admin page.
+    """
+    return st.session_state.get('role', ROLE_ARCHIVIST) == ROLE_ADMIN
+
+
+def is_team_or_above():
+    """True when the current session's role is team member or admin.
+
+    Gates team-and-above actions: editing books uploaded by others and reaching
+    the validation page (the validation workflow itself is #47).
+    """
+    return st.session_state.get('role', ROLE_ARCHIVIST) in (ROLE_TEAM, ROLE_ADMIN)
 
 
 def authenticate_user(username, password):

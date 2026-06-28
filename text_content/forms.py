@@ -710,6 +710,9 @@ class ReviewBooks:
 
     header = "Review my books"
     select_label = "My entered books:"
+    # Team-member / admin variants: they may edit books uploaded by anyone (#83).
+    all_header = "Review all books"
+    all_select_label = "All entered books:"
     edit_button = "Edit this book."
     cancel_button = "Cancel editing books."
 
@@ -782,3 +785,5 @@ class Validation:
     """Strings for the data-validation page (pages/validation.py)."""
 
     intro = "Here you may validate inputted data"
+    # Shown when an archivist (below team tier) tries to open the validation page.
+    not_authorised = "This page is only accessible to project team members and admins."

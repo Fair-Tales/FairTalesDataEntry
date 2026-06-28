@@ -3,7 +3,8 @@ from datetime import datetime, date
 import bcrypt
 import email.utils
 from utilities import (
-    page_layout, hash_password, send_confirmation_email, FirestoreWrapper
+    page_layout, hash_password, send_confirmation_email, FirestoreWrapper,
+    ROLE_ARCHIVIST,
 )
 from text_content import Alerts, GenderRegistration, RegisterUser
 
@@ -25,6 +26,9 @@ def register_user(_username, _name, _password, _gender, _birth_year, _newsletter
         "is_confirmed": False,
         "trust_rating": 0,
         "admin": False,
+        # New users default to the archivist tier (#83). 'admin' is kept for
+        # back-compat; an admin promotes a user by setting 'role' on the doc.
+        "role": ROLE_ARCHIVIST,
         "newsletter_opt_in": _newsletter_opt_in
     }
     # Use the general FirestoreWrapper.document_exists() helper for the

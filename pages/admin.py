@@ -3,12 +3,15 @@ import zipfile
 import csv
 import streamlit as st
 from google.api_core.exceptions import GoogleAPIError
-from utilities import page_layout, check_authentication_status, FirestoreWrapper
+from utilities import page_layout, check_authentication_status, FirestoreWrapper, is_admin
 from text_content import FeedbackExport, Admin
 
 check_authentication_status()
 
-if not st.session_state.get('admin', False):
+# Admin-only page (#83): user/book deletion, data export/download and other
+# privileged management actions live here. Role is set on the user document
+# directly for now (no in-app role-management UI yet — see #47/#69).
+if not is_admin():
     st.error(Admin.not_admin)
     st.stop()
 
