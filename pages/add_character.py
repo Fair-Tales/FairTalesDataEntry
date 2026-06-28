@@ -1,6 +1,6 @@
 import streamlit as st
 from utilities import author_entry_to_name, page_layout, check_authentication_status, navigate_to
-from text_content import CharacterForm
+from text_content import CharacterForm, AddCharacterPage
 
 check_authentication_status()
 
@@ -15,39 +15,34 @@ def new_character():
     }
 
     with st.form("new_book"):
-        st.header("Please enter the details of the new character.")
+        st.header(AddCharacterPage.header)
 
         metadata = {
             key: None for key in ['name', 'alias', 'gender', 'ethnicity', 'disability', 'is_plural', 'is_human']
         }
-        metadata['name'] = st.text_input("Full name (as most commonly used)")
-        metadata['alias'] = st.text_input("Enter their alias")
+        metadata['name'] = st.text_input(AddCharacterPage.name_label)
+        metadata['alias'] = st.text_input(AddCharacterPage.alias_label)
         metadata['gender'] = st.selectbox(
-            "Gender",
-            options=[
-                'Female',
-                'Male',
-                'Non-binary/Genderqueer/Gender non-conforming',
-                'Not specified'
-            ]
+            AddCharacterPage.gender_label,
+            options=AddCharacterPage.gender_options
         )
         metadata['ethnicity'] = st.selectbox(
-            "Ethnicity",
+            AddCharacterPage.ethnicity_label,
             options=CharacterForm.ethnicity_options,
             help=CharacterForm.ethnicity_help
         )
         metadata['disability'] = st.selectbox(
-            "Disability",
+            AddCharacterPage.disability_label,
             options=CharacterForm.disability_options,
             help=CharacterForm.disability_help
         )
-        metadata['is_plural'] = st.checkbox("Is this a group or collection of characters? (e.g. 'the cavemen')")
-        metadata['is_human'] = st.checkbox("Is this character human?", value=True)
+        metadata['is_plural'] = st.checkbox(AddCharacterPage.plural_label)
+        metadata['is_human'] = st.checkbox(AddCharacterPage.human_label, value=True)
 
-        submitted = st.form_submit_button("Submit")
+        submitted = st.form_submit_button(AddCharacterPage.submit_button)
         if submitted:
             if not metadata['name'].strip():
-                st.warning("Character name is required.")
+                st.warning(AddCharacterPage.name_required)
                 return
             st.session_state['character_details'] = metadata
             st.session_state['active_form_to_confirm'] = 'new_character'
@@ -58,7 +53,7 @@ page_layout(current_page="./pages/add_character.py")
 
 new_character()
 
-cancel_button = st.button("Cancel adding new character.")
+cancel_button = st.button(AddCharacterPage.cancel_button)
 
 if cancel_button:
     st.switch_page("./pages/user_home.py")

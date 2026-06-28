@@ -55,14 +55,14 @@ class Alias(DataStructureBase):
                 character_index = character_options.index(_character_name)
 
         selected_character = st.selectbox(
-            "Select character",
+            AliasForm.select_character_label,
             options=character_options,
             index=character_index
         )
 
-        self.name = st.text_input("Alias", value=self.name)
+        self.name = st.text_input(AliasForm.alias_label, value=self.name)
 
-        submitted = st.form_submit_button("Save alias")
+        submitted = st.form_submit_button(AliasForm.save_button)
 
         if submitted:
             # Resolve the selected name to its reference via the book-scoped

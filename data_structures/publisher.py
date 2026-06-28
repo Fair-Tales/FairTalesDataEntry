@@ -41,14 +41,14 @@ class Publisher(DataStructureBase):
 
         st.header(PublisherForm.header)
 
-        self.name = st.text_input("Name", value=self.name).strip()
+        self.name = st.text_input(PublisherForm.name_label, value=self.name).strip()
 
         year_given = int(st.selectbox(
-            "Which year was the publisher founded?",
+            PublisherForm.founding_year_label,
             options = (x for x in ([-1, -2]+[y for y in range(1900, (date.today().year + 1))])),
             index=0,
-            placeholder="Select year of founding",
-            format_func = lambda x: "I don't know" if x == -1 else ("Earlier year" if x == -2 else str(x))
+            placeholder=PublisherForm.founding_year_placeholder,
+            format_func = lambda x: PublisherForm.founding_year_unknown if x == -1 else (PublisherForm.founding_year_earlier if x == -2 else str(x))
         ))
 
         if year_given > 0:
@@ -56,11 +56,11 @@ class Publisher(DataStructureBase):
         else:
             self.founding_year = None
 
-        submitted = st.form_submit_button("Submit")
+        submitted = st.form_submit_button(PublisherForm.submit_button)
 
         if submitted:
             if not self.name.strip():
-                st.warning("Publisher name is required.")
+                st.warning(PublisherForm.name_required)
                 return
             if st.session_state.firestore.document_exists(
                 collection='publishers',

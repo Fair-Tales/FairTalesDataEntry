@@ -49,13 +49,13 @@ class Character(DataStructureBase):
     def to_form(self):
 
         st.header(CharacterForm.header)
-        self.name = st.text_input("Name", value=self.name)
+        self.name = st.text_input(CharacterForm.name_label, value=self.name)
 
         gender_index = 0
         if self.gender in CharacterForm.gender_options:
             gender_index = CharacterForm.gender_options.index(self.gender)
         self.gender = st.selectbox(
-            "Gender",
+            CharacterForm.gender_label,
             options=CharacterForm.gender_options,
             index=gender_index,
             help=CharacterForm.gender_help
@@ -65,7 +65,7 @@ class Character(DataStructureBase):
         if self.ethnicity in CharacterForm.ethnicity_options:
             ethnicity_index = CharacterForm.ethnicity_options.index(self.ethnicity)
         self.ethnicity = st.selectbox(
-            "Ethnicity",
+            CharacterForm.ethnicity_label,
             options=CharacterForm.ethnicity_options,
             index=ethnicity_index,
             help=CharacterForm.ethnicity_help
@@ -75,29 +75,29 @@ class Character(DataStructureBase):
         if self.disability in CharacterForm.disability_options:
             disability_index = CharacterForm.disability_options.index(self.disability)
         self.disability = st.selectbox(
-            "Disability",
+            CharacterForm.disability_label,
             options=CharacterForm.disability_options,
             index=disability_index,
             help=CharacterForm.disability_help
         )
 
         self.protagonist = st.checkbox(
-            "Is protagonist?",
+            CharacterForm.protagonist_label,
             value=self.protagonist,
             help=CharacterForm.protagonist_help
         )
         self.human = st.checkbox(
-            "Is human?",
+            CharacterForm.human_label,
             value=self.human,
             help=CharacterForm.human_help
         )
         self.plural = st.checkbox(
-            "Is plural?",
+            CharacterForm.plural_label,
             value=self.plural,
             help=CharacterForm.plural_help
         )
 
-        submitted = st.form_submit_button("Save character")
+        submitted = st.form_submit_button(CharacterForm.save_button)
 
         if submitted:
             if st.session_state.firestore.document_exists(
