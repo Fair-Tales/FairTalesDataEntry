@@ -3,8 +3,8 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from utilities import (
     page_layout, clear_page_history, authenticate_user, is_authenticated,
-    get_admin, get_user, send_confirmation_email, send_password_reset_email,
-    FirestoreWrapper,
+    get_role, get_user, send_confirmation_email, send_password_reset_email,
+    FirestoreWrapper, ROLE_ARCHIVIST, ROLE_ADMIN,
 )
 from text_content import Terms, Alerts, PasswordReset, Login
 from streamlit_option_menu import option_menu
@@ -19,8 +19,12 @@ def confirm(username, password):
         st.session_state['authentication_status'] = True
         st.session_state['username'] = username
         st.session_state.pop('unconfirmed_username', None)
-        if get_admin(username):
-            st.session_state['admin'] = True
+        # Resolve the three-tier role (#83) and store it on the session. Keep the
+        # legacy 'admin' flag in sync so existing admin-gated pages and the
+        # sidebar Admin link keep working unchanged.
+        role = get_role(username)
+        st.session_state['role'] = role
+        st.session_state['admin'] = (role == ROLE_ADMIN)
         st.switch_page("./pages/landing.py")
     elif result == "not_confirmed":
         # Password was correct but account not yet confirmed.  Store the
@@ -79,6 +83,7 @@ def _request_password_reset(email):
 def logout():
     st.session_state['authentication_status'] = False
     st.session_state['username'] = ""
+    st.session_state['role'] = ROLE_ARCHIVIST
     st.session_state['admin'] = False
     clear_page_history()
     st.rerun()
