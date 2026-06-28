@@ -85,6 +85,23 @@ def initialise():
     st.session_state['book_dict'] = dict(load_book_dict())
     st.session_state['character_dict'] = dict(load_character_dict())
 
+def ensure_session():
+    """Idempotently initialise the per-session Firestore client and lookup dicts.
+
+    Runs the full ``initialise()`` at most once per session, keyed on the
+    presence of ``st.session_state['firestore']``. This is the safe entry point
+    to call *before* any page body executes — both from ``Home.py`` ahead of
+    ``navigate_pages()`` and from the public logged-out deep-link pages — so a
+    hard refresh of a deep page (e.g. ``/enter_text``) always finds ``firestore``
+    and the lookup dicts already populated before the page runs (#107).
+
+    Crucially it does NOT set the ``initialised`` flag and does NOT redirect to
+    login, so calling it never disturbs the first-load ``/`` -> login routing nor
+    the public deep-link flows (confirm / reset_password / qr_landing).
+    """
+    if 'firestore' not in st.session_state:
+        initialise()
+
 def navigate_pages():
     
     pages = {
@@ -128,9 +145,17 @@ def navigate_pages():
 
 if __name__ == "__main__":
 
+    # Guarantee firestore + lookup dicts exist BEFORE the current page runs, so a
+    # hard refresh of a deep page does not hit 'firestore' missing (#107). This is
+    # idempotent and has no redirect side-effect.
+    ensure_session()
+
     navigate_pages()
+
+    # First-load routing to login. 'initialised' (distinct from 'firestore' above)
+    # still governs this redirect; the public deep-link pages set it themselves to
+    # opt out, so reordering the init above does not change their behaviour.
     if 'initialised' not in st.session_state:
         st.session_state['initialised'] = True
         st.session_state['admin'] = False
-        initialise()
         st.switch_page("./pages/login.py")
