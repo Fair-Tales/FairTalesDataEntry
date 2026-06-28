@@ -47,8 +47,8 @@ class Author(DataStructureBase):
 
         st.header(AuthorForm.header)
 
-        self.forename = st.text_input("First name", value=self.forename).strip()
-        self.surname = st.text_input("Surname", value=self.surname).strip()
+        self.forename = st.text_input(AuthorForm.forename_label, value=self.forename).strip()
+        self.surname = st.text_input(AuthorForm.surname_label, value=self.surname).strip()
 
         # Apply any suggestion stored by a previous "Look up" click
         _suggestion = st.session_state.pop('_author_lookup_suggestion', None)
@@ -65,11 +65,11 @@ class Author(DataStructureBase):
             year_index = 0
 
         year_given = st.selectbox(
-            "What is the author's birth year?",
+            AuthorForm.birth_year_label,
             options=year_options,
             index=year_index,
-            placeholder="Select year of birth",
-            format_func=lambda x: "I don't know" if x == -1 else ("Earlier year" if x == -2 else str(x))
+            placeholder=AuthorForm.birth_year_placeholder,
+            format_func=lambda x: AuthorForm.birth_year_unknown if x == -1 else (AuthorForm.birth_year_earlier if x == -2 else str(x))
         )
 
         if year_given > 0:
@@ -82,15 +82,15 @@ class Author(DataStructureBase):
         if self.gender in AuthorForm.gender_options:
             gender_index = AuthorForm.gender_options.index(self.gender)
         self.gender = st.selectbox(
-            "Gender",
+            AuthorForm.gender_label,
             options=AuthorForm.gender_options,
             index=gender_index
         )
 
-        submitted = st.form_submit_button("Submit")
+        submitted = st.form_submit_button(AuthorForm.submit_button)
         ai_available = 'ANTHROPIC_API_KEY' in st.secrets
         lookup_clicked = st.form_submit_button(
-            "Look up birth year and gender",
+            AuthorForm.lookup_button,
             disabled=not ai_available,
             help=AuthorForm.lookup_help
         )
@@ -105,7 +105,7 @@ class Author(DataStructureBase):
 
         if submitted:
             if not self.forename.strip() or not self.surname.strip():
-                st.warning("Author first name and surname are required.")
+                st.warning(AuthorForm.name_required)
                 return
             if st.session_state.firestore.document_exists(
                 collection='authors',

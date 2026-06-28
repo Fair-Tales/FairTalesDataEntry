@@ -1,7 +1,7 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
 from st_keyup import st_keyup
-from text_content import Alerts, Instructions, old_books, BookPhotoEntry
+from text_content import Alerts, Instructions, old_books, BookPhotoEntry, UserHome
 from utilities import check_authentication_status, page_layout, navigate_to, clear_page_history
 from data_structures import Book
 import pandas as pd
@@ -11,9 +11,9 @@ check_authentication_status()
 # TODO: migrate to a proper search service like Algolia?
 def book_search():
     book_search_string = st.text_input(
-        "Search by book title — enter a full or partial title and press Enter to find close matches.",
+        UserHome.book_search_label,
         value="",
-        help="You can enter either all or part of the title."
+        help=UserHome.book_search_help
     )
     if len(book_search_string) > 0:
         search_term = book_search_string.lower()
@@ -26,7 +26,7 @@ def book_search():
         if len(matching_titles) == 0:
             st.warning(Alerts.no_matching_book)
         else:
-            st.write(f"Results ({len(matching_titles)} found):")
+            st.write(UserHome.results_found.format(count=len(matching_titles)))
             for title in matching_titles:
                 book_ref = st.session_state['book_dict'][title]
                 book_data = book_ref.get().to_dict()
@@ -37,20 +37,20 @@ def book_search():
                     author_name = ' '.join([
                         author_data.get('forename', ''),
                         author_data.get('surname', '')
-                    ]).strip() or "Unknown"
+                    ]).strip() or UserHome.unknown
                 else:
-                    author_name = "Unknown"
+                    author_name = UserHome.unknown
 
                 published = book_data.get('published', '')
                 year_str = f" ({published})" if published else ""
 
-                with st.expander(f"{title}{year_str}  —  {author_name}"):
+                with st.expander(UserHome.book_expander.format(title=title, year_str=year_str, author=author_name)):
                     publisher_ref = book_data.get('publisher')
                     if publisher_ref:
                         publisher_data = publisher_ref.get().to_dict()
-                        publisher_name = publisher_data.get('name', 'Unknown')
+                        publisher_name = publisher_data.get('name', UserHome.unknown)
                     else:
-                        publisher_name = "Unknown"
+                        publisher_name = UserHome.unknown
 
                     illustrator_ref = book_data.get('illustrator')
                     if illustrator_ref:
@@ -58,12 +58,12 @@ def book_search():
                         illustrator_name = ' '.join([
                             illustrator_data.get('forename', ''),
                             illustrator_data.get('surname', '')
-                        ]).strip() or "Unknown"
+                        ]).strip() or UserHome.unknown
                     else:
-                        illustrator_name = "Unknown"
+                        illustrator_name = UserHome.unknown
 
-                    st.write(f"**Publisher:** {publisher_name}")
-                    st.write(f"**Illustrator:** {illustrator_name}")
+                    st.write(UserHome.publisher_label.format(name=publisher_name))
+                    st.write(UserHome.illustrator_label.format(name=illustrator_name))
 
 def author_search():
     # Live-filter as the user types (issue #72). st_keyup reruns on each keystroke;
@@ -85,27 +85,27 @@ def author_search():
         if len(matching_names) == 0:
             st.warning(Alerts.no_matching_author)
         else:
-            st.write(f"Results ({len(matching_names)} found):")
+            st.write(UserHome.results_found.format(count=len(matching_names)))
             for full_name in matching_names:
                 author_ref = st.session_state['author_dict'][full_name]
                 author_data = author_ref.get().to_dict()
 
                 birth_year = author_data.get('birth_year')
-                birth_year_str = str(birth_year) if birth_year and birth_year > 0 else "Unknown"
-                gender = author_data.get('gender') or "Not recorded"
+                birth_year_str = str(birth_year) if birth_year and birth_year > 0 else UserHome.unknown
+                gender = author_data.get('gender') or UserHome.not_recorded
 
-                with st.expander(f"{full_name}  —  b. {birth_year_str}  |  {gender}"):
+                with st.expander(UserHome.author_expander.format(name=full_name, birth_year=birth_year_str, gender=gender)):
                     books_df = st.session_state.firestore.get_by_field(
                         collection='books',
                         field='author',
                         match=author_ref
                     )
                     if books_df.empty:
-                        st.write("No books found for this author.")
+                        st.write(UserHome.no_books_for_author)
                     else:
-                        st.write("**Books:**")
+                        st.write(UserHome.books_label)
                         for _, book_row in books_df.iterrows():
-                            title = book_row.get('title', 'Unknown title')
+                            title = book_row.get('title', UserHome.unknown_title)
                             published = book_row.get('published', '')
                             year_str = f" ({published})" if published else ""
                             st.write(f"- {title}{year_str}")
@@ -139,14 +139,14 @@ def review_my_books():
 clear_page_history()
 page_layout(current_page="./pages/user_home.py")
 
-st.title("Fair Tales Data Entry Tool")
+st.title(Instructions.app_title)
 
 st.write(Instructions.home_intro)
 st.write(Instructions.advise_to_search)
 
 selected_option = option_menu(
     None,
-    ["Search Books", "Search Authors", "Add a Book", BookPhotoEntry.menu_label, "Edit my Books"],
+    [UserHome.menu_search_books, UserHome.menu_search_authors, UserHome.menu_add_book, BookPhotoEntry.menu_label, UserHome.menu_edit_books],
     default_index=0,
     icons=['search', 'search', 'database-add', 'camera', 'pencil-square'],
     menu_icon="cast", orientation="horizontal",
@@ -162,11 +162,11 @@ selected_option = option_menu(
 )
 
 navigation_dict = {
-    "Search Books": book_search,
-    "Search Authors": author_search,
-    "Add a Book": add_book,
+    UserHome.menu_search_books: book_search,
+    UserHome.menu_search_authors: author_search,
+    UserHome.menu_add_book: add_book,
     BookPhotoEntry.menu_label: add_book_from_photos,
-    "Edit my Books": review_my_books
+    UserHome.menu_edit_books: review_my_books
 }
 
 navigation_dict[selected_option]()

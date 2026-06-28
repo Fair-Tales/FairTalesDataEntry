@@ -6,7 +6,7 @@ from utilities import (
     get_admin, get_user, send_confirmation_email, send_password_reset_email,
     FirestoreWrapper,
 )
-from text_content import Terms, Alerts, PasswordReset
+from text_content import Terms, Alerts, PasswordReset, Login
 from streamlit_option_menu import option_menu
 
 # Validity window for an emailed password-reset link.
@@ -88,23 +88,23 @@ page_layout()
 
 if is_authenticated():
     username = st.session_state['username']
-    st.title("Sign Out")
-    st.text(f"Currently signed in as {username}")
-    st.text("Would you like to sign out?")
-    confirmed = st.button("Sign Out")
+    st.title(Login.sign_out_title)
+    st.text(Login.signed_in_as.format(username=username))
+    st.text(Login.sign_out_prompt)
+    confirmed = st.button(Login.sign_out_button)
     if confirmed:
         logout()
 
 else:
-    st.title("Sign In")
-    selected = option_menu("", options = ["Login", 'Register'], orientation="horizontal")
+    st.title(Login.sign_in_title)
+    selected = option_menu("", options = [Login.menu_login, Login.menu_register], orientation="horizontal")
 
-    if selected == "Login":
-        st.header("Login")
+    if selected == Login.menu_login:
+        st.header(Login.login_header)
         with st.form('LoginForm'):
-            username = st.text_input("Email", value="", key='login_email').lower()
-            password = st.text_input("Password", type="password", value="", key='login_password')
-            confirmed = st.form_submit_button(label="Confirm")
+            username = st.text_input(Login.email_label, value="", key='login_email').lower()
+            password = st.text_input(Login.password_label, type="password", value="", key='login_password')
+            confirmed = st.form_submit_button(label=Login.confirm_button)
             if confirmed:
                 confirm(username, password)
 
@@ -112,10 +112,10 @@ else:
         # login attempt was a correct-password / unconfirmed-account case.
         if st.session_state.get('unconfirmed_username'):
             st.warning(Alerts.account_not_confirmed)
-            if st.button("Resend confirmation email"):
+            if st.button(Login.resend_button):
                 _resend_confirmation(st.session_state['unconfirmed_username'])
 
-        with st.expander("Forgot your password?"):
+        with st.expander(Login.forgot_password_expander):
             reset_email = st.text_input(
                 PasswordReset.request_email_label, key='reset_email'
             ).lower().strip()
@@ -129,11 +129,11 @@ else:
                     st.warning(PasswordReset.request_blank_email)
 
     else:
-        st.header("Register")
+        st.header(Login.register_header)
         st.markdown(
             Terms.archivist_user_terms
         )
-        accept_terms = st.checkbox("Accept")
+        accept_terms = st.checkbox(Login.accept_checkbox)
 
         if accept_terms:
             st.switch_page("./pages/register_user.py")

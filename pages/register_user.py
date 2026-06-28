@@ -5,7 +5,7 @@ import email.utils
 from utilities import (
     page_layout, hash_password, send_confirmation_email, FirestoreWrapper
 )
-from text_content import Alerts, GenderRegistration
+from text_content import Alerts, GenderRegistration, RegisterUser
 
 
 def register_user(_username, _name, _password, _gender, _birth_year, _newsletter_opt_in=False):
@@ -57,10 +57,10 @@ def is_valid_email(address):
 def validate_user_details(_username, _name, _password, _gender, _gender_custom, _user_birth_year):
 
     fields = {
-        "Email": _username,
-        "Name": _name,
-        "Password": _password,
-        "Birth year": _user_birth_year
+        RegisterUser.email_label: _username,
+        RegisterUser.name_label: _name,
+        RegisterUser.password_label: _password,
+        RegisterUser.birth_year_field: _user_birth_year
     }
 
     for field in fields.keys():
@@ -87,10 +87,10 @@ def validate_user_details(_username, _name, _password, _gender, _gender_custom, 
 page_layout()
 
 with st.form('registration_form'):
-    st.title("User Registration")
-    username = st.text_input("Email", value="", key='register_email').lower().strip()
-    name = st.text_input("Name", value="", key='name_of_user').strip()
-    password = st.text_input("Password", type="password", value="", key='register_password')
+    st.title(RegisterUser.title)
+    username = st.text_input(RegisterUser.email_label, value="", key='register_email').lower().strip()
+    name = st.text_input(RegisterUser.name_label, value="", key='name_of_user').strip()
+    password = st.text_input(RegisterUser.password_label, type="password", value="", key='register_password')
     gender = st.selectbox(
         GenderRegistration.question,
         GenderRegistration.options,
@@ -100,16 +100,15 @@ with st.form('registration_form'):
     gender_custom = st.text_input(label=GenderRegistration.manual_input_prompt, value="")
 
     user_birth_year = int(st.selectbox(
-        "What is your birth year?",
+        RegisterUser.birth_year_label,
         (x for x in range(1900, (date.today().year + 1))),
-        placeholder="Select year of birth",
+        placeholder=RegisterUser.birth_year_placeholder,
         ))
     newsletter_opt_in = st.checkbox(
-        "Keep me updated with research findings and project news from Fair Tales "
-        "(max. one email per month). You can opt out at any time.",
+        RegisterUser.newsletter_label,
         value=False
     )
-    registered = st.form_submit_button("Register")
+    registered = st.form_submit_button(RegisterUser.register_button)
 
     if registered:
         if validate_user_details(username, name, password, gender, gender_custom, user_birth_year):

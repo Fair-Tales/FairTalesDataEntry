@@ -47,8 +47,8 @@ class Illustrator(DataStructureBase):
 
         st.header(IllustratorForm.header)
 
-        self.forename = st.text_input("First name", value=self.forename).strip()
-        self.surname = st.text_input("Surname", value=self.surname).strip()
+        self.forename = st.text_input(IllustratorForm.forename_label, value=self.forename).strip()
+        self.surname = st.text_input(IllustratorForm.surname_label, value=self.surname).strip()
 
         # Apply any suggestion stored by a previous "Look up" click
         _suggestion = st.session_state.pop('_illustrator_lookup_suggestion', None)
@@ -65,11 +65,11 @@ class Illustrator(DataStructureBase):
             year_index = 0
 
         year_given = int(st.selectbox(
-            "What is the illustrator's birth year?",
+            IllustratorForm.birth_year_label,
             options=year_options,
             index=year_index,
-            placeholder="Select year of birth",
-            format_func=lambda x: "I don't know" if x == -1 else ("Earlier year" if x == -2 else str(x))
+            placeholder=IllustratorForm.birth_year_placeholder,
+            format_func=lambda x: IllustratorForm.birth_year_unknown if x == -1 else (IllustratorForm.birth_year_earlier if x == -2 else str(x))
         ))
 
         if year_given > 0:
@@ -82,15 +82,15 @@ class Illustrator(DataStructureBase):
         if self.gender in IllustratorForm.gender_options:
             gender_index = IllustratorForm.gender_options.index(self.gender)
         self.gender = st.selectbox(
-            "Gender",
+            IllustratorForm.gender_label,
             options=IllustratorForm.gender_options,
             index=gender_index
         )
 
-        submitted = st.form_submit_button("Submit")
+        submitted = st.form_submit_button(IllustratorForm.submit_button)
         ai_available = 'ANTHROPIC_API_KEY' in st.secrets
         lookup_clicked = st.form_submit_button(
-            "Look up birth year and gender",
+            IllustratorForm.lookup_button,
             disabled=not ai_available,
             help=IllustratorForm.lookup_help
         )
@@ -105,7 +105,7 @@ class Illustrator(DataStructureBase):
 
         if submitted:
             if not self.forename.strip() or not self.surname.strip():
-                st.warning("Illustrator first name and surname are required.")
+                st.warning(IllustratorForm.name_required)
                 return
             if st.session_state.firestore.document_exists(
                 collection='illustrators',

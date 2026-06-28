@@ -52,6 +52,21 @@ class BookForm:
         You can add a comment with any thoughts you have about this book.
     """
 
+    # --- to_form() widget labels (data_structures/book.py) ---
+    title_label = "Title"
+    published_label = "Date first published"
+    author_select_label = "Select from existing authors"
+    publisher_select_label = "Select from existing publishers"
+    illustrator_select_label = "Select from existing illustrators"
+    new_author_option = "None of these (create a new author now)."
+    new_publisher_option = "None of these (create a new publisher now)."
+    new_illustrator_option = "None of these (create a new illustrator now)."
+    themes_label = "Select themes"
+    comment_label = "Comment"
+    isbn_prefill_caption = "ℹ Metadata pre-filled from ISBN lookup — please verify."
+    submit_button = "Submit"
+    title_required = "Book title is required."
+
 
 class AuthorForm:
     header = "Please enter author details."
@@ -68,6 +83,19 @@ class AuthorForm:
         dropdown menu above, or enter a unique name for your new author.
     """
 
+    # --- to_form() widget labels (data_structures/author.py) ---
+    forename_label = "First name"
+    surname_label = "Surname"
+    birth_year_label = "What is the author's birth year?"
+    birth_year_placeholder = "Select year of birth"
+    birth_year_unknown = "I don't know"
+    birth_year_earlier = "Earlier year"
+    gender_label = "Gender"
+    submit_button = "Submit"
+    lookup_button = "Look up birth year and gender"
+    name_required = "Author first name and surname are required."
+    cancel_text = "Cancel entering new author."
+
 class IllustratorForm:
     header = "Please enter illustrator details."
     gender_options = ["Woman", "Man", "Non-binary", "Other", "Unknown"]
@@ -83,12 +111,35 @@ class IllustratorForm:
         dropdown menu above, or enter a unique name for your new illustrator.
     """
 
+    # --- to_form() widget labels (data_structures/illustrator.py) ---
+    forename_label = "First name"
+    surname_label = "Surname"
+    birth_year_label = "What is the illustrator's birth year?"
+    birth_year_placeholder = "Select year of birth"
+    birth_year_unknown = "I don't know"
+    birth_year_earlier = "Earlier year"
+    gender_label = "Gender"
+    submit_button = "Submit"
+    lookup_button = "Look up birth year and gender"
+    name_required = "Illustrator first name and surname are required."
+    cancel_text = "Cancel entering new illustrator."
+
 class PublisherForm:
     header = "Please enter publisher details."
     publisher_exists = """
         This publisher already exists in the database. Please either select them from the 
         dropdown menu above, or enter a unique name for your new publisher.
     """
+
+    # --- to_form() widget labels (data_structures/publisher.py) ---
+    name_label = "Name"
+    founding_year_label = "Which year was the publisher founded?"
+    founding_year_placeholder = "Select year of founding"
+    founding_year_unknown = "I don't know"
+    founding_year_earlier = "Earlier year"
+    submit_button = "Submit"
+    name_required = "Publisher name is required."
+    cancel_text = "Cancel entering new publisher."
 
 
 class BookPhotoEntry:
@@ -199,6 +250,56 @@ class EnterText:
         "They were not added — please re-run detection or add them manually."
     )
 
+    # --- Image view / manual correction dialog ---
+    image_edit_dialog_title = "Edit image"
+    rotation_header = "Rotation"
+    rotate_left_button = "↺ 90° left"
+    rotate_right_button = "↻ 90° right"
+    rotate_180_button = "180°"
+    fine_adjustment_label = "Fine adjustment (degrees)"
+    crop_header = "Crop margins (%)"
+    crop_left_label = "Left"
+    crop_right_label = "Right"
+    crop_top_label = "Top"
+    crop_bottom_label = "Bottom"
+    preview_caption = "Preview"
+    save_corrected_button = "💾 Save as corrected image"
+    discard_button = "✕ Discard"
+    show_original_toggle = "Show original photo"
+    showing_original_caption = "Showing original photo"
+    auto_corrected_caption = "✓ Auto-corrected"
+    auto_correction_unavailable_caption = "⚠ Auto-correction unavailable — showing original photo"
+    edit_image_button = "✏ Edit image"
+    enlarge_button = "🔍 Enlarge"
+
+    # --- Text entry / navigation controls ---
+    contains_story_label = "Does this page contain story text?"
+    add_character_button = "Add character"
+    add_alias_button = "Add alias"
+    detect_button = "Detect characters (AI)"
+    page_text_label = "Enter page text"
+    save_page_button = "Save page"
+    cancel_character_button = "Cancel adding character"
+    cancel_alias_button = "Cancel adding alias"
+    previous_page_button = "Previous page"
+    next_page_button = "Next page"
+    page_indicator = "Showing page %d of %d."
+    back_to_menu_button = "Back to menu"
+    finish_submit_button = "Finish and submit book"
+
+    # --- Detected-character review form ---
+    review_character_heading = "**Character {n}**"
+    review_name_label = "Name"
+    review_gender_label = "Gender"
+    review_human_label = "Is human?"
+    review_protagonist_label = "Is protagonist?"
+    review_plural_label = "Is plural?"
+    review_aliases_label = "Aliases (comma-separated)"
+    review_action_label = "Action"
+    back_to_text_button = "Back to text"
+    cancel_button = "Cancel"
+    run_detection_button = "Run detection"
+
 
 class CharacterForm:
 
@@ -260,6 +361,38 @@ class CharacterForm:
             Select if character is human (rather than non-human - animal, monster etc).
         """
 
+    # --- to_form() widget labels (data_structures/character.py) ---
+    name_label = "Name"
+    gender_label = "Gender"
+    ethnicity_label = "Ethnicity"
+    disability_label = "Disability"
+    protagonist_label = "Is protagonist?"
+    human_label = "Is human?"
+    plural_label = "Is plural?"
+    save_button = "Save character"
+
+
+class AddCharacterPage:
+    """Strings for the standalone add-character page (pages/add_character.py)."""
+
+    header = "Please enter the details of the new character."
+    name_label = "Full name (as most commonly used)"
+    alias_label = "Enter their alias"
+    gender_label = "Gender"
+    gender_options = [
+        'Female',
+        'Male',
+        'Non-binary/Genderqueer/Gender non-conforming',
+        'Not specified'
+    ]
+    ethnicity_label = "Ethnicity"
+    disability_label = "Disability"
+    plural_label = "Is this a group or collection of characters? (e.g. 'the cavemen')"
+    human_label = "Is this character human?"
+    submit_button = "Submit"
+    name_required = "Character name is required."
+    cancel_button = "Cancel adding new character."
+
 
 class ResultsDashboard:
 
@@ -311,6 +444,11 @@ class AliasForm:
         There are no characters in this book yet. Please add a character first,
         then you can record their aliases.
     """
+
+    # --- to_form() widget labels (data_structures/alias.py) ---
+    select_character_label = "Select character"
+    alias_label = "Alias"
+    save_button = "Save alias"
 
 
 class ManageCharacters:
@@ -442,3 +580,179 @@ class FeedbackExport:
     file_name = "fairtales_feedback.csv"
     empty_message = "No feedback has been submitted yet."
     error_message = "Could not load the feedback collection: {error}"
+
+
+class Login:
+    """Strings for the sign-in / sign-out / register page (pages/login.py)."""
+
+    # --- Signed-in (sign out) view ---
+    sign_out_title = "Sign Out"
+    signed_in_as = "Currently signed in as {username}"
+    sign_out_prompt = "Would you like to sign out?"
+    sign_out_button = "Sign Out"
+
+    # --- Signed-out view ---
+    sign_in_title = "Sign In"
+    menu_login = "Login"
+    menu_register = "Register"
+    login_header = "Login"
+    email_label = "Email"
+    password_label = "Password"
+    confirm_button = "Confirm"
+    resend_button = "Resend confirmation email"
+    forgot_password_expander = "Forgot your password?"
+    register_header = "Register"
+    accept_checkbox = "Accept"
+
+
+class BookEditHome:
+    """Strings for the book edit/home page (pages/book_edit_home.py)."""
+
+    # %s placeholders / format fields filled at render time.
+    editing_book_title = "Editing book: {title}"
+    no_api_key = "AI theme suggestion requires an Anthropic API key."
+    no_story_text = "No story text found. Please enter text for the book pages first."
+    analysing_spinner = "Analysing book text for themes..."
+    detection_failed = "Theme detection failed: {error}"
+    themes_suggested = "Themes suggested: {themes}. Reasoning: {reasoning}"
+    no_new_themes = "No new themes to add. Reasoning: {reasoning}"
+
+    # option_menu items (also used as the navigation dispatch keys)
+    menu_instructions = "Instructions"
+    menu_edit_metadata = "Edit metadata"
+    menu_upload_photos = "Upload photos"
+    menu_enter_text = "Enter text"
+
+    suggest_themes_button = "🏷 Suggest themes"
+    back_to_home_button = "Back to home menu."
+    finish_submit_button = "Finish and submit book"
+
+
+class Admin:
+    """Strings for the admin page (pages/admin.py)."""
+
+    not_admin = "This page is only accessible to admin users."
+    title = "Admin"
+    validation_link_label = "→ Go to data validation"
+
+    user_data_header = "User data"
+    user_data_description = "Download all available fields for confirmed users (excluding sensitive fields such as password and confirmation token) for analysis."
+    prepare_user_download_button = "Prepare user data download"
+    download_user_button = "⬇ Download user list (CSV)"
+    user_file_name = "fairtales_users.csv"
+
+    book_export_header = "Book database export"
+    book_export_description = "Download a ZIP of CSV files — one per collection — for research use. May take a moment for large datasets."
+    prepare_book_download_button = "Prepare book data download"
+    download_book_button = "⬇ Download book database (ZIP of CSVs)"
+    book_file_name = "fairtales_book_data.zip"
+
+
+class RegisterUser:
+    """Strings for the registration form (pages/register_user.py and
+    pages/register_user_done.py)."""
+
+    title = "User Registration"
+    email_label = "Email"
+    name_label = "Name"
+    password_label = "Password"
+    birth_year_label = "What is your birth year?"
+    birth_year_placeholder = "Select year of birth"
+    # Validation field name shown in the "{field} cannot be empty" warning.
+    birth_year_field = "Birth year"
+    newsletter_label = (
+        "Keep me updated with research findings and project news from Fair Tales "
+        "(max. one email per month). You can opt out at any time."
+    )
+    register_button = "Register"
+
+
+class PhotoUpload:
+    """Strings for the photo-upload page (pages/page_photo_upload.py)."""
+
+    enter_book_data_title = "Enter book data: {title}"
+    link_line = "Or you can use the following link: [%s](%s)"
+    finished_instruction = "When you have finished, you can continue below to enter the text for this book, or return to the menu."
+    continue_button = "Continue"
+    back_to_menu_button = "Back to menu"
+    continue_to_text_button = "Continue to enter text"
+    replace_button = "Replace / re-upload photos"
+
+
+class ReviewBooks:
+    """Strings for the review-my-books page (pages/review_my_books.py)."""
+
+    header = "Review my books"
+    select_label = "My entered books:"
+    edit_button = "Edit this book."
+    cancel_button = "Cancel editing books."
+
+
+class Confirm:
+    """Strings for the email-confirmation page (pages/confirm.py)."""
+
+    already_confirmed = "User account already confirmed. Please proceed to login by selecting `Home` in navigation menu."
+    success = "User registration successful! You can now proceed to login by selecting `Home` from the navigation menu."
+    invalid_link = "Invalid or expired confirmation link. Please request a new confirmation email."
+    failed = "Registration failed. Please try again."
+
+
+class UserHome:
+    """Strings for the user home / search page (pages/user_home.py)."""
+
+    book_search_label = "Search by book title — enter a full or partial title and press Enter to find close matches."
+    book_search_help = "You can enter either all or part of the title."
+    results_found = "Results ({count} found):"
+    unknown = "Unknown"
+    not_recorded = "Not recorded"
+    unknown_title = "Unknown title"
+    publisher_label = "**Publisher:** {name}"
+    illustrator_label = "**Illustrator:** {name}"
+    book_expander = "{title}{year_str}  —  {author}"
+    author_expander = "{name}  —  b. {birth_year}  |  {gender}"
+    no_books_for_author = "No books found for this author."
+    books_label = "**Books:**"
+
+    # option_menu items (also used as the navigation dispatch keys)
+    menu_search_books = "Search Books"
+    menu_search_authors = "Search Authors"
+    menu_add_book = "Add a Book"
+    menu_edit_books = "Edit my Books"
+
+
+class Uploader:
+    """Strings for the shared upload widget (pages/uploader.py)."""
+
+    select_photos_label = "Select page photos to upload"
+    saving_photo = "Saving photo {current} of {total}..."
+    photos_saved = "Photos saved."
+    processing_page = "Processing page {page} of {total} (correcting image, extracting text)..."
+    page_corrected = "✓ Page {page} of {total} — auto-corrected ({method})"
+    page_correction_unavailable = "⚠ Page {page} of {total} — correction unavailable, using original"
+    processing_complete = "Processing complete."
+    isbn_metadata_found = "Found book metadata via ISBN {isbn}: {title}"
+    upload_complete = "Page photo upload complete, you may continue."
+    continue_button = "Continue"
+
+
+class BookDataEntry:
+    """Strings for the legacy book-data-entry page (pages/book_data_entry.py)."""
+
+    # option_menu items (also used as the navigation dispatch keys)
+    menu_upload_photos = "Upload page photos"
+    menu_enter_text = "Enter text"
+    menu_add_character = "Add a Character"
+    save_button = "Save"
+    not_implemented = "Not implemented yet!"
+
+
+class QrLanding:
+    """Strings for the QR deep-link upload page (pages/qr_landing.py)."""
+
+    title = "Photo uploader."
+
+
+class Validation:
+    """Strings for the data-validation page (pages/validation.py)."""
+
+    intro = "Here you may validate inputted data"

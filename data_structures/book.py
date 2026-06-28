@@ -67,7 +67,7 @@ def form_content(self):
         isbn_used = True
     else:
         _title_default = self.title
-    _title = st.text_input("Title", value=_title_default).strip()
+    _title = st.text_input(BookForm.title_label, value=_title_default).strip()
 
     isbn_year = _isbn_year(isbn_meta.get('published_date', ''))
     if self.published != -1:
@@ -78,13 +78,13 @@ def form_content(self):
     else:
         published_index = 112
     _published = int(st.selectbox(
-    "Date first published",
+    BookForm.published_label,
     (x for x in range(1900, (date.today().year + 1))),
     index = published_index
     ))
     st.write(Instructions.author_publisher_illustrator_select)
 
-    author_options = ["None of these (create a new author now)."] + list(
+    author_options = [BookForm.new_author_option] + list(
         st.session_state['author_dict'].keys()
     )
     author_index = 0
@@ -94,7 +94,7 @@ def form_content(self):
             author_index = author_options.index(_author_name)
 
     _author = st.selectbox(
-        "Select from existing authors",
+        BookForm.author_select_label,
         options=author_options,
         index=author_index,
         help=BookForm.author_help
@@ -114,11 +114,11 @@ def form_content(self):
         isbn_used = True
 
     _publisher = st.selectbox(
-        "Select from existing publishers",
+        BookForm.publisher_select_label,
         options=publisher_options,
         index=publisher_index,
         help=BookForm.publisher_help,
-        format_func = lambda x: "None of these (create a new publisher now)." if x == None else x
+        format_func = lambda x: BookForm.new_publisher_option if x == None else x
     )
 
     illustrator_options = [None] + list(
@@ -132,11 +132,11 @@ def form_content(self):
             illustrator_index = illustrator_options.index(_illustrator_name)
 
     _illustrator = st.selectbox(
-        "Select from existing illustrators",
+        BookForm.illustrator_select_label,
         options=illustrator_options,
         index=illustrator_index,
         help=BookForm.illustrator_help,
-        format_func = lambda x: "None of these (create a new illustrator now)." if x == None else x
+        format_func = lambda x: BookForm.new_illustrator_option if x == None else x
     )
 
     values = [
@@ -145,22 +145,22 @@ def form_content(self):
         if getattr(self, theme)
     ]
     _themes = st.multiselect(
-        "Select themes",
+        BookForm.themes_label,
         options=BookForm.theme_options.values(), help=BookForm.themes_help,
         default=values
     )
 
-    _comment = st.text_input("Comment", value=self.comment, help=BookForm.comment_help)
+    _comment = st.text_input(BookForm.comment_label, value=self.comment, help=BookForm.comment_help)
 
     if isbn_used:
-        st.caption("ℹ Metadata pre-filled from ISBN lookup — please verify.")
+        st.caption(BookForm.isbn_prefill_caption)
 
-    submitted = st.form_submit_button("Submit")
+    submitted = st.form_submit_button(BookForm.submit_button)
 
     if submitted:
 
         if not _title.strip():
-            st.warning("Book title is required.")
+            st.warning(BookForm.title_required)
             return
 
         st.session_state['current_book'] = self

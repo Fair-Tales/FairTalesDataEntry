@@ -7,7 +7,7 @@ check_authentication_status()
 clear_page_history()
 page_layout(current_page="./pages/landing.py")
 
-st.title("Fair Tales Data Entry Tool")
+st.title(Instructions.app_title)
 st.write(Instructions.landing_intro)
 
 col1, col2 = st.columns(2)

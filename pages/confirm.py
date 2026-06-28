@@ -1,5 +1,6 @@
 import streamlit as st
 from utilities import FirestoreWrapper, page_layout
+from text_content import Confirm
 
 page_layout()
 
@@ -11,7 +12,7 @@ user_ref = db.collection("users").document(user)
 user_data = user_ref.get().to_dict()
 
 if user_data['is_confirmed']:
-    st.warning("User account already confirmed. Please proceed to login by selecting `Home` in navigation menu.")
+    st.warning(Confirm.already_confirmed)
 else:
     try:
         if token == user_data['confirmation_token']:
@@ -19,9 +20,9 @@ else:
                 'is_confirmed': True
             })
             st.success(
-                "User registration successful! You can now proceed to login by selecting `Home` from the navigation menu."
+                Confirm.success
             )
         else:
-            st.error("Invalid or expired confirmation link. Please request a new confirmation email.")
+            st.error(Confirm.invalid_link)
     except Exception:
-        st.error("Registration failed. Please try again.")
+        st.error(Confirm.failed)
