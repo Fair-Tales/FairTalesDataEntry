@@ -418,25 +418,34 @@ def commit_detected_characters(rows):
             row['_aliases'] = _parse_aliases(row['aliases'], row['name'].strip())
             create_rows[original_name] = row
 
-    # Fold merged rows into their target's alias list.
+    # Existing characters already defined for this book are also valid merge
+    # targets, resolved book-scoped (by reference) to avoid same-name collisions
+    # across books.
+    existing_chars = st.session_state['current_book'].get_character_dict()
+
+    # Fold merged rows into a to-be-created character's alias list, or queue them
+    # to be attached to an already-existing book character.
     unresolved = []
+    merge_into_existing = []  # list of (target_ref, target_name, [alias names])
     for row in rows:
         action = row['action']
         if action == EnterText.review_action_create or action == EnterText.review_action_skip:
             continue
         target_name = action[len(merge_prefix):].strip()
-        target = create_rows.get(target_name)
-        if target is None:
-            unresolved.append(row['name'].strip() or "(unnamed)")
-            continue
         extra = [row['name'].strip()] + _parse_aliases(row['aliases'], row['name'].strip())
-        for alias in extra:
-            if (
-                alias
-                and alias.lower() != target['name'].strip().lower()
-                and alias not in target['_aliases']
-            ):
-                target['_aliases'].append(alias)
+        target = create_rows.get(target_name)
+        if target is not None:
+            for alias in extra:
+                if (
+                    alias
+                    and alias.lower() != target['name'].strip().lower()
+                    and alias not in target['_aliases']
+                ):
+                    target['_aliases'].append(alias)
+        elif target_name in existing_chars:
+            merge_into_existing.append((existing_chars[target_name], target_name, extra))
+        else:
+            unresolved.append(row['name'].strip() or "(unnamed)")
 
     created_count = 0
     alias_count = 0
@@ -472,6 +481,22 @@ def commit_detected_characters(rows):
             alias.register()
             alias_count += 1
 
+    # Attach rows the user merged into an existing book character as new aliases
+    # on that character.
+    for target_ref, target_name, extra in merge_into_existing:
+        for alias_name in extra:
+            if not alias_name or alias_name.lower() == target_name.lower():
+                continue
+            alias = Alias(book=book_title)
+            alias.character = target_ref
+            alias.name = alias_name
+            if st.session_state.firestore.document_exists(
+                collection='aliases', doc_id=alias.document_id
+            ):
+                continue
+            alias.register()
+            alias_count += 1
+
     messages = [EnterText.review_created.format(characters=created_count, aliases=alias_count)]
     if skipped:
         messages.append(EnterText.review_skipped.format(names=", ".join(skipped)))
@@ -495,6 +520,13 @@ def character_review_form(element):
 
     element.write(EnterText.review_instruction)
     names = [s['name'] for s in suggestions]
+    # Characters already defined for this book are also valid merge targets, so a
+    # detected duplicate can be folded into an existing character — not only into
+    # another freshly-detected one.
+    existing_names = [
+        n for n in st.session_state['current_book'].get_character_dict()
+        if n not in names
+    ]
 
     with element.form('character_review'):
         rows = []
@@ -525,9 +557,10 @@ def character_review_form(element):
             )
 
             other_names = [n for j, n in enumerate(names) if j != i]
+            merge_target_names = other_names + existing_names
             action_options = (
                 [EnterText.review_action_create, EnterText.review_action_skip]
-                + [EnterText.review_action_merge.format(name=n) for n in other_names]
+                + [EnterText.review_action_merge.format(name=n) for n in merge_target_names]
             )
             action = st.selectbox(
                 "Action", options=action_options, index=0, key=f"rev_action_{i}"
