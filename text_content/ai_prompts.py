@@ -121,6 +121,38 @@ Respond with valid JSON only — no other text before or after:
 Character references by page:
 {mentions_json}"""
 
+    book_metadata_extraction = """\
+Analyse this photo of the TITLE PAGE (or front cover) of a children's picture book.
+
+Extract the book's bibliographic details exactly as printed on the page:
+- title: the book's title
+- authors: a list of the author name(s) — the person(s) who WROTE the book \
+(usually shown as "written by", "story by", or simply "by")
+- illustrators: a list of the illustrator name(s) — the person(s) who DREW the \
+pictures (usually shown as "illustrated by", "pictures by", or "art by"). If the \
+same person both wrote and illustrated the book, include their name in both lists.
+- publisher: the name of the publishing house, if visible
+- published_year: the 4-digit year of first publication, if visible (this is \
+often only printed on the copyright page — use null if it is not shown)
+
+Rules:
+- Transcribe names exactly as written. Do NOT invent, guess, or look up details \
+that are not visible in the image.
+- If a field is not present, use an empty list for authors/illustrators, or null \
+for title/publisher/published_year.
+
+Respond with valid JSON only — no other text before or after. Example of the \
+expected format:
+{
+  "title": "The Gruffalo",
+  "authors": ["Julia Donaldson"],
+  "illustrators": ["Axel Scheffler"],
+  "publisher": "Macmillan Children's Books",
+  "published_year": 1999
+}
+
+Now analyse the image and return JSON:"""
+
     page_extraction = """\
 Analyse this photo of a children's picture book page.
 

@@ -3,6 +3,8 @@ import streamlit as st
 from google.cloud.firestore_v1 import FieldFilter
 from google.oauth2 import service_account
 import pandas as pd
+import base64
+import difflib
 import json
 import re
 import urllib.request
@@ -380,6 +382,139 @@ def lookup_isbn(isbn):
         }
     except Exception:
         return None
+
+
+def extract_book_metadata(image_bytes, client):
+    """Extract bibliographic metadata from a title-page image using Claude vision.
+
+    Sends the image to Claude using the same model/integration as
+    ``extract_page_info`` and ``lookup_person_details`` and parses the JSON reply.
+    Returns a dict with keys:
+      - 'title'          (str)
+      - 'authors'        (list[str])
+      - 'illustrators'   (list[str])
+      - 'publisher'      (str or None)
+      - 'published_year' (int or None)
+      - 'raw'            (the raw model response text, kept for audit/debugging)
+
+    The raw response is always included whenever a reply is received, so the caller
+    can store it even when individual fields cannot be parsed. Anthropic API errors
+    are deliberately allowed to propagate so the caller can surface them to the user
+    (per ``book_edit_home.py``'s pattern); only response-parsing problems are handled
+    here, by returning empty fields alongside the raw text.
+    """
+    from text_content import AIPrompts
+
+    image_data = base64.standard_b64encode(image_bytes).decode('utf-8')
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1024,
+        messages=[{
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": image_data,
+                    },
+                },
+                {"type": "text", "text": AIPrompts.book_metadata_extraction},
+            ],
+        }],
+    )
+
+    try:
+        raw_text = response.content[0].text.strip()
+    except (IndexError, AttributeError):
+        raw_text = ""
+    empty = {
+        'title': "",
+        'authors': [],
+        'illustrators': [],
+        'publisher': None,
+        'published_year': None,
+        'raw': raw_text,
+    }
+
+    cleaned = raw_text
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("```")[1]
+        if cleaned.startswith("json"):
+            cleaned = cleaned[4:]
+    try:
+        result = json.loads(cleaned.strip())
+    except (json.JSONDecodeError, ValueError):
+        return empty
+
+    def _as_name_list(value):
+        if isinstance(value, str):
+            return [value.strip()] if value.strip() else []
+        if isinstance(value, list):
+            return [str(v).strip() for v in value if str(v).strip()]
+        return []
+
+    publisher = result.get('publisher')
+    if not (isinstance(publisher, str) and publisher.strip()):
+        publisher = None
+    else:
+        publisher = publisher.strip()
+
+    year = result.get('published_year')
+    try:
+        year = int(year) if year is not None else None
+    except (TypeError, ValueError):
+        year = None
+    if year is not None and not (1900 <= year <= datetime.now(timezone.utc).year):
+        year = None
+
+    return {
+        'title': (result.get('title') or "").strip(),
+        'authors': _as_name_list(result.get('authors')),
+        'illustrators': _as_name_list(result.get('illustrators')),
+        'publisher': publisher,
+        'published_year': year,
+        'raw': raw_text,
+    }
+
+
+def fuzzy_match_name(name, options, cutoff=0.8):
+    """Return the closest matching key in ``options`` for ``name``, or None.
+
+    Case-insensitive fuzzy match using the standard-library ``difflib``. ``cutoff``
+    is the minimum similarity ratio (0-1). Used to reconcile names extracted from a
+    title page against the existing author/illustrator/publisher session lookup
+    dicts before creating a new record.
+    """
+    if not name or not options:
+        return None
+    name_l = name.strip().lower()
+    lower_to_original = {}
+    for opt in options:
+        lower_to_original.setdefault(opt.lower(), opt)
+    matches = difflib.get_close_matches(
+        name_l, list(lower_to_original.keys()), n=1, cutoff=cutoff
+    )
+    if not matches:
+        return None
+    return lower_to_original[matches[0]]
+
+
+def split_name(full_name):
+    """Split a full name into ``(forename, surname)``.
+
+    The final whitespace-separated token is treated as the surname and the rest as
+    the forename(s). A single-token name is returned as the forename with an empty
+    surname. Used to seed the new-author/illustrator sub-forms from an extracted
+    name that did not fuzzy-match an existing record.
+    """
+    parts = (full_name or "").strip().split()
+    if not parts:
+        return "", ""
+    if len(parts) == 1:
+        return parts[0], ""
+    return " ".join(parts[:-1]), parts[-1]
 
 
 class FirestoreWrapper:

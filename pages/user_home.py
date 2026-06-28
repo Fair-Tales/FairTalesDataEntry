@@ -1,7 +1,7 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
 from st_keyup import st_keyup
-from text_content import Alerts, Instructions, old_books
+from text_content import Alerts, Instructions, old_books, BookPhotoEntry
 from utilities import check_authentication_status, page_layout, navigate_to, clear_page_history
 from data_structures import Book
 import pandas as pd
@@ -119,6 +119,20 @@ def add_book():
         st.session_state.pop(_key, None)
     navigate_to("./pages/add_book.py")
 
+def add_book_from_photos():
+    st.session_state['current_book'] = Book()
+    # Clear any leftover entity selections / flow flags / extraction state from a
+    # previous (cancelled) book entry so the photo-first flow starts blank.
+    for _key in (
+        'current_author', 'current_illustrator', 'current_publisher',
+        'adding_book_entries', 'extracted_author_name',
+        'extracted_illustrator_name', 'extracted_publisher_name',
+        'photo_first_pages', 'book_extraction', 'book_extraction_raw',
+        '_upload_pipeline_done',
+    ):
+        st.session_state.pop(_key, None)
+    navigate_to("./pages/add_book_photos.py")
+
 def review_my_books():
     navigate_to("./pages/review_my_books.py")
 
@@ -131,9 +145,10 @@ st.write(Instructions.home_intro)
 st.write(Instructions.advise_to_search)
 
 selected_option = option_menu(
-    None, ["Search Books", "Search Authors", "Add a Book", "Edit my Books"],
+    None,
+    ["Search Books", "Search Authors", "Add a Book", BookPhotoEntry.menu_label, "Edit my Books"],
     default_index=0,
-    icons=['search', 'search', 'database-add', 'pencil-square'],
+    icons=['search', 'search', 'database-add', 'camera', 'pencil-square'],
     menu_icon="cast", orientation="horizontal",
     key="user_option_menu",
     styles={
@@ -146,6 +161,7 @@ navigation_dict = {
     "Search Books": book_search,
     "Search Authors": author_search,
     "Add a Book": add_book,
+    BookPhotoEntry.menu_label: add_book_from_photos,
     "Edit my Books": review_my_books
 }
 

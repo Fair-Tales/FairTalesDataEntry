@@ -78,9 +78,12 @@ def show_upload_options():
     st.header(Instructions.photo_upload_header)
     st.write(Instructions.photo_upload_instructions)
 
+    # When photos were already captured via the photo-first flow (#59), default
+    # to "Upload here" — that path reuses the stashed photos rather than
+    # re-uploading them.
     selected_option = option_menu(
         None, ["Go to phone", "Upload here"],
-        default_index=0,
+        default_index=1 if st.session_state.get('photo_first_pages') else 0,
         icons=['phone', 'laptop'],
         menu_icon="cast", orientation="horizontal",
         key="upload_menu",

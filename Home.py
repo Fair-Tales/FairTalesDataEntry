@@ -101,6 +101,7 @@ def navigate_pages():
             st.Page("./pages/add_illustrator.py"),
             st.Page("./pages/add_publisher.py"),
             st.Page("./pages/add_book.py"),
+            st.Page("./pages/add_book_photos.py"),
             st.Page("./pages/add_character.py"),
             st.Page("./pages/book_data_entry.py"),
             st.Page("./pages/book_edit_home.py"),
