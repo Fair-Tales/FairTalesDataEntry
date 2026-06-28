@@ -77,7 +77,6 @@ def already_uploaded_options():
 def show_upload_options():
     st.header(Instructions.photo_upload_header)
     st.write(Instructions.photo_upload_instructions)
-    st.write(Instructions.photo_naming_instructions)
 
     selected_option = option_menu(
         None, ["Go to phone", "Upload here"],
