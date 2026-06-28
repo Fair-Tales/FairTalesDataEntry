@@ -1,5 +1,5 @@
 import streamlit as st
-from utilities import author_entry_to_name, navigate_to, split_name
+from utilities import author_entry_to_name, navigate_to, split_name, clear_entity_form_state
 from text_content import Instructions, BookForm
 from .base_structure import DataStructureBase, Field
 from .author import Author
@@ -15,6 +15,9 @@ def _new_person(person_cls, extracted_key):
     once. Returns the new, unregistered person object.
     """
     person = person_cls()
+    # Starting a fresh sub-entity: drop any persisted form-widget state so the
+    # new Author/Illustrator form re-seeds from value=/index= (see #80).
+    clear_entity_form_state(f"{person_cls.__name__.lower()}_form_")
     extracted = st.session_state.pop(extracted_key, None)
     if extracted:
         forename, surname = split_name(extracted)
@@ -38,6 +41,9 @@ def add_book_entries(self):
         else:
             st.session_state['current_illustrator'] = self.illustrator.get()
         if self.publisher is None:
+            # Starting a fresh Publisher: drop any persisted form-widget state so
+            # the new Publisher form re-seeds from value=/index= (see #80).
+            clear_entity_form_state("publisher_form_")
             new_publisher = Publisher()
             extracted_publisher = st.session_state.pop('extracted_publisher_name', None)
             if extracted_publisher:
@@ -59,6 +65,12 @@ def _isbn_year(published_date):
 def form_content(self):
     st.header(BookForm.header)
 
+    # Capture the entity id once, before any field is written back, so every
+    # widget key below stays constant for this render even as fields change on
+    # submit. Keying per document_id prevents one book's values bleeding into
+    # the next (see #80).
+    key_suffix = self.document_id
+
     isbn_meta = st.session_state.get('isbn_metadata', {})
     isbn_used = False
 
@@ -67,7 +79,9 @@ def form_content(self):
         isbn_used = True
     else:
         _title_default = self.title
-    _title = st.text_input(BookForm.title_label, value=_title_default).strip()
+    _title = st.text_input(
+        BookForm.title_label, value=_title_default, key=f"book_form_title_{key_suffix}"
+    ).strip()
 
     isbn_year = _isbn_year(isbn_meta.get('published_date', ''))
     if self.published != -1:
@@ -80,7 +94,8 @@ def form_content(self):
     _published = int(st.selectbox(
     BookForm.published_label,
     (x for x in range(1900, (date.today().year + 1))),
-    index = published_index
+    index = published_index,
+    key=f"book_form_published_{key_suffix}"
     ))
     st.write(Instructions.author_publisher_illustrator_select)
 
@@ -97,7 +112,8 @@ def form_content(self):
         BookForm.author_select_label,
         options=author_options,
         index=author_index,
-        help=BookForm.author_help
+        help=BookForm.author_help,
+        key=f"book_form_author_{key_suffix}"
     )
 
     publisher_options = [None] + list(
@@ -118,7 +134,8 @@ def form_content(self):
         options=publisher_options,
         index=publisher_index,
         help=BookForm.publisher_help,
-        format_func = lambda x: BookForm.new_publisher_option if x == None else x
+        format_func = lambda x: BookForm.new_publisher_option if x == None else x,
+        key=f"book_form_publisher_{key_suffix}"
     )
 
     illustrator_options = [None] + list(
@@ -136,7 +153,8 @@ def form_content(self):
         options=illustrator_options,
         index=illustrator_index,
         help=BookForm.illustrator_help,
-        format_func = lambda x: BookForm.new_illustrator_option if x == None else x
+        format_func = lambda x: BookForm.new_illustrator_option if x == None else x,
+        key=f"book_form_illustrator_{key_suffix}"
     )
 
     values = [
@@ -147,15 +165,19 @@ def form_content(self):
     _themes = st.multiselect(
         BookForm.themes_label,
         options=BookForm.theme_options.values(), help=BookForm.themes_help,
-        default=values
+        default=values,
+        key=f"book_form_themes_{key_suffix}"
     )
 
-    _comment = st.text_input(BookForm.comment_label, value=self.comment, help=BookForm.comment_help)
+    _comment = st.text_input(
+        BookForm.comment_label, value=self.comment, help=BookForm.comment_help,
+        key=f"book_form_comment_{key_suffix}"
+    )
 
     if isbn_used:
         st.caption(BookForm.isbn_prefill_caption)
 
-    submitted = st.form_submit_button(BookForm.submit_button)
+    submitted = st.form_submit_button(BookForm.submit_button, key=f"book_form_submit_{key_suffix}")
 
     if submitted:
 

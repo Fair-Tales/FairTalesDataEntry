@@ -91,7 +91,7 @@ if is_authenticated():
     st.title(Login.sign_out_title)
     st.text(Login.signed_in_as.format(username=username))
     st.text(Login.sign_out_prompt)
-    confirmed = st.button(Login.sign_out_button)
+    confirmed = st.button(Login.sign_out_button, key="login_sign_out_button")
     if confirmed:
         logout()
 
@@ -104,7 +104,7 @@ else:
         with st.form('LoginForm'):
             username = st.text_input(Login.email_label, value="", key='login_email').lower()
             password = st.text_input(Login.password_label, type="password", value="", key='login_password')
-            confirmed = st.form_submit_button(label=Login.confirm_button)
+            confirmed = st.form_submit_button(label=Login.confirm_button, key="login_submit_button")
             if confirmed:
                 confirm(username, password)
 
@@ -112,14 +112,14 @@ else:
         # login attempt was a correct-password / unconfirmed-account case.
         if st.session_state.get('unconfirmed_username'):
             st.warning(Alerts.account_not_confirmed)
-            if st.button(Login.resend_button):
+            if st.button(Login.resend_button, key="login_resend_button"):
                 _resend_confirmation(st.session_state['unconfirmed_username'])
 
         with st.expander(Login.forgot_password_expander):
             reset_email = st.text_input(
                 PasswordReset.request_email_label, key='reset_email'
             ).lower().strip()
-            if st.button(PasswordReset.request_button_text):
+            if st.button(PasswordReset.request_button_text, key="login_reset_request_button"):
                 if reset_email:
                     _request_password_reset(reset_email)
                     # Always show the same acknowledgement, whether or not an
@@ -133,7 +133,7 @@ else:
         st.markdown(
             Terms.archivist_user_terms
         )
-        accept_terms = st.checkbox(Login.accept_checkbox)
+        accept_terms = st.checkbox(Login.accept_checkbox, key="login_accept_terms_checkbox")
 
         if accept_terms:
             st.switch_page("./pages/register_user.py")

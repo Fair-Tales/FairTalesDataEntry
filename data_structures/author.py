@@ -47,8 +47,19 @@ class Author(DataStructureBase):
 
         st.header(AuthorForm.header)
 
-        self.forename = st.text_input(AuthorForm.forename_label, value=self.forename).strip()
-        self.surname = st.text_input(AuthorForm.surname_label, value=self.surname).strip()
+        # Capture the entity id once, before any field is written back, so every
+        # widget key below stays constant for this render. Keying per
+        # document_id stops one author's values bleeding into the next (#80).
+        key_suffix = self.document_id
+
+        self.forename = st.text_input(
+            AuthorForm.forename_label, value=self.forename,
+            key=f"author_form_forename_{key_suffix}"
+        ).strip()
+        self.surname = st.text_input(
+            AuthorForm.surname_label, value=self.surname,
+            key=f"author_form_surname_{key_suffix}"
+        ).strip()
 
         # Apply any suggestion stored by a previous "Look up" click
         _suggestion = st.session_state.pop('_author_lookup_suggestion', None)
@@ -69,7 +80,8 @@ class Author(DataStructureBase):
             options=year_options,
             index=year_index,
             placeholder=AuthorForm.birth_year_placeholder,
-            format_func=lambda x: AuthorForm.birth_year_unknown if x == -1 else (AuthorForm.birth_year_earlier if x == -2 else str(x))
+            format_func=lambda x: AuthorForm.birth_year_unknown if x == -1 else (AuthorForm.birth_year_earlier if x == -2 else str(x)),
+            key=f"author_form_birth_year_{key_suffix}"
         )
 
         if year_given > 0:
@@ -84,15 +96,19 @@ class Author(DataStructureBase):
         self.gender = st.selectbox(
             AuthorForm.gender_label,
             options=AuthorForm.gender_options,
-            index=gender_index
+            index=gender_index,
+            key=f"author_form_gender_{key_suffix}"
         )
 
-        submitted = st.form_submit_button(AuthorForm.submit_button)
+        submitted = st.form_submit_button(
+            AuthorForm.submit_button, key=f"author_form_submit_{key_suffix}"
+        )
         ai_available = 'ANTHROPIC_API_KEY' in st.secrets
         lookup_clicked = st.form_submit_button(
             AuthorForm.lookup_button,
             disabled=not ai_available,
-            help=AuthorForm.lookup_help
+            help=AuthorForm.lookup_help,
+            key=f"author_form_lookup_{key_suffix}"
         )
 
         if lookup_clicked:

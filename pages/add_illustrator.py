@@ -10,7 +10,7 @@ with st.form("new_illustrator"):
     st.session_state['current_illustrator'].to_form()
 
 
-cancel_button = st.button(IllustratorForm.cancel_text)
+cancel_button = st.button(IllustratorForm.cancel_text, key="add_illustrator_cancel_button")
 
 if cancel_button:
     st.session_state['adding_book_entries'] = False

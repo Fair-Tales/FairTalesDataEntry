@@ -47,8 +47,19 @@ class Illustrator(DataStructureBase):
 
         st.header(IllustratorForm.header)
 
-        self.forename = st.text_input(IllustratorForm.forename_label, value=self.forename).strip()
-        self.surname = st.text_input(IllustratorForm.surname_label, value=self.surname).strip()
+        # Capture the entity id once, before any field is written back, so every
+        # widget key below stays constant for this render. Keying per
+        # document_id stops one illustrator's values bleeding into the next (#80).
+        key_suffix = self.document_id
+
+        self.forename = st.text_input(
+            IllustratorForm.forename_label, value=self.forename,
+            key=f"illustrator_form_forename_{key_suffix}"
+        ).strip()
+        self.surname = st.text_input(
+            IllustratorForm.surname_label, value=self.surname,
+            key=f"illustrator_form_surname_{key_suffix}"
+        ).strip()
 
         # Apply any suggestion stored by a previous "Look up" click
         _suggestion = st.session_state.pop('_illustrator_lookup_suggestion', None)
@@ -69,7 +80,8 @@ class Illustrator(DataStructureBase):
             options=year_options,
             index=year_index,
             placeholder=IllustratorForm.birth_year_placeholder,
-            format_func=lambda x: IllustratorForm.birth_year_unknown if x == -1 else (IllustratorForm.birth_year_earlier if x == -2 else str(x))
+            format_func=lambda x: IllustratorForm.birth_year_unknown if x == -1 else (IllustratorForm.birth_year_earlier if x == -2 else str(x)),
+            key=f"illustrator_form_birth_year_{key_suffix}"
         ))
 
         if year_given > 0:
@@ -84,15 +96,19 @@ class Illustrator(DataStructureBase):
         self.gender = st.selectbox(
             IllustratorForm.gender_label,
             options=IllustratorForm.gender_options,
-            index=gender_index
+            index=gender_index,
+            key=f"illustrator_form_gender_{key_suffix}"
         )
 
-        submitted = st.form_submit_button(IllustratorForm.submit_button)
+        submitted = st.form_submit_button(
+            IllustratorForm.submit_button, key=f"illustrator_form_submit_{key_suffix}"
+        )
         ai_available = 'ANTHROPIC_API_KEY' in st.secrets
         lookup_clicked = st.form_submit_button(
             IllustratorForm.lookup_button,
             disabled=not ai_available,
-            help=IllustratorForm.lookup_help
+            help=IllustratorForm.lookup_help,
+            key=f"illustrator_form_lookup_{key_suffix}"
         )
 
         if lookup_clicked:

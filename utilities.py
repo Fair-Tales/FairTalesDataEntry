@@ -57,6 +57,22 @@ def clear_page_history():
     st.session_state['_page_history'] = []
 
 
+def clear_entity_form_state(prefix):
+    """Drop any persisted widget state for a per-entity ``to_form()`` form.
+
+    Entity form widgets are keyed ``<entity>_form_<field>_<document_id>`` (see
+    the "Widget key naming" note in CLAUDE.md). A brand-new, unregistered entity
+    has an empty/placeholder ``document_id``, so two consecutive new entities of
+    the same type would share keys and Streamlit would re-show the first
+    entity's values (ignoring the ``value=``/``index=`` seeding) for the second.
+
+    Call this at each "start a new X" choke point with the entity's key prefix
+    (e.g. ``"book_form_"``) so the next form re-seeds cleanly.
+    """
+    for key in [k for k in st.session_state if k.startswith(prefix)]:
+        st.session_state.pop(key, None)
+
+
 def page_layout(current_page=None):
     st.set_page_config(
         initial_sidebar_state="collapsed",
@@ -76,7 +92,7 @@ def page_layout(current_page=None):
     # Hide Back during the guided book sub-entry flow (add author/illustrator/
     # publisher): returning to add_book.py would just re-forward here. Use Cancel.
     if history and not st.session_state.get('adding_book_entries', False):
-        if st.sidebar.button("← Back"):
+        if st.sidebar.button("← Back", key="sidebar_back_button"):
             go_back()
 
 
@@ -716,8 +732,8 @@ class FormConfirmation:
             display_value = "" if value is None else value
             summary_col.markdown(f"**{label}:** {display_value}")
         col1, col2 = st.columns(2)
-        confirm_button = col1.button("Confirm")
-        edit_button = col2.button("Edit")
+        confirm_button = col1.button("Confirm", key="confirm_display_confirm_button")
+        edit_button = col2.button("Edit", key="confirm_display_edit_button")
 
         return confirm_button, edit_button
 
@@ -847,10 +863,10 @@ def confirm_submit():
         so please only submit once you are confident that everything is correct and complete.
         """
     )
-    if st.button("Confirm"):
+    if st.button("Confirm", key="confirm_submit_confirm_button"):
         st.session_state.current_book.entry_status = 'completed'
         st.session_state.current_book.datetime_submitted = datetime.now(timezone.utc)
         clear_page_history()
         st.switch_page("./pages/user_home.py")
-    if st.button("Cancel"):
+    if st.button("Cancel", key="confirm_submit_cancel_button"):
         st.rerun()

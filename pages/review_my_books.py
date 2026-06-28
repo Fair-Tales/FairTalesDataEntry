@@ -21,20 +21,21 @@ else:
     st.write(Instructions.review_my_books)
     selected_title = st.selectbox(
         label=ReviewBooks.select_label,
-        options=my_books.title
+        options=my_books.title,
+        key="review_books_select"
     )
 
     selected_book = Book(
         my_books[my_books.title == selected_title].iloc[0]
     )
 
-    edit_button = st.button(ReviewBooks.edit_button)
+    edit_button = st.button(ReviewBooks.edit_button, key="review_books_edit_button")
     if edit_button:
         st.session_state['current_book'] = selected_book
         st.session_state['current_book'].editing = True
         st.switch_page("./pages/book_edit_home.py")
 
-cancel_button = st.button(ReviewBooks.cancel_button)
+cancel_button = st.button(ReviewBooks.cancel_button, key="review_books_cancel_button")
 
 if cancel_button:
     st.switch_page("./pages/user_home.py")

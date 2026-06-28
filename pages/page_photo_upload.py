@@ -42,13 +42,13 @@ def go_to_phone():
     st.write(PhotoUpload.finished_instruction)
 
     subcol1, subcol2 = st.columns(2)
-    if subcol1.button(PhotoUpload.continue_button, width="stretch"):
+    if subcol1.button(PhotoUpload.continue_button, width="stretch", key="photo_upload_continue_button"):
         if st.session_state.current_book.photos_uploaded:
             st.session_state['current_page_number'] = 1
             st.switch_page("./pages/enter_text.py")
         else:
             st.warning(Alerts.please_uploaded_photos)
-    if subcol2.button(PhotoUpload.back_to_menu_button, width="stretch"):
+    if subcol2.button(PhotoUpload.back_to_menu_button, width="stretch", key="photo_upload_back_menu_button"):
         st.switch_page("./pages/book_edit_home.py")
 
 
@@ -61,16 +61,16 @@ def already_uploaded_options():
     """Let the user skip the upload step or choose to replace existing photos."""
     st.info(Instructions.photos_already_uploaded)
     skip_col, replace_col = st.columns(2)
-    if skip_col.button(PhotoUpload.continue_to_text_button, width="stretch"):
+    if skip_col.button(PhotoUpload.continue_to_text_button, width="stretch", key="photo_upload_skip_continue_button"):
         st.session_state.pop('_replacing_photos', None)
         st.session_state['current_page_number'] = 1
         st.switch_page("./pages/enter_text.py")
-    if replace_col.button(PhotoUpload.replace_button, width="stretch"):
+    if replace_col.button(PhotoUpload.replace_button, width="stretch", key="photo_upload_replace_button"):
         # Scope the override to this book so re-opening a *different* book still
         # offers the skip choice rather than dropping straight into uploading.
         st.session_state['_replacing_photos'] = st.session_state.current_book.document_id
         st.rerun()
-    if st.button(PhotoUpload.back_to_menu_button, width="stretch"):
+    if st.button(PhotoUpload.back_to_menu_button, width="stretch", key="photo_upload_already_back_menu_button"):
         st.switch_page("./pages/book_edit_home.py")
 
 

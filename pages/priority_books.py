@@ -51,10 +51,10 @@ if st.session_state.get("admin", False):
     st.subheader(T.admin_section_header)
 
     with st.form("add_priority_book", clear_on_submit=True):
-        new_title = st.text_input(T.admin_add_label)
-        new_author = st.text_input(T.admin_author_label)
-        new_notes = st.text_input(T.admin_notes_label)
-        submitted = st.form_submit_button(T.admin_add_button)
+        new_title = st.text_input(T.admin_add_label, key="priority_books_title_input")
+        new_author = st.text_input(T.admin_author_label, key="priority_books_author_input")
+        new_notes = st.text_input(T.admin_notes_label, key="priority_books_notes_input")
+        submitted = st.form_submit_button(T.admin_add_button, key="priority_books_add_button")
 
     if submitted:
         if not new_title.strip():

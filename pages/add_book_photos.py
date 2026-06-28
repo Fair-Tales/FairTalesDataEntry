@@ -99,6 +99,7 @@ if not ai_available:
 uploaded_files = st.file_uploader(
     BookPhotoEntry.upload_label,
     accept_multiple_files=True,
+    key="add_book_photos_uploader",
 )
 
 if uploaded_files:
@@ -110,11 +111,13 @@ if uploaded_files:
         options=sorted_names,
         index=0,
         help=BookPhotoEntry.title_page_help,
+        key="add_book_photos_title_page_select",
     )
 
     extract_clicked = st.button(
         BookPhotoEntry.extract_button,
         disabled=not ai_available,
+        key="add_book_photos_extract_button",
     )
 
     if extract_clicked:
@@ -150,7 +153,7 @@ if uploaded_files:
                 st.session_state['book_extraction'] = metadata
                 st.warning(BookPhotoEntry.extract_empty)
 
-cancel_button = st.button(BookPhotoEntry.cancel_text)
+cancel_button = st.button(BookPhotoEntry.cancel_text, key="add_book_photos_cancel_button")
 if cancel_button:
     st.session_state.pop('photo_first_pages', None)
     st.switch_page("./pages/user_home.py")

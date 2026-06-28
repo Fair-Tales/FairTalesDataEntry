@@ -10,7 +10,7 @@ with st.form("new_publisher"):
     st.session_state['current_publisher'].to_form()
 
 
-cancel_button = st.button(PublisherForm.cancel_text)
+cancel_button = st.button(PublisherForm.cancel_text, key="add_publisher_cancel_button")
 
 if cancel_button:
     st.session_state['adding_book_entries'] = False

@@ -22,7 +22,7 @@ st.divider()
 st.header(Admin.user_data_header)
 st.write(Admin.user_data_description)
 
-if st.button(Admin.prepare_user_download_button):
+if st.button(Admin.prepare_user_download_button, key="admin_prepare_user_download_button"):
     db = FirestoreWrapper().connect_user(auth=False)
     users = db.collection('users').where('is_confirmed', '==', True).stream()
 
@@ -49,7 +49,8 @@ if st.button(Admin.prepare_user_download_button):
         label=Admin.download_user_button,
         data=buf.getvalue().encode('utf-8'),
         file_name=Admin.user_file_name,
-        mime="text/csv"
+        mime="text/csv",
+        key="admin_download_user_button"
     )
 
 st.divider()
@@ -57,7 +58,7 @@ st.divider()
 st.header(Admin.book_export_header)
 st.write(Admin.book_export_description)
 
-if st.button(Admin.prepare_book_download_button):
+if st.button(Admin.prepare_book_download_button, key="admin_prepare_book_download_button"):
     collections = ['books', 'authors', 'illustrators', 'publishers', 'characters', 'pages', 'aliases']
 
     zip_buf = io.BytesIO()
@@ -90,7 +91,8 @@ if st.button(Admin.prepare_book_download_button):
         label=Admin.download_book_button,
         data=zip_buf.getvalue(),
         file_name=Admin.book_file_name,
-        mime="application/zip"
+        mime="application/zip",
+        key="admin_download_book_button"
     )
 
 st.divider()
@@ -98,7 +100,7 @@ st.divider()
 st.header(FeedbackExport.header)
 st.write(FeedbackExport.description)
 
-if st.button(FeedbackExport.prepare_button):
+if st.button(FeedbackExport.prepare_button, key="admin_prepare_feedback_button"):
     db = FirestoreWrapper().connect_book()
     try:
         feedback_docs = list(db.collection("feedback").stream())
@@ -150,5 +152,6 @@ if st.button(FeedbackExport.prepare_button):
                 label=FeedbackExport.download_button,
                 data=buf.getvalue().encode("utf-8"),
                 file_name=FeedbackExport.file_name,
-                mime="text/csv"
+                mime="text/csv",
+                key="admin_download_feedback_button"
             )
