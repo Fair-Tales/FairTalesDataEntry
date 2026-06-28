@@ -96,6 +96,9 @@ def _render_chart(title, counts):
             axis=alt.Axis(labelAngle=0),
         ),
         y=alt.Y("count:Q", title=ResultsDashboard.count_column_label),
+        # Explicitly disable the hover/tap tooltip that Streamlit's default chart
+        # theme enables — it lingers on touch devices and overlaps other charts.
+        tooltip=alt.value(None),
     )
     bars = base.mark_bar()
     labels = base.mark_text(dy=-7, color="black").encode(text="label:N")
