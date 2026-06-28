@@ -673,6 +673,35 @@ class Admin:
     download_book_button = "⬇ Download book database (ZIP of CSVs)"
     book_file_name = "fairtales_book_data.zip"
 
+    # Role management (#47 / #83). Admins can grant or revoke roles in-app
+    # instead of editing the Firestore user document by hand.
+    manage_roles_header = "Manage user roles"
+    manage_roles_description = (
+        "Set each user's permission tier. Archivists can enter and edit their "
+        "own books; Team members can additionally edit others' books and "
+        "validate data; Admins can additionally delete users/books and export "
+        "data."
+    )
+    # User-facing labels for the three role values (utilities.VALID_ROLES).
+    role_labels = {
+        "archivist": "Archivist",
+        "team": "Team member",
+        "admin": "Admin",
+    }
+    role_select_label = "Role"
+    role_save_button = "Save role"
+    role_current_caption = "Current role: {role}"
+    role_updated_success = "Updated {username}'s role to {role}."
+    role_update_error = "Could not update the role for {username}: {error}"
+    roles_load_error = "Could not load the user list: {error}"
+    roles_empty_message = "No users found."
+    # Self-lockout safeguard: an admin must not demote their own account out of
+    # the admin role, or they would lose access to this page.
+    role_self_demote_blocked = (
+        "You cannot remove your own admin access — this would lock you out of "
+        "admin management. Ask another admin to change your role."
+    )
+
 
 class RegisterUser:
     """Strings for the registration form (pages/register_user.py and
