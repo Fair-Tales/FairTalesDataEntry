@@ -8,6 +8,37 @@ import pandas as pd
 
 check_authentication_status()
 
+
+def _person_name_from_ref(ref):
+    """Resolve an author/illustrator value to a display name, tolerant of legacy
+    data: a Firestore DocumentReference (-> 'forename surname'), a plain string
+    stored instead of a reference (used directly), a deleted/empty doc, or a
+    missing value (-> the Unknown label)."""
+    if ref is None:
+        return UserHome.unknown
+    if isinstance(ref, str):
+        return ref.replace('_', ' ').strip() or UserHome.unknown
+    if hasattr(ref, 'get'):
+        data = ref.get().to_dict() or {}
+        return ' '.join(
+            [data.get('forename', ''), data.get('surname', '')]
+        ).strip() or UserHome.unknown
+    return UserHome.unknown
+
+
+def _publisher_name_from_ref(ref):
+    """Resolve a publisher value to a display name, tolerant of legacy data
+    (DocumentReference, plain string, deleted/empty doc, or missing)."""
+    if ref is None:
+        return UserHome.unknown
+    if isinstance(ref, str):
+        return ref.replace('_', ' ').strip() or UserHome.unknown
+    if hasattr(ref, 'get'):
+        data = ref.get().to_dict() or {}
+        return data.get('name', UserHome.unknown)
+    return UserHome.unknown
+
+
 # TODO: migrate to a proper search service like Algolia?
 def book_search():
     # Live-filter as the user types (issue #104). st_keyup reruns on each keystroke;
@@ -34,36 +65,14 @@ def book_search():
                 book_ref = st.session_state['book_dict'][title]
                 book_data = book_ref.get().to_dict()
 
-                author_ref = book_data.get('author')
-                if author_ref:
-                    author_data = author_ref.get().to_dict()
-                    author_name = ' '.join([
-                        author_data.get('forename', ''),
-                        author_data.get('surname', '')
-                    ]).strip() or UserHome.unknown
-                else:
-                    author_name = UserHome.unknown
+                author_name = _person_name_from_ref(book_data.get('author'))
 
                 published = book_data.get('published', '')
                 year_str = f" ({published})" if published else ""
 
                 with st.expander(UserHome.book_expander.format(title=title, year_str=year_str, author=author_name)):
-                    publisher_ref = book_data.get('publisher')
-                    if publisher_ref:
-                        publisher_data = publisher_ref.get().to_dict()
-                        publisher_name = publisher_data.get('name', UserHome.unknown)
-                    else:
-                        publisher_name = UserHome.unknown
-
-                    illustrator_ref = book_data.get('illustrator')
-                    if illustrator_ref:
-                        illustrator_data = illustrator_ref.get().to_dict()
-                        illustrator_name = ' '.join([
-                            illustrator_data.get('forename', ''),
-                            illustrator_data.get('surname', '')
-                        ]).strip() or UserHome.unknown
-                    else:
-                        illustrator_name = UserHome.unknown
+                    publisher_name = _publisher_name_from_ref(book_data.get('publisher'))
+                    illustrator_name = _person_name_from_ref(book_data.get('illustrator'))
 
                     st.write(UserHome.publisher_label.format(name=publisher_name))
                     st.write(UserHome.illustrator_label.format(name=illustrator_name))

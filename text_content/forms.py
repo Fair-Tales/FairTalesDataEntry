@@ -726,7 +726,7 @@ class Confirm:
 class UserHome:
     """Strings for the user home / search page (pages/user_home.py)."""
 
-    book_search_label = "Search by book title — enter a full or partial title and press Enter to find close matches."
+    book_search_label = "Search by book title (filters as you type)"
     book_search_help = "You can enter either all or part of the title."
     results_found = "Results ({count} found):"
     unknown = "Unknown"
