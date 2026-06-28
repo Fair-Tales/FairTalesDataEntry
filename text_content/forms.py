@@ -247,6 +247,56 @@ class UserForm:
     page_intro = "Update your personal details below. Changes are saved when you click 'Save changes'."
 
 
+class PasswordReset:
+
+    # --- Login page "Forgot your password?" area ---
+    request_email_label = "Enter your email address"
+    request_button_text = "Send password reset link"
+    request_blank_email = "Please enter your email address."
+    # Shown unconditionally after a reset request to avoid revealing whether an
+    # account exists for the entered address (account-enumeration protection).
+    request_acknowledgement = (
+        "If an account exists for that email address, we've sent it a password "
+        "reset link. Please check your inbox (and junk folder). The link expires "
+        "in one hour."
+    )
+
+    # --- Reset email contents ---
+    email_subject = "Reset your account password"
+    # %s is the recipient's name.
+    email_body = (
+        "Dear %s,\n\n"
+        "We received a request to reset the password for your account on our "
+        "data entry tool. Click the link below to choose a new password. This "
+        "link will expire in one hour.\n\n"
+        "If you did not request a password reset, you can safely ignore this "
+        "email — your password will not be changed.\n\n"
+        "Thanks,\n"
+        "The Fair Tales team\n\n"
+    )
+
+    # --- Reset page (pages/reset_password.py) ---
+    page_title = "Reset Your Password"
+    new_password_label = "New password"
+    confirm_password_label = "Confirm new password"
+    submit_button_text = "Set new password"
+    invalid_link = (
+        "This password reset link is invalid or has already been used. Please "
+        "request a new one from the login page."
+    )
+    expired_link = (
+        "This password reset link has expired. Please request a new one from the "
+        "login page."
+    )
+    blank_password = "Please enter and confirm your new password."
+    passwords_do_not_match = "The passwords you entered do not match."
+    reset_success = (
+        "Your password has been reset. You can now log in with your new password "
+        "by selecting `Home` from the navigation menu."
+    )
+    reset_failed = "Password reset failed. Please try again or request a new link."
+
+
 class ReportFeedback:
 
     page_title = "Report a Bug / Request a Feature"

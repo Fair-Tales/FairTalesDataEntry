@@ -163,6 +163,32 @@ def send_confirmation_email(send_to, username, confirmation_token, name):
     smtpserver.close()
 
 
+def send_password_reset_email(send_to, username, reset_token, name):
+    """Email a self-service password reset link.
+
+    Mirrors ``send_confirmation_email``'s SMTP path and the ``app_url`` secret
+    pattern, but points the recipient at the public ``reset_password`` page with
+    ``token`` and ``user`` query params.  The email copy lives in the
+    ``text_content`` module (``PasswordReset``).
+    """
+    from text_content import PasswordReset
+
+    smtpserver = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+    smtpserver.ehlo()
+    smtpserver.login(st.secrets["email_address"], st.secrets["gmail_app_password"])
+
+    body = PasswordReset.email_body % name
+    reset_link = f"{st.secrets['app_url']}reset_password?token={reset_token}&user={username}"
+    body += reset_link
+    msg = MIMEText(body)
+    msg['Subject'] = PasswordReset.email_subject
+    msg['From'] = st.secrets["email_address"]
+    msg['To'] = send_to
+
+    smtpserver.send_message(msg)
+    smtpserver.close()
+
+
 def author_entry_to_name(entry):
     """
     Helper method converts an author entry from the Firestore database
