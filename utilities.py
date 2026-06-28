@@ -495,6 +495,240 @@ def extract_book_metadata(image_bytes, client):
     }
 
 
+def locate_key_pages(pages, client):
+    """Locate the title-page and copyright-page positions in a set of book photos.
+
+    Pass 1 of the photo-first two-pass flow (#109): a single cheap Claude Haiku
+    call is sent ALL page images at once and asked which page is the title page
+    and which is the copyright / imprint page (the latter's position varies —
+    sometimes just after the title page, sometimes at the back of the book).
+
+    Args:
+        pages: ordered list of (name, image_bytes) tuples.
+        client: an anthropic.Anthropic client.
+
+    Returns a dict {'title_page': int|None, 'copyright_page': int|None} whose
+    values are 1-based positions into ``pages`` (matching the "Page N" labels sent
+    to the model), or None when a page could not be identified or the reply could
+    not be parsed. Anthropic API errors propagate to the caller.
+    """
+    from text_content import AIPrompts
+
+    pages = list(pages)
+    content = []
+    for index, (_name, image_bytes) in enumerate(pages):
+        content.append({"type": "text", "text": f"Page {index + 1}:"})
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": base64.standard_b64encode(image_bytes).decode('utf-8'),
+            },
+        })
+    content.append({"type": "text", "text": AIPrompts.locate_key_pages})
+
+    response = client.messages.create(
+        model="claude-haiku-4-5",
+        max_tokens=128,
+        messages=[{"role": "user", "content": content}],
+    )
+
+    none_result = {'title_page': None, 'copyright_page': None}
+    try:
+        raw = response.content[0].text.strip()
+    except (IndexError, AttributeError):
+        return none_result
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    try:
+        result = json.loads(raw.strip())
+    except (json.JSONDecodeError, ValueError):
+        return none_result
+
+    def _as_page(value):
+        try:
+            page = int(value)
+        except (TypeError, ValueError):
+            return None
+        return page if 1 <= page <= len(pages) else None
+
+    return {
+        'title_page': _as_page(result.get('title_page')),
+        'copyright_page': _as_page(result.get('copyright_page')),
+    }
+
+
+def extract_copyright_metadata(image_bytes, client):
+    """Extract publisher, first-published year and ISBN from a copyright-page image.
+
+    Pass 2 (copyright page) of the photo-first two-pass flow (#109): Claude Sonnet
+    reads the single located copyright / imprint page for the details that the
+    title page usually omits. Returns a dict with keys:
+      - 'publisher'      (str or None)
+      - 'published_year' (int or None)
+      - 'isbn'           (str or None — normalised digits via extract_isbn)
+      - 'raw'            (the raw model response text, kept for audit/debugging)
+
+    Mirrors ``extract_book_metadata``: the raw text is always retained, parsing
+    problems yield empty fields, and Anthropic API errors propagate to the caller.
+    """
+    from text_content import AIPrompts
+
+    image_data = base64.standard_b64encode(image_bytes).decode('utf-8')
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=512,
+        messages=[{
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": image_data,
+                    },
+                },
+                {"type": "text", "text": AIPrompts.copyright_page_extraction},
+            ],
+        }],
+    )
+
+    try:
+        raw_text = response.content[0].text.strip()
+    except (IndexError, AttributeError):
+        raw_text = ""
+    empty = {'publisher': None, 'published_year': None, 'isbn': None, 'raw': raw_text}
+
+    cleaned = raw_text
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("```")[1]
+        if cleaned.startswith("json"):
+            cleaned = cleaned[4:]
+    try:
+        result = json.loads(cleaned.strip())
+    except (json.JSONDecodeError, ValueError):
+        return empty
+
+    publisher = result.get('publisher')
+    if not (isinstance(publisher, str) and publisher.strip()):
+        publisher = None
+    else:
+        publisher = publisher.strip()
+
+    year = result.get('first_published_year')
+    try:
+        year = int(year) if year is not None else None
+    except (TypeError, ValueError):
+        year = None
+    if year is not None and not (1900 <= year <= datetime.now(timezone.utc).year):
+        year = None
+
+    # Reuse the upload pipeline's ISBN parser so hyphenation and stray characters
+    # are normalised identically (and ISBN-10/13 both validated).
+    raw_isbn = result.get('isbn')
+    isbn = extract_isbn(str(raw_isbn)) if raw_isbn else None
+
+    return {'publisher': publisher, 'published_year': year, 'isbn': isbn, 'raw': raw_text}
+
+
+def extract_photo_first_metadata(pages, client, title_page_hint=None,
+                                 progress_callback=None):
+    """Two-pass, cost-aware metadata extraction for the photo-first flow
+    (#109; completes #63 and makes the #103 form pre-fill reachable).
+
+    Pass 1 (locate): one cheap Claude Haiku call over ALL page images finds the
+    title-page and copyright/imprint-page positions (``locate_key_pages``).
+    Pass 2 (extract): Claude Sonnet reads ONLY those one or two pages — the title
+    page via ``extract_book_metadata`` and the copyright page via
+    ``extract_copyright_metadata`` — and any ISBN found is fed into the Google
+    Books lookup (``lookup_isbn``), the most reliable metadata source.
+
+    Cost profile: one Haiku call-set + up to two Sonnet calls per book.
+
+    Args:
+        pages: ordered list of (name, image_bytes) tuples.
+        client: an anthropic.Anthropic client.
+        title_page_hint: optional 1-based position the user designated as the
+            title page; used in preference to the located title page.
+        progress_callback: optional callable(done, total) for UI progress.
+
+    Returns the merged title-page metadata dict (``title``, ``authors``,
+    ``illustrators``, ``publisher``, ``published_year``, ``raw``) — with
+    publisher / year / authors back-filled from the copyright page and Google
+    Books where the title page was silent — plus:
+      - 'isbn'          (str or None)
+      - 'isbn_metadata' (Google Books dict or None) for the Add-Book form pre-fill
+      - 'located'       (the locate-pass result dict)
+
+    Anthropic API errors propagate to the caller (mirrors ``extract_book_metadata``).
+    """
+    pages = list(pages)
+    total_steps = 3
+    done = 0
+
+    def _step():
+        nonlocal done
+        done += 1
+        if progress_callback is not None:
+            progress_callback(min(done, total_steps), total_steps)
+
+    # Pass 1 — locate the two pages of interest.
+    located = locate_key_pages(pages, client)
+    _step()
+
+    title_pos = title_page_hint or located.get('title_page')
+    copyright_pos = located.get('copyright_page')
+
+    def _bytes_at(position):
+        if isinstance(position, int) and 1 <= position <= len(pages):
+            return pages[position - 1][1]
+        return None
+
+    # Pass 2a — title page (fall back to the first photo if nothing was located).
+    title_bytes = _bytes_at(title_pos)
+    if title_bytes is None and pages:
+        title_bytes = pages[0][1]
+    metadata = extract_book_metadata(title_bytes, client)
+    _step()
+
+    # Pass 2b — copyright page, only when a distinct one was located.
+    copyright_meta = {'publisher': None, 'published_year': None, 'isbn': None, 'raw': None}
+    copyright_bytes = _bytes_at(copyright_pos)
+    if copyright_bytes is not None and copyright_pos != title_pos:
+        copyright_meta = extract_copyright_metadata(copyright_bytes, client)
+    _step()
+
+    # Back-fill publisher / year from the copyright page where the title page was
+    # silent (these usually live on the copyright page, not the title page).
+    if not metadata.get('publisher') and copyright_meta.get('publisher'):
+        metadata['publisher'] = copyright_meta['publisher']
+    if metadata.get('published_year') is None and copyright_meta.get('published_year') is not None:
+        metadata['published_year'] = copyright_meta['published_year']
+
+    # ISBN → Google Books (most reliable source). Use the copyright-page ISBN.
+    isbn = copyright_meta.get('isbn')
+    isbn_metadata = lookup_isbn(isbn) if isbn else None
+
+    # Google Books back-fills only where vision was silent. Vision stays primary
+    # for the printed title and for illustrators (which the API rarely returns).
+    if isbn_metadata:
+        if not metadata.get('title') and isbn_metadata.get('title'):
+            metadata['title'] = isbn_metadata['title']
+        if not metadata.get('authors') and isbn_metadata.get('authors'):
+            metadata['authors'] = list(isbn_metadata['authors'])
+        if not metadata.get('publisher') and isbn_metadata.get('publisher'):
+            metadata['publisher'] = isbn_metadata['publisher']
+
+    metadata['isbn'] = isbn
+    metadata['isbn_metadata'] = isbn_metadata
+    metadata['located'] = located
+    return metadata
+
+
 def fuzzy_match_name(name, options, cutoff=0.8):
     """Return the closest matching key in ``options`` for ``name``, or None.
 

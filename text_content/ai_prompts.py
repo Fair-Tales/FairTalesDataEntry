@@ -153,6 +153,58 @@ expected format:
 
 Now analyse the image and return JSON:"""
 
+    # --- Photo-first two-pass metadata (issue #109) -----------------------
+    # Pass 1 (locate_key_pages): a single cheap Haiku call over ALL page images
+    #   finds the title-page and copyright/imprint-page positions. The copyright
+    #   page's position varies (after the title page, or at the back of the book),
+    #   so it cannot be assumed.
+    # Pass 2 (copyright_page_extraction): Sonnet reads the located copyright page
+    #   to pull publisher / first-published year / ISBN, which the title page
+    #   usually omits. The title page itself reuses book_metadata_extraction.
+
+    locate_key_pages = """\
+You are shown the page images of a children's picture book, in order. Each image \
+is preceded by its page number ("Page 1", "Page 2", and so on).
+
+Identify two specific pages and return the page NUMBER shown before each image:
+- title_page: the page showing the book's title together with the author and/or \
+illustrator (usually the inside title page; use the front cover if no inside \
+title page is present).
+- copyright_page: the copyright / imprint page — the page bearing the copyright \
+notice (©), the ISBN, the publisher's details and/or the first-publication year. \
+It is often on the reverse of the title page, but may instead appear at the very \
+back of the book.
+
+If either page cannot be found, use null for that field.
+
+Respond with valid JSON only — no other text before or after:
+{"title_page": 2, "copyright_page": 3}"""
+
+    copyright_page_extraction = """\
+Analyse this photo of the COPYRIGHT / IMPRINT page of a children's picture book \
+(the page carrying the copyright notice, ISBN and publisher details).
+
+Extract the following, exactly as printed:
+- publisher: the name of the publishing house, if shown (else null)
+- first_published_year: the 4-digit year the book was FIRST published. Prefer the \
+year printed beside "first published" if present; otherwise the earliest \
+copyright (©) year shown. Use null if no year is visible.
+- isbn: the ISBN (ISBN-13 or ISBN-10), digits and hyphens exactly as printed, or \
+null if none is visible.
+
+Rules:
+- Transcribe only what is visible. Do NOT invent, guess, or look up details.
+
+Respond with valid JSON only — no other text before or after. Example of the \
+expected format:
+{
+  "publisher": "Macmillan Children's Books",
+  "first_published_year": 1999,
+  "isbn": "978-0-333-71093-5"
+}
+
+Now analyse the image and return JSON:"""
+
     page_extraction = """\
 Analyse this photo of a children's picture book page.
 
