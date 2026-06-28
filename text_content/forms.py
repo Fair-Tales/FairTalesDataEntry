@@ -363,6 +363,11 @@ class CharacterForm:
             If you want to create a new alias for an existing character, please
             cancel this entry and select `Add alias`.
         """
+    rename_exists = """
+            Another character with that name already exists in this book.
+            Please choose a different name.
+        """
+    name_required = "Character name is required."
     protagonist_help = """
         The protagonist is the main character.
     """
@@ -382,6 +387,10 @@ class CharacterForm:
     human_label = "Is human?"
     plural_label = "Is plural?"
     save_button = "Save character"
+
+    # --- edit_form() (data_structures/character.py) ---
+    edit_header = "Edit this character's details"
+    update_button = "Save changes"
 
 
 class AddCharacterPage:
@@ -467,18 +476,21 @@ class ManageCharacters:
 
     header = "Manage characters and aliases"
     intro = """
-        Below are the characters you have recorded for this book. You can delete
-        a character — which also deletes all of its aliases — or delete an
-        individual alias. Deletions are permanent and cannot be undone.
+        Below are the characters you have recorded for this book. You can edit a
+        character's details, delete a character — which also deletes all of its
+        aliases — or delete an individual alias. Deletions are permanent and
+        cannot be undone.
     """
     no_characters = "No characters have been added to this book yet."
     aliases_label = "Aliases:"
     no_aliases = "No aliases recorded for this character."
     manage_button = "Manage characters"
     manage_help = """
-        View the characters recorded for this book and delete characters or
-        their aliases.
+        View the characters recorded for this book, edit their details, and
+        delete characters or their aliases.
     """
+    edit_character_button = "Edit character"
+    cancel_edit_button = "Cancel editing"
     delete_character_button = "Delete character"
     delete_alias_button = "Delete"
     done_button = "Done"
