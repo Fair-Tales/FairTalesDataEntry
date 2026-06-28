@@ -1,14 +1,18 @@
-"""Photo-initiated book creation (#59).
+"""Photo-initiated book creation (#59) with two-pass metadata extraction (#109).
 
-Entry path where the user starts by uploading the book's page photos. The
-designated title-page image is sent to Claude to extract the title, author(s),
-illustrator(s), publisher and publication year, which then pre-populate the normal
-Add Book form. Extracted author/illustrator/publisher names are fuzzy-matched
-against the existing session lookup dicts before falling through to the existing
-"create new" sub-flows.
+Entry path where the user starts by uploading the book's page photos. A cheap
+Claude Haiku "locate" pass scans ALL page images to find the title page and the
+copyright/imprint page (whose position varies); a targeted Claude Sonnet "extract"
+pass then reads only those one or two pages — the title page for title/author(s)/
+illustrator(s) and the copyright page for publisher/first-published year/ISBN — and
+feeds any ISBN into the Google Books lookup (the most reliable source). The merged
+result pre-populates the normal Add Book form (including the ``isbn_metadata``
+pre-fill). Extracted author/illustrator/publisher names are fuzzy-matched against
+the existing session lookup dicts before falling through to the existing "create
+new" sub-flows.
 
-This is an ADDITIONAL entry path — the manual Add Book flow is unchanged. It is the
-keystone for the wider AI-assisted data entry work (#103/#84/#63).
+This is an ADDITIONAL entry path — the manual Add Book flow is unchanged. It makes
+the #63 ISBN/copyright-page machinery reachable (#103) for AI-assisted data entry.
 """
 
 import natsort
@@ -20,7 +24,7 @@ from utilities import (
     page_layout,
     check_authentication_status,
     navigate_to,
-    extract_book_metadata,
+    extract_photo_first_metadata,
     fuzzy_match_name,
 )
 
@@ -58,6 +62,15 @@ def _apply_extracted_metadata(metadata):
         'extracted_publisher_name', 'adding_book_entries',
     ):
         st.session_state.pop(_key, None)
+
+    # ISBN → Google Books metadata pre-fills the Add-Book form (#103/#63). Set it
+    # (or clear a previous book's lookup) so the form's isbn_metadata fallback is
+    # always in step with this extraction.
+    isbn_metadata = metadata.get('isbn_metadata')
+    if isbn_metadata:
+        st.session_state['isbn_metadata'] = isbn_metadata
+    else:
+        st.session_state.pop('isbn_metadata', None)
 
     title = metadata.get('title')
     if title:
@@ -125,13 +138,17 @@ if uploaded_files:
         # later page-upload step can reuse them without a second upload.
         pages = [(name, file_dict[name].getvalue()) for name in sorted_names]
         st.session_state['photo_first_pages'] = pages
-        title_bytes = dict(pages)[title_page_name]
+        # The user's title-page selection is a 1-based hint into the page order; the
+        # Haiku locate pass finds the copyright page (whose position varies).
+        title_page_hint = sorted_names.index(title_page_name) + 1
 
         client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
         metadata = None
         try:
             with st.spinner(BookPhotoEntry.extracting):
-                metadata = extract_book_metadata(title_bytes, client)
+                metadata = extract_photo_first_metadata(
+                    pages, client, title_page_hint=title_page_hint
+                )
         except anthropic.AnthropicError as exc:
             st.error(BookPhotoEntry.extract_failed.format(error=exc))
 
@@ -142,6 +159,7 @@ if uploaded_files:
                 or metadata.get('illustrators')
                 or metadata.get('publisher')
                 or metadata.get('published_year')
+                or metadata.get('isbn_metadata')
             )
             if has_any:
                 _apply_extracted_metadata(metadata)

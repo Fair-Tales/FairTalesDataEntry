@@ -173,23 +173,25 @@ class BookPhotoEntry:
     title_page_label = "Which photo is the title page?"
     title_page_help = (
         "Select the photo that shows the book's title, author and illustrator. "
-        "This is the image we send for automatic detail extraction."
+        "We read this page for the title and creators, and automatically find the "
+        "copyright page for the publisher, year and ISBN."
     )
-    extract_button = "Read title page and pre-fill details"
-    extracting = "Reading the title page..."
+    extract_button = "Read the book and pre-fill details"
+    extracting = "Reading the title and copyright pages..."
     extract_failed = (
-        "Could not read the title page automatically ({error}). "
+        "Could not read the book automatically ({error}). "
         "You can still enter the details manually."
     )
     extract_empty = (
-        "We couldn't extract any details from that photo. Please check it is the "
-        "title page and try again, or enter the details manually on the next step."
+        "We couldn't extract any details from those photos. Please check the title "
+        "page is included and try again, or enter the details manually on the next "
+        "step."
     )
     no_api_key = (
-        "Automatic title-page extraction requires an Anthropic API key. "
+        "Automatic detail extraction requires an Anthropic API key. "
         "You can still enter the details manually."
     )
-    extract_success = "Title page read. Please review and correct the details below."
+    extract_success = "Book details read. Please review and correct them below."
     reuse_notice = "Using the {count} photo(s) you already uploaded. Processing them now..."
     cancel_text = "Cancel"
 
