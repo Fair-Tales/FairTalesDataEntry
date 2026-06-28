@@ -13,8 +13,6 @@ from utilities import (
     page_layout, check_authentication_status, extract_isbn, lookup_isbn
 )
 
-check_authentication_status()
-
 
 def extract_page_info(image_bytes, client):
     """Return (text, is_story_page, page_type) by sending image bytes to Claude Sonnet."""
@@ -212,4 +210,12 @@ def upload_widget(on_submit='enter_text'):
 
     upload_page_photos()
 
-page_layout()
+
+# Page-level code runs only when uploader.py is the active page (Streamlit sets
+# __name__ == "__main__" for the navigated page). Guarding this prevents the page
+# from rendering when the module is merely imported for `upload_widget`
+# (e.g. by page_photo_upload.py), which previously rendered the sidebar/back
+# button twice and raised StreamlitDuplicateElementId.
+if __name__ == "__main__":
+    check_authentication_status()
+    page_layout()
