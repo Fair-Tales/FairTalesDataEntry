@@ -205,6 +205,28 @@ expected format:
 
 Now analyse the image and return JSON:"""
 
+    # --- Batch multi-book splitting, Stage 2 fallback (issue #84) ----------
+    # Used only when NO black separator frames were found in a batch covering
+    # several books. A single cheap Haiku call over ALL page images finds the
+    # cover/title page that starts each book, and the batch is split immediately
+    # before each detected cover.
+    locate_cover_pages = """\
+You are shown the page images of SEVERAL children's picture books that were \
+photographed one after another, in order, as a single batch. Each image is \
+preceded by its page number ("Page 1", "Page 2", and so on).
+
+Identify the FRONT COVER or TITLE PAGE that marks where each NEW book BEGINS — \
+the page showing a book's title prominently (with cover artwork, or a title-page \
+layout giving the title plus author and/or illustrator) at the START of that \
+book. Do NOT list ordinary interior story pages, copyright/imprint pages, \
+dedication pages, or back covers.
+
+Return the page numbers that begin a new book, in ascending order. There is \
+always at least one (the first book's cover, usually page 1).
+
+Respond with valid JSON only — no other text before or after:
+{"cover_pages": [1, 12, 23]}"""
+
     page_extraction = """\
 Analyse this photo of a children's picture book page.
 
