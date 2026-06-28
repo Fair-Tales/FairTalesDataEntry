@@ -68,6 +68,11 @@ class Author(DataStructureBase):
                 self.birth_year = _suggestion['birth_year']
             if _suggestion.get('gender'):
                 self.gender = _suggestion['gender']
+        # Feedback from a previous "Look up" click that didn't produce a result.
+        if st.session_state.pop('_author_lookup_failed', None):
+            st.warning(AuthorForm.lookup_failed)
+        if st.session_state.pop('_author_lookup_no_name', None):
+            st.warning(AuthorForm.lookup_no_name)
 
         year_options = [-1, -2] + [y for y in range(1900, (date.today().year + 1))]
         if self.birth_year and self.birth_year in year_options:
@@ -114,9 +119,14 @@ class Author(DataStructureBase):
         if lookup_clicked:
             if self.forename.strip() or self.surname.strip():
                 ai_client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
-                suggestion = lookup_person_details(self.name.strip(), 'author', ai_client)
+                with st.spinner(AuthorForm.lookup_spinner):
+                    suggestion = lookup_person_details(self.name.strip(), 'author', ai_client)
                 if suggestion:
                     st.session_state['_author_lookup_suggestion'] = suggestion
+                else:
+                    st.session_state['_author_lookup_failed'] = True
+            else:
+                st.session_state['_author_lookup_no_name'] = True
             st.rerun()
 
         if submitted:

@@ -93,6 +93,12 @@ class AuthorForm:
     gender_label = "Gender"
     submit_button = "Submit"
     lookup_button = "Look up birth year and gender"
+    lookup_spinner = "Looking up birth year and gender…"
+    lookup_failed = (
+        "Couldn't find reliable birth year / gender details for this name — "
+        "please enter them manually."
+    )
+    lookup_no_name = "Please enter a first name or surname before looking up."
     name_required = "Author first name and surname are required."
     cancel_text = "Cancel entering new author."
 
@@ -121,6 +127,12 @@ class IllustratorForm:
     gender_label = "Gender"
     submit_button = "Submit"
     lookup_button = "Look up birth year and gender"
+    lookup_spinner = "Looking up birth year and gender…"
+    lookup_failed = (
+        "Couldn't find reliable birth year / gender details for this name — "
+        "please enter them manually."
+    )
+    lookup_no_name = "Please enter a first name or surname before looking up."
     name_required = "Illustrator first name and surname are required."
     cancel_text = "Cancel entering new illustrator."
 
