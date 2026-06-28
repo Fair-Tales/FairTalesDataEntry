@@ -10,13 +10,15 @@ check_authentication_status()
 
 # TODO: migrate to a proper search service like Algolia?
 def book_search():
-    book_search_string = st.text_input(
+    # Live-filter as the user types (issue #104). st_keyup reruns on each keystroke;
+    # the 300ms debounce limits how often the book lookup runs while typing.
+    book_search_string = st_keyup(
         UserHome.book_search_label,
         value="",
-        help=UserHome.book_search_help,
-        key="user_home_book_search_input"
+        debounce=300,
+        key="book_search_keyup",
     )
-    if len(book_search_string) > 0:
+    if book_search_string and len(book_search_string) > 0:
         search_term = book_search_string.lower()
 
         matching_titles = [
