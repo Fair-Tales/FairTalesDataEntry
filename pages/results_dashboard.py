@@ -1,3 +1,4 @@
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -71,12 +72,36 @@ else:
 
 def _render_chart(title, counts):
     st.subheader(title)
-    chart_data = pd.DataFrame(
-        {ResultsDashboard.count_column_label: [counts[g] for g in gender_options]},
-        index=gender_options,
+    chart_df = pd.DataFrame(
+        {
+            "gender": gender_options,
+            "count": [counts[g] for g in gender_options],
+        }
     )
-    chart_data.index.name = ResultsDashboard.gender_column_label
-    st.bar_chart(chart_data)
+    # Percentage each bar represents of ALL characters in scope, so the human and
+    # non-human shares are directly comparable and together match the combined
+    # chart.
+    chart_df["pct"] = chart_df["count"].apply(
+        lambda c: (c / total_in_scope * 100) if total_in_scope else 0
+    )
+    chart_df["label"] = chart_df.apply(
+        lambda r: f"{int(r['count'])} ({r['pct']:.0f}%)", axis=1
+    )
+
+    base = alt.Chart(chart_df).encode(
+        x=alt.X(
+            "gender:N",
+            title=ResultsDashboard.gender_column_label,
+            sort=gender_options,
+            axis=alt.Axis(labelAngle=0),
+        ),
+        y=alt.Y("count:Q", title=ResultsDashboard.count_column_label),
+    )
+    bars = base.mark_bar()
+    labels = base.mark_text(dy=-7, color="black").encode(text="label:N")
+    # No .interactive() and no tooltip -> a static (non-zoomable) chart.
+    chart = (bars + labels).properties(height=320)
+    st.altair_chart(chart, use_container_width=True)
 
 
 if total_in_scope == 0:
