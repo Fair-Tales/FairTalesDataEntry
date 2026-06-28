@@ -1,0 +1,13 @@
+# Development / test dependencies (issue #82 — Playwright e2e regression suite).
+#
+# Install with:
+#     pip install -r requirements-dev.txt
+#     playwright install chromium
+#
+# The runtime app dependencies are pulled in via the line below so a single
+# `pip install -r requirements-dev.txt` gives you everything needed to both run
+# the app and execute the end-to-end tests under tests/e2e/.
+-r requirements.txt
+
+pytest>=8.0.0
+pytest-playwright>=0.5.0
