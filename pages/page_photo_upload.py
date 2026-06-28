@@ -57,32 +57,64 @@ def upload_here():
     upload_widget()
 
 
+def already_uploaded_options():
+    """Let the user skip the upload step or choose to replace existing photos."""
+    st.info(Instructions.photos_already_uploaded)
+    skip_col, replace_col = st.columns(2)
+    if skip_col.button("Continue to enter text", width="stretch"):
+        st.session_state.pop('_replacing_photos', None)
+        st.session_state['current_page_number'] = 1
+        st.switch_page("./pages/enter_text.py")
+    if replace_col.button("Replace / re-upload photos", width="stretch"):
+        # Scope the override to this book so re-opening a *different* book still
+        # offers the skip choice rather than dropping straight into uploading.
+        st.session_state['_replacing_photos'] = st.session_state.current_book.document_id
+        st.rerun()
+    if st.button("Back to menu", width="stretch"):
+        st.switch_page("./pages/book_edit_home.py")
+
+
+def show_upload_options():
+    st.header(Instructions.photo_upload_header)
+    st.write(Instructions.photo_upload_instructions)
+    st.write(Instructions.photo_naming_instructions)
+
+    selected_option = option_menu(
+        None, ["Go to phone", "Upload here"],
+        default_index=0,
+        icons=['phone', 'laptop'],
+        menu_icon="cast", orientation="horizontal",
+        key="upload_menu",
+        styles={
+            "nav-link": {"font-size": "15px", "text-align": "left", "margin": "0px", "--hover-color": "#eee"},
+            "nav-link-selected": {"background-color": "green"},
+        }
+    )
+
+    navigation_dict = {
+        "Go to phone": go_to_phone,
+        "Upload here": upload_here
+    }
+
+    navigation_dict[selected_option]()
+
+
 page_layout()
 
 st.title(
     f"Enter book data: {st.session_state.current_book.title}"
 )
-st.header(Instructions.photo_upload_header)
-st.write(Instructions.photo_upload_instructions)
 
-selected_option = option_menu(
-    None, ["Go to phone", "Upload here"],
-    default_index=0,
-    icons=['phone', 'laptop'],
-    menu_icon="cast", orientation="horizontal",
-    key="upload_menu",
-    styles={
-        "nav-link": {"font-size": "15px", "text-align": "left", "margin": "0px", "--hover-color": "#eee"},
-        "nav-link-selected": {"background-color": "green"},
-    }
-)
-
-navigation_dict = {
-    "Go to phone": go_to_phone,
-    "Upload here": upload_here
-}
-
-navigation_dict[selected_option]()
+# If photos already exist for this book, offer to skip to text entry or to
+# replace them, rather than forcing the user back through the upload step.
+_book_id = st.session_state.current_book.document_id
+if (
+    st.session_state.current_book.photos_uploaded
+    and st.session_state.get('_replacing_photos') != _book_id
+):
+    already_uploaded_options()
+else:
+    show_upload_options()
 
 
 

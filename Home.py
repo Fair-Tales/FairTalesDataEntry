@@ -21,7 +21,7 @@ from data_structures import Author, Book, Illustrator, Publisher
 # TODO: improve email address validation
 # TODO: add 'Home' option to return to user home at any time
 # TODO: either expand Book.safe_cast and move to utilities, or remove pandas usage in FiresotreWarrper
-# TODO: add functionality to skip photo upload page (or choose to change photos) if photos were already uploaded
+# DONE (#51): skip photo upload / replace photos handled in page_photo_upload.py when photos already uploaded
 # TODO: And change layout according to image dimensions.
 # TODO: replace auhtor_dict and book_dict with cached retrieval methods (will not scale to v. large database but OK for now)
 # TODO: add 'help' instructions throughout
@@ -61,7 +61,7 @@ from data_structures import Author, Book, Illustrator, Publisher
 # TODO: schedule database backup
 # TODO: add data protection statement to T&Cs.
 # TODO: add diagram of how to take photos
-# TODO: check orientation of portrait images - not working atm.
+# DONE (#51): portrait orientation fixed via EXIF transpose at upload (uploader.py) and display (enter_text.py) - verify with real portrait photos
 
 def initialise():
     st.session_state['firestore'] = FirestoreWrapper(auth=True)

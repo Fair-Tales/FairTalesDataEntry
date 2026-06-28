@@ -2,7 +2,7 @@ import io
 import json
 import streamlit as st
 import anthropic
-from PIL import Image
+from PIL import Image, ImageOps
 from streamlit_dimensions import st_dimensions
 import s3fs
 from utilities import (
@@ -37,18 +37,24 @@ def page_change(delta):
 
 @st.cache_data(max_entries=3)
 def load_image(book, page_number, use_cropped=True):
-    """Load page image, preferring the corrected _cropped version when available."""
+    """Load page image, preferring the corrected _cropped version when available.
+
+    ImageOps.exif_transpose bakes any EXIF orientation tag into the pixels so
+    portrait photos display the right way up. It is a no-op for images without
+    an orientation tag (e.g. the re-encoded _cropped versions), so it is safe to
+    apply to both branches and to any legacy photos stored before this fix.
+    """
     if use_cropped:
         try:
-            return Image.open(fs.open(
+            return ImageOps.exif_transpose(Image.open(fs.open(
                 f"sawimages/{book}/page_{page_number}_cropped.jpg", mode='rb'
-            ))
+            )))
         except FileNotFoundError:
             # No corrected version exists yet; fall back to the original below.
             pass
-    return Image.open(fs.open(
+    return ImageOps.exif_transpose(Image.open(fs.open(
         f"sawimages/{book}/page_{page_number}.jpg", mode='rb'
-    ))
+    )))
 
 
 def cropped_exists(book, page_number):
