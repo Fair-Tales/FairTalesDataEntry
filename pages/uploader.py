@@ -212,6 +212,7 @@ def upload_widget(on_submit='enter_text'):
             uploaded_files = st.file_uploader(
                 Uploader.select_photos_label,
                 accept_multiple_files=True,
+                key="uploader_file_uploader",
             )
             if not uploaded_files:
                 return
@@ -227,7 +228,7 @@ def upload_widget(on_submit='enter_text'):
                 _process_photo_batch(raw_bytes_list, sort_file_names, fs)
 
         st.write(Uploader.upload_complete)
-        submit = st.button(Uploader.continue_button)
+        submit = st.button(Uploader.continue_button, key="uploader_continue_button")
 
         if submit:
             st.session_state.pop('_upload_pipeline_done', None)

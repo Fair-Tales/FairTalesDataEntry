@@ -95,20 +95,23 @@ with st.form('registration_form'):
         GenderRegistration.question,
         GenderRegistration.options,
         index=None,
-        help=GenderRegistration.help
+        help=GenderRegistration.help,
+        key="register_gender_select"
     )
-    gender_custom = st.text_input(label=GenderRegistration.manual_input_prompt, value="")
+    gender_custom = st.text_input(label=GenderRegistration.manual_input_prompt, value="", key="register_gender_custom_input")
 
     user_birth_year = int(st.selectbox(
         RegisterUser.birth_year_label,
         (x for x in range(1900, (date.today().year + 1))),
         placeholder=RegisterUser.birth_year_placeholder,
+        key="register_birth_year_select"
         ))
     newsletter_opt_in = st.checkbox(
         RegisterUser.newsletter_label,
-        value=False
+        value=False,
+        key="register_newsletter_checkbox"
     )
-    registered = st.form_submit_button(RegisterUser.register_button)
+    registered = st.form_submit_button(RegisterUser.register_button, key="register_submit_button")
 
     if registered:
         if validate_user_details(username, name, password, gender, gender_custom, user_birth_year):

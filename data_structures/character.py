@@ -49,7 +49,16 @@ class Character(DataStructureBase):
     def to_form(self):
 
         st.header(CharacterForm.header)
-        self.name = st.text_input(CharacterForm.name_label, value=self.name)
+
+        # Capture the entity id once, before any field is written back, so every
+        # widget key below stays constant for this render. Keying per
+        # document_id stops one character's values bleeding into the next (#80).
+        key_suffix = self.document_id
+
+        self.name = st.text_input(
+            CharacterForm.name_label, value=self.name,
+            key=f"character_form_name_{key_suffix}"
+        )
 
         gender_index = 0
         if self.gender in CharacterForm.gender_options:
@@ -58,7 +67,8 @@ class Character(DataStructureBase):
             CharacterForm.gender_label,
             options=CharacterForm.gender_options,
             index=gender_index,
-            help=CharacterForm.gender_help
+            help=CharacterForm.gender_help,
+            key=f"character_form_gender_{key_suffix}"
         )
 
         ethnicity_index = 0
@@ -68,7 +78,8 @@ class Character(DataStructureBase):
             CharacterForm.ethnicity_label,
             options=CharacterForm.ethnicity_options,
             index=ethnicity_index,
-            help=CharacterForm.ethnicity_help
+            help=CharacterForm.ethnicity_help,
+            key=f"character_form_ethnicity_{key_suffix}"
         )
 
         disability_index = 0
@@ -78,26 +89,32 @@ class Character(DataStructureBase):
             CharacterForm.disability_label,
             options=CharacterForm.disability_options,
             index=disability_index,
-            help=CharacterForm.disability_help
+            help=CharacterForm.disability_help,
+            key=f"character_form_disability_{key_suffix}"
         )
 
         self.protagonist = st.checkbox(
             CharacterForm.protagonist_label,
             value=self.protagonist,
-            help=CharacterForm.protagonist_help
+            help=CharacterForm.protagonist_help,
+            key=f"character_form_protagonist_{key_suffix}"
         )
         self.human = st.checkbox(
             CharacterForm.human_label,
             value=self.human,
-            help=CharacterForm.human_help
+            help=CharacterForm.human_help,
+            key=f"character_form_human_{key_suffix}"
         )
         self.plural = st.checkbox(
             CharacterForm.plural_label,
             value=self.plural,
-            help=CharacterForm.plural_help
+            help=CharacterForm.plural_help,
+            key=f"character_form_plural_{key_suffix}"
         )
 
-        submitted = st.form_submit_button(CharacterForm.save_button)
+        submitted = st.form_submit_button(
+            CharacterForm.save_button, key=f"character_form_submit_{key_suffix}"
+        )
 
         if submitted:
             if st.session_state.firestore.document_exists(

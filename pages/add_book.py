@@ -9,7 +9,7 @@ with st.form("new_book"):
     st.session_state['current_book'].to_form()
 
 
-cancel_button = st.button(BookForm.cancel_text, help=BookForm.cancel_help)
+cancel_button = st.button(BookForm.cancel_text, help=BookForm.cancel_help, key="add_book_cancel_button")
 
 if cancel_button:
     st.switch_page("./pages/user_home.py")

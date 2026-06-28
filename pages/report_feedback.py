@@ -14,12 +14,14 @@ with st.form("report_feedback_form"):
         ReportFeedback.type_label,
         options=ReportFeedback.type_options,
         horizontal=True,
+        key="report_feedback_type_radio",
     )
     feedback_text = st.text_area(
         ReportFeedback.text_label,
         placeholder=ReportFeedback.text_placeholder,
+        key="report_feedback_text_area",
     )
-    submitted = st.form_submit_button(ReportFeedback.submit_label)
+    submitted = st.form_submit_button(ReportFeedback.submit_label, key="report_feedback_submit_button")
 
 if submitted:
     if not feedback_text.strip():

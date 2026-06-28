@@ -7,7 +7,7 @@ from streamlit_dimensions import st_dimensions
 import s3fs
 from utilities import (
     page_layout, confirm_submit, check_authentication_status,
-    detect_book_characters,
+    detect_book_characters, clear_entity_form_state,
 )
 from data_structures import Page, Character, Alias
 from text_content import EnterText, ManageCharacters, AliasForm, CharacterForm
@@ -89,9 +89,9 @@ def manual_correction_dialog():
 
     st.subheader(EnterText.rotation_header)
     col_a, col_b, col_c, _ = st.columns(4)
-    rotate_90_left = col_a.button(EnterText.rotate_left_button)
-    rotate_90_right = col_b.button(EnterText.rotate_right_button)
-    rotate_180 = col_c.button(EnterText.rotate_180_button)
+    rotate_90_left = col_a.button(EnterText.rotate_left_button, key="enter_text_rotate_left_button")
+    rotate_90_right = col_b.button(EnterText.rotate_right_button, key="enter_text_rotate_right_button")
+    rotate_180 = col_c.button(EnterText.rotate_180_button, key="enter_text_rotate_180_button")
 
     if rotate_90_left:
         st.session_state['_manual_rotation'] -= 90
@@ -126,7 +126,7 @@ def manual_correction_dialog():
     st.image(img, width="stretch", caption=EnterText.preview_caption)
 
     save_col, discard_col = st.columns(2)
-    if save_col.button(EnterText.save_corrected_button, width="stretch"):
+    if save_col.button(EnterText.save_corrected_button, width="stretch", key="enter_text_save_corrected_button"):
         buf = io.BytesIO()
         img.save(buf, format='JPEG', quality=95)
         cropped_path = f"sawimages/{book}/page_{page_number}_cropped.jpg"
@@ -137,7 +137,7 @@ def manual_correction_dialog():
         # shown immediately (st.rerun() inside an st.dialog dismisses it).
         st.rerun()
 
-    if discard_col.button(EnterText.discard_button, width="stretch"):
+    if discard_col.button(EnterText.discard_button, width="stretch", key="enter_text_discard_button"):
         st.rerun()
 
 
@@ -157,7 +157,7 @@ def display_image():
             col1.caption(EnterText.auto_corrected_caption)
     else:
         col1.caption(EnterText.auto_correction_unavailable_caption)
-        if col1.button(EnterText.edit_image_button, width="stretch"):
+        if col1.button(EnterText.edit_image_button, width="stretch", key="enter_text_edit_image_button"):
             # Start each editing session from a clean slate: clear any rotation/
             # crop state left from a previous open (including closing via the
             # dialog's native ✕, which we can't otherwise hook into).
@@ -172,7 +172,7 @@ def display_image():
     w, h = page_image.size
 
     col1.image(page_image, width="stretch")
-    if col1.button(EnterText.enlarge_button, width="stretch"):
+    if col1.button(EnterText.enlarge_button, width="stretch", key="enter_text_enlarge_button"):
         enlarged_image_dialog(use_cropped=use_cropped)
 
     dimensions = st_dimensions(key="main")
@@ -182,6 +182,9 @@ def display_image():
 def adding_character():
     if st.session_state['_page_text_editing'] is not None:
         st.session_state.current_page.text = st.session_state['_page_text_editing']
+    # Starting a fresh character entry: drop persisted form-widget state so the
+    # new (empty document_id) character re-seeds from value=/index= (see #80).
+    clear_entity_form_state("character_form_")
     st.session_state.now_entering = 'character'
 
 
@@ -193,6 +196,9 @@ def adding_text():
 def adding_alias():
     if st.session_state['_page_text_editing'] is not None:
         st.session_state.current_page.text = st.session_state['_page_text_editing']
+    # Starting a fresh alias entry: drop persisted form-widget state so the new
+    # (empty document_id) alias re-seeds from value=/index= (see #80).
+    clear_entity_form_state("alias_form_")
     st.session_state['_alias_form_count'] = st.session_state.get('_alias_form_count', 0) + 1
     st.session_state.now_entering = 'alias'
 
@@ -206,22 +212,22 @@ def managing_characters():
 @st.dialog(ManageCharacters.delete_character_dialog_title)
 def confirm_delete_character(character_doc_dict, name):
     st.write(ManageCharacters.delete_character_warning.format(name=name))
-    if st.button(ManageCharacters.confirm_delete_button):
+    if st.button(ManageCharacters.confirm_delete_button, key="enter_text_confirm_delete_character_button"):
         Character(db_object=character_doc_dict).delete()
         st.session_state.now_entering = 'manage'
         st.rerun()
-    if st.button(ManageCharacters.cancel_button):
+    if st.button(ManageCharacters.cancel_button, key="enter_text_cancel_delete_character_button"):
         st.rerun()
 
 
 @st.dialog(ManageCharacters.delete_alias_dialog_title)
 def confirm_delete_alias(alias_doc_dict, name):
     st.write(ManageCharacters.delete_alias_warning.format(name=name))
-    if st.button(ManageCharacters.confirm_delete_button):
+    if st.button(ManageCharacters.confirm_delete_button, key="enter_text_confirm_delete_alias_button"):
         Alias(db_object=alias_doc_dict).delete()
         st.session_state.now_entering = 'manage'
         st.rerun()
-    if st.button(ManageCharacters.cancel_button):
+    if st.button(ManageCharacters.cancel_button, key="enter_text_cancel_delete_alias_button"):
         st.rerun()
 
 
@@ -237,24 +243,32 @@ def text_entry(element, image_height, delta=50):
     for message in st.session_state.pop('_detected_characters_result', []):
         element.success(message)
 
+    # The story toggle and text area are seeded from the current page, so suffix
+    # their keys with the page number to re-seed (rather than bleed state) when
+    # the user pages through the book (see #80).
+    page_number = st.session_state.current_page_number
+
     st.session_state.current_page.contains_story = element.checkbox(
         EnterText.contains_story_label,
-        value=st.session_state.current_page.contains_story
+        value=st.session_state.current_page.contains_story,
+        key=f"enter_text_contains_story_{page_number}"
     )
     subcol1, subcol2 = element.columns(2)
-    subcol1.button(EnterText.add_character_button, width="stretch", on_click=adding_character, help=EnterText.character_help)
-    subcol2.button(EnterText.add_alias_button, width="stretch", on_click=adding_alias, help=EnterText.alias_help)
+    subcol1.button(EnterText.add_character_button, width="stretch", on_click=adding_character, help=EnterText.character_help, key="enter_text_add_character_button")
+    subcol2.button(EnterText.add_alias_button, width="stretch", on_click=adding_alias, help=EnterText.alias_help, key="enter_text_add_alias_button")
     element.button(
         ManageCharacters.manage_button,
         width="stretch",
         on_click=managing_characters,
         help=ManageCharacters.manage_help,
+        key="enter_text_manage_characters_button",
     )
     element.button(
         EnterText.detect_button,
         width="stretch",
         on_click=adding_detect,
         help=EnterText.detect_help,
+        key="enter_text_detect_button",
     )
 
     height = max(image_height - delta, 200)
@@ -264,10 +278,11 @@ def text_entry(element, image_height, delta=50):
             EnterText.page_text_label,
             height=height,
             value=st.session_state.current_page.text,
-            disabled=not st.session_state.current_page.contains_story
+            disabled=not st.session_state.current_page.contains_story,
+            key=f"enter_text_page_text_{page_number}"
         )
 
-        submitted = st.form_submit_button(EnterText.save_page_button)
+        submitted = st.form_submit_button(EnterText.save_page_button, key="enter_text_save_page_button")
         if submitted:
             st.session_state.current_page.text = st.session_state['_page_text_editing']
 
@@ -280,7 +295,7 @@ def character_entry(element):
     with element.form('character'):
         st.session_state['current_character'].to_form()
 
-    element.button(EnterText.cancel_character_button, width="stretch", on_click=adding_text)
+    element.button(EnterText.cancel_character_button, width="stretch", on_click=adding_text, key="enter_text_cancel_character_button")
 
 
 def alias_entry(element):
@@ -290,7 +305,7 @@ def alias_entry(element):
     # button) and prompt the user to add a character first.
     if not st.session_state.get('book_character_dict'):
         element.warning(AliasForm.no_characters)
-        element.button(EnterText.cancel_alias_button, width="stretch", on_click=adding_text)
+        element.button(EnterText.cancel_alias_button, width="stretch", on_click=adding_text, key="enter_text_cancel_alias_nochars_button")
         return
 
     st.session_state['current_alias'] = Alias(
@@ -300,7 +315,7 @@ def alias_entry(element):
     with element.form(form_key):
         st.session_state['current_alias'].to_form()
 
-    element.button(EnterText.cancel_alias_button, width="stretch", on_click=adding_text)
+    element.button(EnterText.cancel_alias_button, width="stretch", on_click=adding_text, key="enter_text_cancel_alias_button")
 
 
 def manage_characters_entry(element):
@@ -350,7 +365,7 @@ def manage_characters_entry(element):
                 ):
                     confirm_delete_character(character_doc.to_dict(), name)
 
-    element.button(ManageCharacters.done_button, width="stretch", on_click=adding_text)
+    element.button(ManageCharacters.done_button, width="stretch", on_click=adding_text, key="enter_text_manage_done_button")
 
 
 def run_character_detection():
@@ -590,7 +605,7 @@ def character_review_form(element):
                 "action": action,
             })
 
-        submitted = st.form_submit_button(EnterText.review_submit)
+        submitted = st.form_submit_button(EnterText.review_submit, key="enter_text_review_submit_button")
         if submitted:
             commit_detected_characters(rows)
 
@@ -686,8 +701,8 @@ if '_page_text_editing' not in st.session_state:
 user_entry_box(col2, image_height)
 
 butcol1, butcol2 = st.columns(2)
-return_button = butcol1.button(EnterText.back_to_menu_button, width="stretch")
-save_button = butcol2.button(EnterText.finish_submit_button, help=EnterText.save_help, width="stretch")
+return_button = butcol1.button(EnterText.back_to_menu_button, width="stretch", key="enter_text_back_to_menu_button")
+save_button = butcol2.button(EnterText.finish_submit_button, help=EnterText.save_help, width="stretch", key="enter_text_finish_submit_button")
 
 if return_button:
     st.switch_page("./pages/book_edit_home.py")

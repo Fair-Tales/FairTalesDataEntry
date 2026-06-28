@@ -2,7 +2,7 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 from st_keyup import st_keyup
 from text_content import Alerts, Instructions, old_books, BookPhotoEntry, UserHome
-from utilities import check_authentication_status, page_layout, navigate_to, clear_page_history
+from utilities import check_authentication_status, page_layout, navigate_to, clear_page_history, clear_entity_form_state
 from data_structures import Book
 import pandas as pd
 
@@ -13,7 +13,8 @@ def book_search():
     book_search_string = st.text_input(
         UserHome.book_search_label,
         value="",
-        help=UserHome.book_search_help
+        help=UserHome.book_search_help,
+        key="user_home_book_search_input"
     )
     if len(book_search_string) > 0:
         search_term = book_search_string.lower()
@@ -117,6 +118,10 @@ def add_book():
     # book entry so the new book form starts blank.
     for _key in ('current_author', 'current_illustrator', 'current_publisher', 'adding_book_entries'):
         st.session_state.pop(_key, None)
+    # Drop persisted book-form widget state so the new (empty document_id) book
+    # re-seeds from value=/index= rather than inheriting the previous new book's
+    # values (see #80).
+    clear_entity_form_state("book_form_")
     navigate_to("./pages/add_book.py")
 
 def add_book_from_photos():
@@ -131,6 +136,10 @@ def add_book_from_photos():
         '_upload_pipeline_done',
     ):
         st.session_state.pop(_key, None)
+    # Drop persisted book-form widget state so the new (empty document_id) book
+    # re-seeds from value=/index= rather than inheriting the previous new book's
+    # values (see #80).
+    clear_entity_form_state("book_form_")
     navigate_to("./pages/add_book_photos.py")
 
 def review_my_books():

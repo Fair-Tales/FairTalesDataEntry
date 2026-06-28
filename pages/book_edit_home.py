@@ -124,13 +124,13 @@ if (
     st.session_state.current_book.page_count > 0
     and st.session_state.current_book.photos_uploaded
 ):
-    if st.button(BookEditHome.suggest_themes_button):
+    if st.button(BookEditHome.suggest_themes_button, key="book_edit_suggest_themes_button"):
         suggest_themes()
 
-if st.button(BookEditHome.back_to_home_button):
+if st.button(BookEditHome.back_to_home_button, key="book_edit_back_home_button"):
     st.switch_page("./pages/user_home.py")
 
-if st.button(BookEditHome.finish_submit_button):
+if st.button(BookEditHome.finish_submit_button, key="book_edit_finish_submit_button"):
     confirm_submit()
 
 

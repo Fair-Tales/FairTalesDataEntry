@@ -86,12 +86,14 @@ if 'initialised' not in st.session_state:
 # Token is valid and unexpired — let the user set a new password.
 with st.form("reset_password_form"):
     new_password = st.text_input(
-        PasswordReset.new_password_label, type="password", value=""
+        PasswordReset.new_password_label, type="password", value="",
+        key="reset_password_new_input"
     )
     confirm_password = st.text_input(
-        PasswordReset.confirm_password_label, type="password", value=""
+        PasswordReset.confirm_password_label, type="password", value="",
+        key="reset_password_confirm_input"
     )
-    submitted = st.form_submit_button(PasswordReset.submit_button_text)
+    submitted = st.form_submit_button(PasswordReset.submit_button_text, key="reset_password_submit_button")
 
 if submitted:
     if not new_password or not confirm_password:

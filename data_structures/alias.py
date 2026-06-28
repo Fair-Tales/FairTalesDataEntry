@@ -38,6 +38,11 @@ class Alias(DataStructureBase):
 
         st.header(AliasForm.header)
 
+        # Capture the entity id once, before any field is written back, so every
+        # widget key below stays constant for this render. Keying per
+        # document_id stops one alias's values bleeding into the next (#80).
+        key_suffix = self.document_id
+
         # Aliases may only be added to characters that belong to the book
         # currently being edited, so scope the options to the book-specific
         # lookup rather than the global character dict.
@@ -57,12 +62,18 @@ class Alias(DataStructureBase):
         selected_character = st.selectbox(
             AliasForm.select_character_label,
             options=character_options,
-            index=character_index
+            index=character_index,
+            key=f"alias_form_character_{key_suffix}"
         )
 
-        self.name = st.text_input(AliasForm.alias_label, value=self.name)
+        self.name = st.text_input(
+            AliasForm.alias_label, value=self.name,
+            key=f"alias_form_name_{key_suffix}"
+        )
 
-        submitted = st.form_submit_button(AliasForm.save_button)
+        submitted = st.form_submit_button(
+            AliasForm.save_button, key=f"alias_form_submit_{key_suffix}"
+        )
 
         if submitted:
             # Resolve the selected name to its reference via the book-scoped
