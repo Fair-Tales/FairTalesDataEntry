@@ -787,3 +787,70 @@ class Validation:
     intro = "Here you may validate inputted data"
     # Shown when an archivist (below team tier) tries to open the validation page.
     not_authorised = "This page is only accessible to project team members and admins."
+
+    # --- Awaiting-validation list (issue #47, Part A) ---
+    list_header = "Books awaiting validation"
+    list_intro = (
+        "Select a submitted book to review and validate. A book appears here "
+        "once an archivist has submitted it and it has not yet been validated."
+    )
+    none_pending = "There are no submitted books awaiting validation right now."
+    select_book_label = "Submitted books:"
+    open_review_button = "Open for review"
+
+    # --- Review surface ---
+    review_header = "Reviewing: {title}"
+    review_intro = (
+        "Correct any errors in the metadata, page text and characters below. "
+        "Every correction you make is recorded — together with the original "
+        "value — to the edit log. When the entry is correct and complete, "
+        "approve it at the bottom of the page."
+    )
+    back_to_list_button = "← Back to list (do not approve)"
+    tab_metadata = "Metadata"
+    tab_pages = "Page text"
+    tab_characters = "Characters & aliases"
+
+    # --- Metadata editor ---
+    metadata_header = "Book metadata"
+    title_readonly_caption = (
+        "The title is the book's identity (it keys its pages and characters) and "
+        "cannot be changed here."
+    )
+    none_option = "—"
+    save_metadata_button = "Save metadata corrections"
+    metadata_saved = "Metadata corrections saved."
+
+    # --- Page-text editor ---
+    pages_header = "Page text"
+    no_pages = "This book has no pages recorded yet."
+    page_select_label = "Page:"
+    page_contains_story_label = "This page contains story text"
+    page_text_label = "Page text (correct the transcription):"
+    page_not_entered = "No text has been entered for this page yet — you can add it below."
+    save_page_button = "Save page-text corrections"
+    page_saved = "Page-text corrections saved."
+
+    # --- Characters & aliases editor ---
+    characters_header = "Characters & aliases"
+    no_characters = "This book has no characters recorded yet."
+    character_select_label = "Character:"
+    save_character_button = "Save character corrections"
+    character_saved = "Character corrections saved."
+    character_name_required = "A character must have a name."
+    rename_exists = "Another character with that name already exists in this book."
+    aliases_label = "Aliases"
+    no_aliases = "No aliases are recorded for this character."
+    alias_name_label = "Alias name:"
+    save_alias_button = "Save alias"
+    alias_saved = "Alias correction saved."
+    alias_exists = "Another alias with that name already exists in this book."
+
+    # --- Approval ---
+    approve_header = "Approve this entry"
+    approve_help = (
+        "Mark this book as validated once you are confident the data is correct "
+        "and complete. This records you as the validator."
+    )
+    approve_button = "Approve & mark validated"
+    approved_success = "“{title}” has been approved and marked as validated."

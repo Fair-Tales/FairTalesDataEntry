@@ -933,6 +933,19 @@ class FirestoreWrapper:
         doc_ref = db.collection(collection).document(document)
         doc_ref.update({field: value})
 
+    def add_document(self, collection, data):
+        """Append a new document with a Firestore-generated id.
+
+        Unlike ``save_to_db``/``set`` (which write to a deterministic,
+        content-derived ``document_id``), this uses Firestore's ``add()`` to
+        create an auto-id document. It is used for append-only records that have
+        no natural key — currently the ``edit_log`` audit collection (issue #47,
+        Part B). Returns the new ``DocumentReference``.
+        """
+        db = self.connect_book()
+        _timestamp, doc_ref = db.collection(collection).add(data)
+        return doc_ref
+
 
 # ---------------------------------------------------------------------------
 # Cached lookup-dict loaders (issue #53 — reduce Firestore read traffic).
