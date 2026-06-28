@@ -648,6 +648,7 @@ class BookEditHome:
     menu_edit_metadata = "Edit metadata"
     menu_upload_photos = "Upload photos"
     menu_enter_text = "Enter text"
+    menu_manage_characters = "Manage characters"
 
     suggest_themes_button = "🏷 Suggest themes"
     back_to_home_button = "Back to home menu."
