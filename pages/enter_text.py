@@ -711,6 +711,13 @@ if 'current_page_number' not in st.session_state:
 if 'now_entering' not in st.session_state:
     st.session_state['now_entering'] = 'text'
 
+# Allow the book-edit menu's "Manage characters" item to open this page directly
+# at the manage-characters view (issue #106). Apply the flag here — after the
+# per-book init above, which resets now_entering to 'text' when the book changes
+# — and clear it so it only takes effect on this entry.
+if st.session_state.pop('_open_manage_characters', False):
+    st.session_state['now_entering'] = 'manage'
+
 # create_current_page_from_db()
 st.session_state.current_page = st.session_state.book_pages_dict[
     st.session_state.current_page_number
