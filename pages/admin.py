@@ -3,14 +3,21 @@ import zipfile
 import csv
 import streamlit as st
 from google.api_core.exceptions import GoogleAPIError
-from utilities import page_layout, check_authentication_status, FirestoreWrapper, is_admin
+from utilities import (
+    page_layout,
+    check_authentication_status,
+    FirestoreWrapper,
+    is_admin,
+    resolve_role,
+    VALID_ROLES,
+    ROLE_ADMIN,
+)
 from text_content import FeedbackExport, Admin
 
 check_authentication_status()
 
-# Admin-only page (#83): user/book deletion, data export/download and other
-# privileged management actions live here. Role is set on the user document
-# directly for now (no in-app role-management UI yet — see #47/#69).
+# Admin-only page (#83): user/book deletion, data export/download, role
+# management (#47) and other privileged management actions live here.
 if not is_admin():
     st.error(Admin.not_admin)
     st.stop()
@@ -20,6 +27,113 @@ page_layout()
 st.title(Admin.title)
 
 st.page_link("pages/validation.py", label=Admin.validation_link_label)
+st.divider()
+
+# ---------------------------------------------------------------------------
+# Manage user roles (#47 / #83). Admins can grant or revoke the three-tier
+# roles in-app instead of editing the Firestore user document by hand. The
+# ``User`` entity is the documented raw-dict exception (#90), so the role is
+# written directly to the document rather than via DataStructureBase.
+st.header(Admin.manage_roles_header)
+st.write(Admin.manage_roles_description)
+
+# A successful save reruns to re-read the list; carry the success message
+# across that rerun via session state so the feedback is not lost.
+role_flash = st.session_state.pop('admin_role_flash', None)
+if role_flash:
+    st.success(role_flash)
+
+db = FirestoreWrapper().connect_user(auth=False)
+try:
+    user_docs = list(db.collection('users').stream())
+except GoogleAPIError as e:
+    st.error(Admin.roles_load_error.format(error=e))
+    user_docs = None
+
+if user_docs is not None:
+    if not user_docs:
+        st.info(Admin.roles_empty_message)
+    else:
+        current_username = st.session_state.get('username', '')
+        # The user document id is the username (see username_to_doc_ref).
+        for doc in sorted(user_docs, key=lambda d: d.id.lower()):
+            username = doc.id
+            current_role = resolve_role(doc.to_dict())
+
+            # Guard the index lookup: resolve_role always returns a valid role,
+            # but never assume a stored value is still a valid option (#91).
+            default_index = (
+                VALID_ROLES.index(current_role)
+                if current_role in VALID_ROLES
+                else 0
+            )
+
+            col_name, col_select, col_save = st.columns([3, 2, 1])
+            with col_name:
+                st.write(f"**{username}**")
+                st.caption(
+                    Admin.role_current_caption.format(
+                        role=Admin.role_labels.get(current_role, current_role)
+                    )
+                )
+            with col_select:
+                new_role = st.selectbox(
+                    Admin.role_select_label,
+                    options=VALID_ROLES,
+                    index=default_index,
+                    format_func=lambda r: Admin.role_labels.get(r, r),
+                    key=f"admin_role_select_{username}",
+                    label_visibility="collapsed",
+                )
+            with col_save:
+                save = st.button(
+                    Admin.role_save_button,
+                    key=f"admin_role_save_{username}",
+                )
+
+            if save:
+                # Self-lockout safeguard: an admin must not demote their own
+                # account out of the admin role, or they lose this page.
+                if (
+                    username == current_username
+                    and current_role == ROLE_ADMIN
+                    and new_role != ROLE_ADMIN
+                ):
+                    st.warning(Admin.role_self_demote_blocked)
+                elif new_role == current_role:
+                    # No change — re-affirm so the admin gets clear feedback.
+                    st.info(
+                        Admin.role_updated_success.format(
+                            username=username,
+                            role=Admin.role_labels.get(new_role, new_role),
+                        )
+                    )
+                else:
+                    try:
+                        # Keep the legacy ``admin`` boolean (#90 raw-dict)
+                        # truthful so existing admin-flag reads stay correct:
+                        # set it when promoting to admin, clear it otherwise.
+                        db.collection('users').document(username).update(
+                            {'role': new_role, 'admin': new_role == ROLE_ADMIN}
+                        )
+                    except GoogleAPIError as e:
+                        st.error(
+                            Admin.role_update_error.format(
+                                username=username, error=e
+                            )
+                        )
+                    else:
+                        # Stash feedback, then rerun to re-read the list so it
+                        # reflects the new role (the message survives via the
+                        # session-state flash popped at the top of the section).
+                        st.session_state['admin_role_flash'] = (
+                            Admin.role_updated_success.format(
+                                username=username,
+                                role=Admin.role_labels.get(new_role, new_role),
+                            )
+                        )
+                        st.rerun()
+
 st.divider()
 
 st.header(Admin.user_data_header)
