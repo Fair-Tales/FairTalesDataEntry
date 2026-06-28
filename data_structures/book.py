@@ -266,6 +266,14 @@ class Book(DataStructureBase):
         points at this book, so existing data keeps working transparently.
         """
         refs = self.characters
+        # Older book documents may store `characters` as a non-list value (an
+        # earlier schema kept a numeric character *count* under this name), so
+        # treat anything that isn't a list as "no list yet".
+        if not isinstance(refs, list):
+            refs = []
+
+        # Back-fill from the character documents' own `book` reference for books
+        # that predate the book->characters list (or whose value we just reset).
         if not refs and self.is_registered:
             book_ref = self.get_ref()
             refs = [
@@ -274,14 +282,22 @@ class Book(DataStructureBase):
                     collection='characters', field='book', op='==', value=book_ref
                 )
             ]
-            if refs:
-                # Persist the back-filled list so we only pay for this once.
-                self.characters = refs
 
         character_dict = {}
+        existing_refs = []
         for ref in refs:
             doc = ref.get()
             if doc.exists:
                 character_dict[doc.to_dict()['name']] = ref
+                existing_refs.append(ref)
+
+        # Persist the resolved list so the repair is paid for once: this
+        # overwrites a legacy non-list value, saves a back-filled list, and
+        # prunes any dangling references. Short-circuit guards len() against a
+        # legacy non-list value and avoids a write when nothing changed.
+        if self.is_registered:
+            stored = self.characters
+            if not isinstance(stored, list) or len(existing_refs) != len(stored):
+                self.characters = existing_refs
         return character_dict
 

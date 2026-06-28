@@ -57,13 +57,16 @@ class DataStructureBase(ABC):
         else:
             self.reading_from_db = True
             for key in self.fields.keys():
-                if key in db_object:
+                if key in db_object and not self._is_missing(db_object[key]):
                     setattr(self, key, self.safe_cast(db_object[key]))
                 else:
                     # Backward compatibility: documents written before a field
-                    # was added to this structure won't contain the key. Fall
-                    # back to the declared default rather than raising KeyError,
-                    # so older records stay readable as the schema grows.
+                    # was added to this structure won't contain the key — and a
+                    # document read via pandas surfaces a missing field as NaN (a
+                    # float) rather than an absent key. In both cases fall back to
+                    # the declared default rather than raising KeyError or storing
+                    # NaN (which breaks code expecting the declared type, e.g.
+                    # iterating Book.characters), so older records stay readable.
                     setattr(self, key, self._default_for(key))
             self.reading_from_db = False
 
@@ -87,6 +90,17 @@ class DataStructureBase(ABC):
             return bool(value)
         else:
             return value
+
+    @staticmethod
+    def _is_missing(value):
+        """True if ``value`` represents a missing field.
+
+        A document read via pandas surfaces a missing field as NaN (a float)
+        rather than an absent key. Stored verbatim that breaks any code
+        expecting the declared type (e.g. iterating ``Book.characters``), so we
+        treat NaN as "field not present" and fall back to the declared default.
+        """
+        return isinstance(value, float) and np.isnan(value)
 
     def get_field(self, field, convert_ref_fields_to_ids=False):
         if convert_ref_fields_to_ids and field in self.ref_fields:

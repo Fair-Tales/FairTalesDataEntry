@@ -292,10 +292,10 @@ def manage_characters_entry(element):
         element.info(ManageCharacters.no_characters)
     else:
         for name, character_ref in character_dict.items():
+            character_doc = character_ref.get()
+            if not character_doc.exists:
+                continue
             with element.expander(name):
-                character_doc = character_ref.get()
-                if not character_doc.exists:
-                    continue
                 aliases = list(
                     st.session_state['firestore'].query_stream(
                         collection='aliases',
