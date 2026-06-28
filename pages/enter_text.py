@@ -467,7 +467,14 @@ def commit_detected_characters(rows):
             continue
 
         character.register()
-        st.session_state['character_dict'][name] = character.get_ref()
+        character_ref = character.get_ref()
+        # Link the new character to the book so it appears in the book's
+        # character list / Manage view (mirrors the manual character flow in
+        # Character.to_form); registering alone only writes the characters
+        # collection, not the book->characters list.
+        st.session_state['current_book'].add_character(character_ref)
+        st.session_state['character_dict'][name] = character_ref
+        st.session_state.setdefault('book_character_dict', {})[name] = character_ref
         created_count += 1
 
         for alias_name in row['_aliases']:
