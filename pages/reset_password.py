@@ -7,6 +7,7 @@ from google.cloud import firestore
 
 from utilities import FirestoreWrapper, page_layout, hash_password
 from text_content import PasswordReset
+from Home import initialise
 
 # NOTE: This page is intentionally reachable WHILE LOGGED OUT.  Do NOT add
 # check_authentication_status() here — a user resetting a forgotten password is
@@ -71,6 +72,16 @@ def _is_expired(expiry_value):
 if _is_expired(expiry):
     st.error(PasswordReset.expired_link)
     st.stop()
+
+# Token is valid and unexpired.  Initialise the session the way Home.py does on
+# first load — but WITHOUT its switch_page("login") — so that when control returns
+# to Home.py after this page runs, the 'initialised' guard is already set and the
+# fresh-load redirect to login does not fire before the user can use the form.
+# (Mirrors qr_landing.py, the other interactive logged-out deep-link page.)
+if 'initialised' not in st.session_state:
+    st.session_state['initialised'] = True
+    st.session_state['admin'] = False
+    initialise()
 
 # Token is valid and unexpired — let the user set a new password.
 with st.form("reset_password_form"):
