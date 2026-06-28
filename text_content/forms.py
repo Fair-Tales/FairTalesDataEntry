@@ -782,3 +782,88 @@ class Validation:
     """Strings for the data-validation page (pages/validation.py)."""
 
     intro = "Here you may validate inputted data"
+
+
+class CollectionPicker:
+    """Strings for the results collection-picker page (pages/collection_picker.py, #75)."""
+
+    page_title = "Choose a book collection"
+    intro = """
+        Pick which collection of books you want to see results for. You can choose
+        a ready-made collection, search our database to build your own, or upload
+        photos of a stack of books and we will match them for you.
+    """
+
+    # Method menu (option_menu)
+    menu_search = "Search & select"
+    menu_predefined = "Predefined collections"
+    menu_photo = "From photos"
+
+    # --- Current selection panel ---
+    selection_header = "Your selection"
+    selection_empty = (
+        "No books selected yet. Use one of the methods below to build a "
+        "collection, or view results across all books."
+    )
+    selection_count = "{n} book(s) in your collection."
+    remove_book_button = "Remove"
+    clear_selection_button = "Clear selection"
+    view_results_button = "View results for this collection"
+    view_all_button = "View results for all books instead"
+
+    # --- Method 1: search & select ---
+    search_header = "Search our database and tick the books you want"
+    search_label = "Search book titles"
+    search_results_found = "{count} matching book(s):"
+    add_book_checkbox = "{title}"
+
+    # --- Method 2: predefined collections ---
+    predefined_header = "Browse predefined collections"
+    predefined_none = "There are no predefined collections yet."
+    predefined_select_label = "Choose a collection"
+    predefined_owner_label = "Scope: {owner}"
+    predefined_books_label = "Books in this collection:"
+    predefined_use_button = "Load this collection into my selection"
+    predefined_view_button = "View results for this collection"
+    predefined_empty_collection = "This collection has no books."
+
+    create_header = "Save your current selection as a predefined collection"
+    create_help = (
+        "Creating predefined collections is intended for the FairTales team / "
+        "admins. You can still save one here; please use a clear, descriptive name."
+    )
+    create_name_label = "Collection name"
+    create_owner_label = "Owner / scope (optional — e.g. a school name)"
+    create_nothing_selected = (
+        "Select some books first (via search or photos), then save them as a "
+        "collection."
+    )
+    create_name_required = "Please give the collection a name."
+    create_exists = "A collection with that name and scope already exists."
+    create_button = "Save collection"
+    create_success = "Saved collection '{name}' with {n} book(s)."
+
+    # --- Method 3: from photos ---
+    photo_header = "Upload photos of your books"
+    photo_instructions = """
+        Upload one or more photos showing several books — either their front
+        covers, or a stack/shelf with the spines facing the camera so the titles
+        and authors are legible. We will read off the titles and match them to
+        books in our database.
+    """
+    photo_upload_label = "Upload book photo(s)"
+    photo_extract_button = "Read books from photo(s)"
+    photo_no_api_key = (
+        "Photo matching is unavailable because no AI API key is configured."
+    )
+    photo_extracting = "Reading the books in your photo(s)…"
+    photo_extract_failed = "Could not read the photo(s): {error}"
+    photo_none_found = (
+        "No book titles could be read from the photo(s). Try clearer, closer "
+        "photos with the titles facing the camera."
+    )
+    photo_matched_header = "Matched to our database ({count}):"
+    photo_unmatched_header = "Could not match these ({count}):"
+    photo_matched_item = "{extracted} → {matched}"
+    photo_add_matched_button = "Add matched books to my selection"
+    photo_added = "Added {n} matched book(s) to your selection."

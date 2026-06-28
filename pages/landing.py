@@ -22,4 +22,4 @@ with col2:
     st.subheader(Instructions.landing_view_results_label)
     st.write(Instructions.landing_view_results_description)
     if st.button(Instructions.landing_view_results_label, width="stretch", key="landing_view_results_button"):
-        navigate_to("./pages/results_dashboard.py")
+        navigate_to("./pages/collection_picker.py")
