@@ -205,6 +205,34 @@ expected format:
 
 Now analyse the image and return JSON:"""
 
+    # --- Collection from photos (issue #75) -------------------------------
+    # Sent ALL of the user's uploaded photos (front covers and/or spine stacks)
+    # at once; Claude lists the visible books (title + author) so they can be
+    # fuzzy-matched against the book database and assembled into a collection.
+    collection_books_extraction = """\
+You are shown one or more photographs of a group of children's picture books — \
+either their front covers facing the camera, or a stack/shelf of books with the \
+spines facing the camera. Identify EVERY distinct book you can read well enough \
+to make out its title.
+
+For each book, read off:
+- title: the book's title, exactly as printed on the cover or spine.
+- author: the author's name if it is legible, otherwise an empty string.
+
+Rules:
+- Only list a book if you can actually read its title. Do NOT guess, invent, or \
+look up titles or authors that are not clearly legible in the photo(s).
+- List each distinct book once, even if it appears in more than one photo.
+
+Respond with valid JSON only — no other text before or after. Example of the \
+expected format:
+{"books": [{"title": "The Gruffalo", "author": "Julia Donaldson"}, \
+{"title": "Room on the Broom", "author": "Julia Donaldson"}]}
+
+If you cannot read any books at all, respond with {"books": []}.
+
+Now analyse the image(s) and return JSON:"""
+
     page_extraction = """\
 Analyse this photo of a children's picture book page.
 

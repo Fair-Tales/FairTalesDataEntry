@@ -567,6 +567,66 @@ def extract_book_metadata(image_bytes, client):
     }
 
 
+def extract_books_from_photos(images, client):
+    """Extract the visible book titles + authors from one or more photos (#75).
+
+    ``images`` is a list of raw image byte strings (one per uploaded photo); all
+    of them are sent to Claude vision in a single request — using the same model
+    and JSON-fence-stripping convention as ``extract_book_metadata`` — so books
+    spread across several photos are read together and de-duplicated by the model.
+
+    Returns a list of ``{'title': str, 'author': str}`` dicts (``author`` may be
+    an empty string). Anthropic API errors are deliberately allowed to propagate
+    so the caller can surface them (per ``book_edit_home.py``'s pattern); only
+    response-parsing problems are handled here, by returning an empty list.
+    """
+    from text_content import AIPrompts
+
+    content = []
+    for image_bytes in images:
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": base64.standard_b64encode(image_bytes).decode('utf-8'),
+            },
+        })
+    content.append({"type": "text", "text": AIPrompts.collection_books_extraction})
+
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=2048,
+        messages=[{"role": "user", "content": content}],
+    )
+
+    try:
+        raw_text = response.content[0].text.strip()
+    except (IndexError, AttributeError):
+        return []
+
+    cleaned = raw_text
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("```")[1]
+        if cleaned.startswith("json"):
+            cleaned = cleaned[4:]
+    try:
+        result = json.loads(cleaned.strip())
+    except (json.JSONDecodeError, ValueError):
+        return []
+
+    raw_books = result.get('books', []) if isinstance(result, dict) else []
+    books = []
+    for entry in raw_books:
+        if not isinstance(entry, dict):
+            continue
+        title = str(entry.get('title') or "").strip()
+        author = str(entry.get('author') or "").strip()
+        if title:
+            books.append({'title': title, 'author': author})
+    return books
+
+
 def locate_key_pages(pages, client):
     """Locate the title-page and copyright-page positions in a set of book photos.
 
