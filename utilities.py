@@ -346,6 +346,24 @@ class FirestoreWrapper:
         db = self.connect_book()
         return db.collection(collection).stream()
 
+    def query_stream(self, collection, field, op, value):
+        """Stream documents from ``collection`` matching a single field filter.
+
+        Unlike ``get_by_field`` (which returns a DataFrame of values), this
+        yields the raw document snapshots so callers can access ``.id`` and
+        ``.reference`` — needed for deletion and reference look-ups.
+        """
+        db = self.connect_book()
+        return (
+            db.collection(collection)
+            .where(filter=FieldFilter(field, op, value))
+            .stream()
+        )
+
+    def delete_document(self, collection, doc_id):
+        db = self.connect_book()
+        db.collection(collection).document(doc_id).delete()
+
     def username_to_doc_ref(self, username):
         return self.connect_user().collection('users').document(username)
 

@@ -107,9 +107,49 @@ class Character(DataStructureBase):
                 st.warning(CharacterForm.character_exists)
             else:
                 self.register()
-                st.session_state['character_dict'][self.name] = self.get_ref()
+                character_ref = self.get_ref()
+                # Link the character to the book currently being edited so the
+                # book document holds the list of its characters.
+                current_book = st.session_state.get('current_book')
+                if current_book is not None:
+                    current_book.add_character(character_ref)
+                st.session_state['character_dict'][self.name] = character_ref
+                # Keep the book-scoped lookup (used for alias entry) in sync.
+                st.session_state.setdefault('book_character_dict', {})[self.name] = (
+                    character_ref
+                )
                 # Invalidate shared cache so new/other sessions re-read this
                 # character (this session sees it via the in-place update above).
                 load_character_dict.clear()
                 st.session_state['now_entering'] = 'text'
                 st.rerun()
+
+    def delete(self):
+        """Delete this character, its aliases, and unlink it from its book.
+
+        Deletes every alias whose ``character`` reference points at this
+        character, removes the character from the current book's character
+        list, prunes the session lookup dicts, then deletes the character
+        document itself.
+        """
+        firestore = st.session_state['firestore']
+        character_ref = self.get_ref()
+
+        for alias_doc in firestore.query_stream(
+            collection='aliases', field='character', op='==', value=character_ref
+        ):
+            firestore.delete_document(collection='aliases', doc_id=alias_doc.id)
+
+        current_book = st.session_state.get('current_book')
+        if current_book is not None:
+            current_book.remove_character(character_ref)
+
+        st.session_state.get('book_character_dict', {}).pop(self.name, None)
+        # Only drop the global entry if it still points at this character — a
+        # different book may hold a character with the same name.
+        global_dict = st.session_state.get('character_dict', {})
+        existing = global_dict.get(self.name)
+        if existing is not None and existing.path == character_ref.path:
+            global_dict.pop(self.name, None)
+
+        firestore.delete_document(collection='characters', doc_id=self.document_id)

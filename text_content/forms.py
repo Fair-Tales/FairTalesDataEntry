@@ -231,6 +231,45 @@ class AliasForm:
     character_exists = """
             This alias already exists in the database.
     """
+    no_characters = """
+        There are no characters in this book yet. Please add a character first,
+        then you can record their aliases.
+    """
+
+
+class ManageCharacters:
+
+    header = "Manage characters and aliases"
+    intro = """
+        Below are the characters you have recorded for this book. You can delete
+        a character — which also deletes all of its aliases — or delete an
+        individual alias. Deletions are permanent and cannot be undone.
+    """
+    no_characters = "No characters have been added to this book yet."
+    aliases_label = "Aliases:"
+    no_aliases = "No aliases recorded for this character."
+    manage_button = "Manage characters"
+    manage_help = """
+        View the characters recorded for this book and delete characters or
+        their aliases.
+    """
+    delete_character_button = "Delete character"
+    delete_alias_button = "Delete"
+    done_button = "Done"
+    delete_character_dialog_title = "Delete character?"
+    delete_character_warning = (
+        "Are you sure you want to delete '{name}'? This will also delete all of "
+        "this character's aliases. This action cannot be undone."
+    )
+    delete_alias_dialog_title = "Delete alias?"
+    delete_alias_warning = (
+        "Are you sure you want to delete the alias '{name}'? This action cannot "
+        "be undone."
+    )
+    confirm_delete_button = "Yes, delete"
+    cancel_button = "Cancel"
+    character_deleted = "Character deleted."
+    alias_deleted = "Alias deleted."
 
 
 class UserForm:

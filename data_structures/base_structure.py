@@ -52,13 +52,32 @@ class DataStructureBase(ABC):
 
         if db_object is None:
             for key in self.fields.keys():
-                setattr(self, key, self.fields[key])
+                setattr(self, key, self._default_for(key))
 
         else:
             self.reading_from_db = True
             for key in self.fields.keys():
-                setattr(self, key, self.safe_cast(db_object[key]))
+                if key in db_object:
+                    setattr(self, key, self.safe_cast(db_object[key]))
+                else:
+                    # Backward compatibility: documents written before a field
+                    # was added to this structure won't contain the key. Fall
+                    # back to the declared default rather than raising KeyError,
+                    # so older records stay readable as the schema grows.
+                    setattr(self, key, self._default_for(key))
             self.reading_from_db = False
+
+    def _default_for(self, key):
+        """Return a fresh copy of the declared default for ``key``.
+
+        Mutable defaults (e.g. a list-of-references field such as Book's
+        ``characters``) must be copied per instance, otherwise every object of
+        the class would share — and mutate — the same underlying container.
+        """
+        default = self.fields[key]
+        if isinstance(default, (list, dict, set)):
+            return type(default)(default)
+        return default
 
     @staticmethod
     def safe_cast(value):
