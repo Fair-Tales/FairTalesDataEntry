@@ -152,7 +152,11 @@ selected_option = option_menu(
     menu_icon="cast", orientation="horizontal",
     key="user_option_menu",
     styles={
-        "nav-link": {"font-size": "15px", "text-align": "left", "margin": "0px", "--hover-color": "#eee"},
+        # The menu now has 5 items and wraps to a second row on narrow phone
+        # screens. Vertical margin gives the wrapped row breathing room so its
+        # icon isn't clipped by the row above; the smaller font reduces wrapping.
+        "container": {"flex-wrap": "wrap", "padding": "0.25rem 0"},
+        "nav-link": {"font-size": "13px", "text-align": "center", "margin": "4px 2px", "--hover-color": "#eee"},
         "nav-link-selected": {"background-color": "green"},
     }
 )
