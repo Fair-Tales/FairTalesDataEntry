@@ -62,3 +62,25 @@ Status: `accepted` | `superseded` | `deprecated`.
 - New runtime dependency `streamlit-keyup==0.3.0`; developers/deploys must reinstall requirements before running.
 - `st_keyup` does not accept a `help` tooltip parameter (unlike `st.text_input`), so the previous help hint was folded into the field label.
 - If Streamlit ships native keystroke tracking, this component could be revisited and removed.
+
+---
+
+## 004 — Automated UI testing strategy: Playwright + Claude in Chrome (interim production-DB use)
+
+**Status:** accepted
+
+**Context:** With stable widget keys now in place (#80), we want automated testing of the Streamlit app. Three complementary approaches are available: (1) **Playwright** scripted regression tests (#82); (2) Anthropic's **"Claude in Chrome"** browser-agent extension (GA beta on paid plans, incl. Max, in 2026); and (3) driving a Chrome browser from within a Claude Code session via the `claude-in-chrome` MCP tools.
+
+**Decision:**
+- **Playwright (#82) is the deterministic regression backbone** — scripted tests for the core, *non-AI* user journeys (login, navigation, search, manual book entry/validation, manage characters, results dashboard), using the stable #80 keys. The Claude API calls are stubbed/avoided in these tests (assert the UI reaches the right state, not model output).
+- **Claude in Chrome / in-session Chrome driving is the exploratory layer** — reproducing bugs, verifying one-off flows, and offloading manual testing from the developer.
+- **Interim data policy:** while in active development (the database currently holds only a handful of books and test users, **not production**), automated tests **MAY run against the real Firestore/S3** and incur real Anthropic API costs. Accepted trade-off for development speed.
+
+**Reasons:**
+- Playwright gives repeatable, cheap, deterministic regression coverage; Claude-in-Chrome gives flexible, code-free exploration. They serve different needs.
+- The AI flows (vision extraction, ISBN lookup, character/alias detection, person lookup) are non-deterministic and cost API calls, so they are unsuitable for assertion in a deterministic suite.
+- A separate test environment is not yet justified given the tiny, non-production dataset.
+
+**Consequences / follow-up:**
+- **Before production launch / wider rollout:** stand up a **test environment** (separate Firestore database + S3 bucket, plus a way to stub the Anthropic API) so automated testing does not pollute the production database or incur uncontrolled cost. Ties into #2 (Firestore out of test mode) and #48 (decouple credentials/book DBs).
+- Anthropic notes Claude in Chrome is **not yet recommended for sensitive/mission-critical sites**; keep in mind as the app matures.
