@@ -181,18 +181,51 @@ if read_clicked:
                 or metadata.get('isbn_metadata')
             )
             if has_any:
+                st.session_state.pop('photo_extract_empty', None)
                 _apply_extracted_metadata(metadata)
                 st.success(BookPhotoEntry.extract_success)
                 navigate_to("./pages/add_book.py")
             else:
-                # Keep the raw response for audit even when nothing usable parsed.
+                # Nothing usable parsed. Keep the raw response + a diagnostic and
+                # flag the empty state so the "enter manually" UI below survives the
+                # rerun (the photos stay in photo_first_pages).
                 st.session_state['book_extraction_raw'] = metadata.get('raw')
                 st.session_state['book_extraction'] = metadata
-                st.warning(BookPhotoEntry.extract_empty)
+                st.session_state['photo_extract_empty'] = True
+                st.session_state['photo_extract_diag'] = {
+                    'pages': len(pages),
+                    'located': metadata.get('located'),
+                    'raw': metadata.get('raw'),
+                }
+
+# Persistent "couldn't extract — enter manually" state, rendered OUTSIDE the
+# read-click block so the proceed button survives the rerun the click triggers.
+if st.session_state.get('photo_extract_empty'):
+    st.warning(BookPhotoEntry.extract_empty)
+    _diag = st.session_state.get('photo_extract_diag') or {}
+    with st.expander(BookPhotoEntry.extract_diag_header):
+        st.write(BookPhotoEntry.extract_diag_pages.format(n=_diag.get('pages', 0)))
+        st.write(BookPhotoEntry.extract_diag_located.format(located=_diag.get('located')))
+        st.write(BookPhotoEntry.extract_diag_raw)
+        st.code(str(_diag.get('raw') or "")[:2000])
+    if st.button(
+        BookPhotoEntry.enter_manually_button, key="add_book_photos_manual_button"
+    ):
+        # Start the Add Book form blank (clear any leftover extracted selections),
+        # keep the uploaded photos so they're processed/stored as usual, and go.
+        for _key in (
+            'current_author', 'current_illustrator', 'current_publisher',
+            'extracted_author_name', 'extracted_illustrator_name',
+            'extracted_publisher_name', 'isbn_metadata', 'adding_book_entries',
+            'photo_extract_empty', 'photo_extract_diag',
+        ):
+            st.session_state.pop(_key, None)
+        navigate_to("./pages/add_book.py")
 
 cancel_button = st.button(BookPhotoEntry.cancel_text, key="add_book_photos_cancel_button")
 if cancel_button:
     # Remove any photos already uploaded to the temp prefix so they don't orphan.
     cleanup_prefix(_filesystem(), session_id)
-    st.session_state.pop('photo_first_pages', None)
+    for _key in ('photo_first_pages', 'photo_extract_empty', 'photo_extract_diag'):
+        st.session_state.pop(_key, None)
     st.switch_page("./pages/user_home.py")
