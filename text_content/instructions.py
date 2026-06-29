@@ -34,6 +34,14 @@ class Instructions:
         - Try to hold the book flat - you can use your thumb or finger.  
         - Please upload all photos in one batch.
     """
+    photo_naming_instructions = """
+        You don't need to rename your photos. Your phone names them in the order you take
+        them, and we put the pages back in that order from the file names — so just take the
+        photos in reading order and upload them all together (the order you pick them in
+        doesn't matter). Only tip: use the same phone and camera app for the whole book, as
+        mixing photos from different devices in one upload can put them out of order.
+    """
+
     photos_already_uploaded = """
         You have already uploaded photos for this book.
 

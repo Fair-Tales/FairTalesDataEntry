@@ -14,6 +14,7 @@ book = st.query_params.book
 
 st.title(QrLanding.title)
 st.write(Instructions.photo_upload_instructions)
+st.write(Instructions.photo_naming_instructions)
 
 db_user = FirestoreWrapper().connect_user(auth=False)
 db_book = FirestoreWrapper().connect_book(auth=False)
