@@ -16,15 +16,35 @@ assertions and create no data.
 | File | Journey |
 | --- | --- |
 | `test_login.py` | Login page renders; invalid creds → error; valid creds → landing |
-| `test_navigation.py` | Landing → Enter Data / View Results; user-home option menu |
-| `test_search.py` | Book & author search (non-matching query → warning) |
+| `test_navigation.py` | Landing → Enter Data; Landing → View Results (→ collection picker); user-home option menu |
+| `test_search.py` | Book & author live (`st_keyup`) search (non-matching query → warning) |
 | `test_add_book.py` | Add-a-Book form renders; blank-title required-field validation |
-| `test_results_dashboard.py` | Results dashboard renders (title + chart/empty state) |
-| `test_manage_characters.py` | Per-book management hub loads (skips if user has no books) |
+| `test_collection_picker.py` | Picker renders; 3 method tabs render; search no-match; empty-selection button disabled |
+| `test_results_dashboard.py` | Picker → "View all" → dashboard renders (title + chart/empty state) |
+| `test_validation.py` | Awaiting-validation list + submitted-only toggle (**team/admin only**) |
+| `test_batch_upload.py` | "Batch Upload" opens the batch page (header + upload widget + Detect button) |
+| `test_manage_characters.py` | Per-book hub loads; "Manage characters" route reaches a known state (#106) |
+| `test_sidebar_roles.py` | Role-gated sidebar links (Data validation / Admin) visibility + invariants |
 
 This is an extensible **scaffold**, not exhaustive coverage. Extension points are
 noted inline (e.g. matching-query search assertions and the deep "Manage
 characters" view, both of which need a seeded fixture book).
+
+### Wave-B updates baked in
+- **Book search is now a live `st_keyup` component** (key `book_search_keyup`),
+  not a plain `text_input` — typed via `helpers.fill_keyup`, same as author search.
+- **"View results" routes through the collection picker** (`collection_picker.py`,
+  #75) before the dashboard; the dashboard tests reach it via "View results for
+  all books".
+- New pages/flows covered: collection picker (#75), validation list (#47/#83),
+  batch upload (#84), the book-edit "Manage characters" route (#106), and
+  role-gated sidebar links (#83).
+
+### AI flows are NOT exercised
+Per `DECISIONS.md` 004, no AI path is triggered: collection "From photos"
+extraction, batch "Detect books" splitting, theme suggestion, character
+detection, ISBN/birth-year lookup. Those tests assert the UI reaches the right
+state only (the upload/Detect widgets render) and stop before submission.
 
 ## 1. Install
 
@@ -45,12 +65,18 @@ streamlit run Home.py                      # serves http://localhost:8501
 export APP_BASE_URL="http://localhost:8501"   # optional; this is the default
 export TEST_USER_EMAIL="you@example.com"      # a CONFIRMED test user
 export TEST_USER_PASSWORD="••••••••"
+# optional: the account's tier (archivist / team / admin). When set, the
+# role-gated tests assert exact validation-page + sidebar-link visibility;
+# unset → they skip. Use a team/admin account to cover the validation flow.
+export TEST_USER_ROLE="team"
 # optional: stable name for any data a future test creates (default: e2e-<unixtime>)
 export TEST_RUN_TAG="e2e-local"
 ```
 
 Tests that require a login `skip` (don't fail) when `TEST_USER_EMAIL` /
 `TEST_USER_PASSWORD` are unset, so the suite stays runnable without an account.
+The role-gated tests (`test_validation.py`, and the exact-visibility check in
+`test_sidebar_roles.py`) `skip` unless `TEST_USER_ROLE` is `team`/`admin`.
 No secrets are stored in the repo.
 
 ## 4. Run

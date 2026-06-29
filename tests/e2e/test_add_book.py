@@ -10,7 +10,7 @@ import helpers as h
 
 def _open_add_book_form(page):
     page.locator(f"{h.key(h.LANDING_ENTER_DATA)} button").click()
-    page.locator(h.key(h.BOOK_SEARCH_INPUT)).wait_for(
+    page.locator(h.key(h.BOOK_SEARCH_KEYUP)).wait_for(
         state="visible", timeout=h.RERUN_TIMEOUT
     )
     # 'Add a Book' navigates to add_book.py, which renders Book.to_form().

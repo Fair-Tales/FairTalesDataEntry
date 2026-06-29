@@ -60,6 +60,11 @@ jobs:
           APP_BASE_URL: http://127.0.0.1:8501
           TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
           TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
+          # Optional: the test account's permission tier (archivist / team /
+          # admin). When set, the role-gated tests (validation page + sidebar
+          # Data-validation / Admin links) assert exact visibility; otherwise
+          # they skip. Use a team/admin account to cover the validation flow.
+          TEST_USER_ROLE: ${{ secrets.TEST_USER_ROLE }}
         run: pytest tests/e2e/ -v
 
       - name: Upload artifacts on failure

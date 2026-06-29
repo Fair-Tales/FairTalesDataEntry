@@ -58,6 +58,20 @@ def test_credentials() -> dict:
 
 
 @pytest.fixture(scope="session")
+def test_user_role():
+    """The test user's permission tier, if known (env ``TEST_USER_ROLE``).
+
+    One of ``archivist`` / ``team`` / ``admin`` (utilities.VALID_ROLES). The
+    role-gated tests (validation page, sidebar Data-validation / Admin links)
+    use this to assert *exact* expected visibility. When it is unset those tests
+    fall back to role-independent invariants (or skip the role-specific parts),
+    so the suite stays runnable without knowing the account's tier.
+    """
+    role = os.environ.get("TEST_USER_ROLE")
+    return role.strip().lower() if role else None
+
+
+@pytest.fixture(scope="session")
 def test_run_tag() -> str:
     """A unique tag for any data a test must create (env override allowed).
 
