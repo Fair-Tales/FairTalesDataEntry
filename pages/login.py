@@ -34,6 +34,13 @@ def confirm(username, password, remember=False):
         # cookie_signing_key secret is configured.
         if remember:
             set_remember_cookie(username)
+            # Defer navigation: the CookieManager only writes the cookie when its
+            # component renders at the END of this run; st.switch_page would abort
+            # the run before that, so the cookie would never persist. Flag the
+            # redirect and let this run finish — the component write triggers a
+            # rerun, and the authenticated branch below then sends the user home.
+            st.session_state['_post_login_redirect'] = True
+            return
         st.switch_page("./pages/landing.py")
     elif result == "not_confirmed":
         # Password was correct but account not yet confirmed.  Store the
@@ -133,7 +140,8 @@ if is_authenticated():
     # reload (#111), send them straight to their home page rather than showing the
     # sign-out prompt. A user who navigated here deliberately while logged in (no
     # restore flag) still sees the sign-out view below.
-    if st.session_state.pop(RESTORED_FLAG, False):
+    if st.session_state.pop(RESTORED_FLAG, False) or \
+            st.session_state.pop('_post_login_redirect', False):
         st.switch_page("./pages/landing.py")
     username = st.session_state['username']
     st.title(Login.sign_out_title)

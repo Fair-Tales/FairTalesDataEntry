@@ -214,10 +214,14 @@ def restore_session_from_cookie():
         return
     if not remember_me_available():
         return
-    manager = _cookie_manager()
-    if manager is None:
-        return
-    raw = manager.get(COOKIE_NAME)
+    # Read the cookie SYNCHRONOUSLY from the incoming request headers
+    # (st.context.cookies) rather than the CookieManager component. The component
+    # only delivers values after an async frontend round-trip, so on a fresh hard
+    # reload it returns nothing on the first run and the user is bounced to login
+    # before it hydrates. st.context.cookies is populated from the request and is
+    # available immediately on the first run.
+    cookies = getattr(st.context, "cookies", None)
+    raw = cookies.get(COOKIE_NAME) if cookies else None
     if not raw:
         return
     username = _verify_token(raw)
