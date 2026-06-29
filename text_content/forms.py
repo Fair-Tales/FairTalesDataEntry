@@ -256,6 +256,16 @@ class BatchBookEntry:
     detail_illustrator = "Illustrator: {value}"
     detail_publisher = "Publisher: {value}"
     detail_year = "First published: {value}"
+    review_metadata_warning = (
+        "We couldn't read the details for **{count}** of these book(s). They'll "
+        "still be created, but you'll need to add the title and details yourself "
+        "via **Edit my books**. They're flagged below."
+    )
+    detail_metadata_error = (
+        "⚠️ The details for this book couldn't be read — it will be created with "
+        "a placeholder title. Please add the title and details via **Edit my "
+        "books** after creating."
+    )
     confirm_button = "Create {count} book(s)"
     start_over_button = "Start over"
     cancel_button = "Cancel"
@@ -267,7 +277,16 @@ class BatchBookEntry:
     # --- Done step ---
     done_header = "Books created"
     done_summary = "Created **{count}** book(s) from the batch:"
+    done_needs_details = (
+        "**{count}** of these book(s) need manual details: their title and "
+        "information couldn't be read, so they were saved with a placeholder "
+        "title. Please add the missing details via **Edit my books**."
+    )
     done_book_line = "- {title} ({pages} page(s))"
+    done_book_line_unread = (
+        "- {title} ({pages} page(s)) — ⚠️ metadata couldn't be read; please add "
+        "the title/details via **Edit my books**"
+    )
     done_note = (
         "Each book has been saved with its pages and any details we could read. "
         "Open **Edit my books** to review, add authors / illustrators / "

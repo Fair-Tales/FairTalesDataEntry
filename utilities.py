@@ -498,8 +498,11 @@ def extract_book_metadata(image_bytes, client):
     here, by returning empty fields alongside the raw text.
     """
     from text_content import AIPrompts
+    from image_processing import downscale_for_vision
 
-    image_data = base64.standard_b64encode(image_bytes).decode('utf-8')
+    image_data = base64.standard_b64encode(
+        downscale_for_vision(image_bytes)
+    ).decode('utf-8')
     response = client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=1024,
@@ -651,6 +654,7 @@ def locate_key_pages(pages, client):
     not be parsed. Anthropic API errors propagate to the caller.
     """
     from text_content import AIPrompts
+    from image_processing import downscale_for_vision
 
     pages = list(pages)
     content = []
@@ -661,7 +665,9 @@ def locate_key_pages(pages, client):
             "source": {
                 "type": "base64",
                 "media_type": "image/jpeg",
-                "data": base64.standard_b64encode(image_bytes).decode('utf-8'),
+                "data": base64.standard_b64encode(
+                    downscale_for_vision(image_bytes)
+                ).decode('utf-8'),
             },
         })
     content.append({"type": "text", "text": AIPrompts.locate_key_pages})
@@ -714,8 +720,11 @@ def extract_copyright_metadata(image_bytes, client):
     problems yield empty fields, and Anthropic API errors propagate to the caller.
     """
     from text_content import AIPrompts
+    from image_processing import downscale_for_vision
 
-    image_data = base64.standard_b64encode(image_bytes).decode('utf-8')
+    image_data = base64.standard_b64encode(
+        downscale_for_vision(image_bytes)
+    ).decode('utf-8')
     response = client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=512,
@@ -879,6 +888,7 @@ def locate_cover_pages(pages, client):
     Anthropic API errors propagate to the caller.
     """
     from text_content import AIPrompts
+    from image_processing import downscale_for_vision
 
     pages = list(pages)
     if not pages:
@@ -892,7 +902,9 @@ def locate_cover_pages(pages, client):
             "source": {
                 "type": "base64",
                 "media_type": "image/jpeg",
-                "data": base64.standard_b64encode(image_bytes).decode('utf-8'),
+                "data": base64.standard_b64encode(
+                    downscale_for_vision(image_bytes)
+                ).decode('utf-8'),
             },
         })
     content.append({"type": "text", "text": AIPrompts.locate_cover_pages})
