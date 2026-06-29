@@ -183,10 +183,17 @@ class BookPhotoEntry:
         "You can still enter the details manually."
     )
     extract_empty = (
-        "We couldn't extract any details from those photos. Please check the title "
-        "page is included and try again, or enter the details manually on the next "
-        "step."
+        "We couldn't extract any details from those photos. You can still add the "
+        "book — tap below to enter the details manually (your photos are kept), or "
+        "re-take a clearer shot of the title page and try Read the book again."
     )
+    enter_manually_button = "Enter the book's details manually →"
+    # Surfaced under an expander when extraction comes back empty, to help diagnose
+    # whether the title page was located and what the model actually returned.
+    extract_diag_header = "Details (for troubleshooting)"
+    extract_diag_pages = "Photos processed: {n}"
+    extract_diag_located = "Title / copyright page the AI located: {located}"
+    extract_diag_raw = "What the AI returned for the title page:"
     no_api_key = (
         "Automatic detail extraction requires an Anthropic API key. "
         "You can still enter the details manually."

@@ -37,6 +37,7 @@ Pressing Enter or saying "yes" / "ok" / "sure" does not count.
 
 ### Hard stops (never do, even with `AFFIRMATIVE`):
 - Never commit files matching `*.env`, `*secret*`, `*credential*`, `*token*`, `*api_key*`.
+- **Never merge into or push the `main` branch.** `main` is the production deploy branch (Streamlit Cloud auto-deploys from it) and is handled **exclusively by the user**. Prepare and integrate everything on `claude-dev`; the user performs the `main` merge + push themselves. Do not do it even if explicitly asked in passing — point the user to do it. (Decided 2026-06-29.)
 
 ## Environment
 - Python 3.10
