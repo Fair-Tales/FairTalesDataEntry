@@ -1,0 +1,72 @@
+name: e2e (Playwright)
+
+# Playwright end-to-end regression suite for the Streamlit app (issue #82).
+#
+# WHY CI: the dev workstation runs Ubuntu 18.04 (glibc 2.27); modern Playwright's
+# bundled browser driver needs glibc >= 2.28, so the suite cannot run there. A CI
+# runner (ubuntu-latest) has a modern glibc and is the intended home for it.
+#
+# STATUS — gated on a TEST ENVIRONMENT (see DECISIONS.md 004): the suite logs in
+# and reads/writes the REAL dev Firestore/S3 and can incur Anthropic API cost.
+# Before enabling on every push/PR, point the secrets below at a dedicated TEST
+# Firestore database + S3 bucket and a test/stub Anthropic key (ties to #2 / #48)
+# so CI never touches production data. Until then this runs only on manual
+# dispatch.
+
+on:
+  workflow_dispatch: {}        # manual "Run workflow" button for now
+  # pull_request:              # enable once a test environment is wired up
+  #   branches: [claude-dev, main]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Write Streamlit secrets
+        # Provide the full secrets.toml contents as a GitHub Actions secret.
+        # POINT THIS AT A TEST Firestore/S3 + test Anthropic key — not production.
+        env:
+          STREAMLIT_SECRETS_TOML: ${{ secrets.STREAMLIT_SECRETS_TOML }}
+        run: |
+          mkdir -p .streamlit
+          printf '%s' "$STREAMLIT_SECRETS_TOML" > .streamlit/secrets.toml
+
+      - name: Start the app
+        run: |
+          nohup streamlit run Home.py \
+            --server.address=127.0.0.1 --server.port=8501 --server.headless=true \
+            > streamlit.log 2>&1 &
+          # Wait for Streamlit's health endpoint to come up (max ~60s).
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8501/_stcore/health; then echo "app up"; break; fi
+            sleep 2
+          done
+
+      - name: Run Playwright e2e
+        env:
+          APP_BASE_URL: http://127.0.0.1:8501
+          TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
+          TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
+        run: pytest tests/e2e/ -v
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            streamlit.log
+            test-results/
