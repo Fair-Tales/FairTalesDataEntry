@@ -86,7 +86,13 @@ def page_layout(current_page=None):
     st.sidebar.page_link("pages/account_settings.py", label="Settings")
     st.sidebar.page_link("pages/donate.py", label="Donate")
     st.sidebar.page_link("pages/report_feedback.py", label="Report a Bug / Feature")
-    if 'admin' in st.session_state and st.session_state['admin']:
+    # Team members and admins can reach data validation straight from the sidebar
+    # (#47/#83); admin-only tools (the Admin page) stay hidden from team members.
+    role = st.session_state.get('role', 'archivist')
+    is_admin_user = st.session_state.get('admin', False) or role == 'admin'
+    if is_admin_user or role == 'team':
+        st.sidebar.page_link("pages/validation.py", label="Data validation")
+    if is_admin_user:
         st.sidebar.page_link("pages/admin.py", label="Admin")
     history = st.session_state.get('_page_history', [])
     # Hide Back during the guided book sub-entry flow (add author/illustrator/
