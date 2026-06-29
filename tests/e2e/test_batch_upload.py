@@ -26,7 +26,9 @@ def test_batch_upload_page_renders(logged_in_page):
     page.get_by_text(h.BATCH_HEADER, exact=False).first.wait_for(
         state="visible", timeout=h.RERUN_TIMEOUT
     )
-    assert page.locator(h.key(h.BATCH_UPLOADER)).is_visible()
+    # The file_uploader was replaced by the direct-to-S3 iframe uploader (#118,
+    # no widget key); assert the upload step rendered via its "Detect books" button.
+    assert page.locator(f"{h.key(h.BATCH_DETECT_BUTTON)} button").is_visible()
 
 
 def test_batch_detect_button_present(logged_in_page):

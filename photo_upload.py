@@ -73,41 +73,58 @@ def _s3_client():
     )
 
 
-def get_upload_session_id():
-    """Return a stable per-upload-session id, creating one on first use.
+def _session_state_key(flow_key):
+    """Session-state key holding the active upload-session id for ``flow_key``."""
+    return f"upload_session_{flow_key}"
 
-    Stored in ``st.session_state`` so it survives Streamlit reruns — a reload
-    therefore reuses the same ``uploads/{session_id}/`` prefix instead of
+
+def _counter_key(flow_key):
+    """Session-state key holding the per-flow upload counter."""
+    return f"upload_counter_{flow_key}"
+
+
+def get_upload_session_id(flow_key):
+    """Return a stable per-upload-session id for ``flow_key``, creating one on
+    first use.
+
+    ``flow_key`` namespaces independent upload surfaces (e.g. ``"single"``,
+    ``"pages"``, ``"batch"``, ``"collection"``) so concurrent flows in one
+    browser session never collide on the same temp prefix (#118). Stored in
+    ``st.session_state`` so it survives Streamlit reruns — a reload therefore
+    reuses the same ``uploads/{flow_key}/{session_id}/`` prefix instead of
     orphaning a fresh one. The id is ``<safe-username>_<counter>_<timestamp>``;
     the counter (bumped by :func:`reset_upload_session`) keeps consecutive
     uploads by the same user in one browser session distinct, and the timestamp
     avoids collisions across separate logins of the same user.
     """
-    if "photo_upload_session_id" not in st.session_state:
+    ss_key = _session_state_key(flow_key)
+    if ss_key not in st.session_state:
         username = st.session_state.get("username") or "anon"
         safe = re.sub(r"[^A-Za-z0-9_-]", "_", username) or "anon"
-        counter = st.session_state.get("photo_upload_counter", 0) + 1
-        st.session_state["photo_upload_counter"] = counter
-        st.session_state["photo_upload_session_id"] = f"{safe}_{counter}_{int(time.time())}"
-    return st.session_state["photo_upload_session_id"]
+        counter_key = _counter_key(flow_key)
+        counter = st.session_state.get(counter_key, 0) + 1
+        st.session_state[counter_key] = counter
+        st.session_state[ss_key] = f"{safe}_{counter}_{int(time.time())}"
+    return st.session_state[ss_key]
 
 
-def reset_upload_session():
-    """Drop the current upload-session id so the next session mints a fresh
-    prefix. Call at each "start a new photo entry" choke point.
+def reset_upload_session(flow_key):
+    """Drop the current upload-session id for ``flow_key`` so the next session
+    mints a fresh prefix. Call at each "start a new photo entry" choke point.
     """
-    st.session_state.pop("photo_upload_session_id", None)
+    st.session_state.pop(_session_state_key(flow_key), None)
 
 
-def upload_prefix(session_id):
-    """Return the temp S3 prefix (no bucket) for a session, e.g.
-    ``uploads/<session_id>``.
+def upload_prefix(flow_key, session_id):
+    """Return the temp S3 prefix (no bucket) for a flow/session, e.g.
+    ``uploads/<flow_key>/<session_id>``.
     """
-    return f"{UPLOAD_PREFIX_ROOT}/{session_id}"
+    return f"{UPLOAD_PREFIX_ROOT}/{flow_key}/{session_id}"
 
 
-def generate_put_urls(session_id, count=MAX_UPLOAD_PAGES):
-    """Return ``count`` presigned PUT URLs for ``uploads/{session_id}/page_{i}.jpg``.
+def generate_put_urls(flow_key, session_id, count=MAX_UPLOAD_PAGES):
+    """Return ``count`` presigned PUT URLs for
+    ``uploads/{flow_key}/{session_id}/page_{i}.jpg``.
 
     ``Content-Type`` is deliberately *not* signed, so the browser may PUT any
     image bytes (jpeg/png/heic) without having to match a signed header.
@@ -115,7 +132,7 @@ def generate_put_urls(session_id, count=MAX_UPLOAD_PAGES):
     client = _s3_client()
     urls = []
     for i in range(1, count + 1):
-        key = f"{upload_prefix(session_id)}/page_{i}.jpg"
+        key = f"{upload_prefix(flow_key, session_id)}/page_{i}.jpg"
         urls.append(
             client.generate_presigned_url(
                 "put_object",
@@ -126,14 +143,14 @@ def generate_put_urls(session_id, count=MAX_UPLOAD_PAGES):
     return urls
 
 
-def list_uploaded_keys(fs, session_id):
-    """Return the uploaded photo keys for a session in page order.
+def list_uploaded_keys(fs, flow_key, session_id):
+    """Return the uploaded photo keys for a flow/session in page order.
 
-    Uses s3fs to list ``{bucket}/uploads/{session_id}/`` and natural-sorts so
-    ``page_2`` precedes ``page_10``. Missing slots (e.g. a skipped page) simply
-    do not appear. Returns full ``bucket/key`` paths.
+    Uses s3fs to list ``{bucket}/uploads/{flow_key}/{session_id}/`` and
+    natural-sorts so ``page_2`` precedes ``page_10``. Missing slots (e.g. a
+    skipped page) simply do not appear. Returns full ``bucket/key`` paths.
     """
-    prefix = f"{S3_BUCKET}/{upload_prefix(session_id)}"
+    prefix = f"{S3_BUCKET}/{upload_prefix(flow_key, session_id)}"
     try:
         # refresh=True bypasses fsspec's directory-listing cache: the photos were
         # just PUT by the browser, so a cached (empty) listing from an earlier
@@ -145,8 +162,8 @@ def list_uploaded_keys(fs, session_id):
     return natsort.natsorted(keys)
 
 
-def fetch_uploaded_photos(fs, session_id):
-    """Download the session's uploaded photos into memory, in page order.
+def fetch_uploaded_photos(fs, flow_key, session_id):
+    """Download the flow/session's uploaded photos into memory, in page order.
 
     Returns a list of ``(name, image_bytes)`` tuples matching the shape the
     extraction pipeline (``extract_photo_first_metadata``) and the downstream
@@ -160,18 +177,18 @@ def fetch_uploaded_photos(fs, session_id):
     itself never touches the server, which is the memory win that matters.
     """
     photos = []
-    for key in list_uploaded_keys(fs, session_id):
+    for key in list_uploaded_keys(fs, flow_key, session_id):
         with fs.open(key, "rb") as handle:
             photos.append((key.rsplit("/", 1)[-1], handle.read()))
     return photos
 
 
-def cleanup_prefix(fs, session_id):
-    """Delete the temporary ``uploads/{session_id}/`` prefix from S3.
+def cleanup_prefix(fs, flow_key, session_id):
+    """Delete the temporary ``uploads/{flow_key}/{session_id}/`` prefix from S3.
 
     Safe to call when nothing was uploaded (a missing prefix is ignored).
     """
-    prefix = f"{S3_BUCKET}/{upload_prefix(session_id)}"
+    prefix = f"{S3_BUCKET}/{upload_prefix(flow_key, session_id)}"
     try:
         if fs.exists(prefix):
             fs.rm(prefix, recursive=True)
