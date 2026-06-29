@@ -2,17 +2,24 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 from utilities import page_layout, check_authentication_status, navigate_to
 from text_content import Instructions, PhotoUpload, Uploader, BookDataEntry
+from photo_upload import (
+    get_upload_session_id,
+    generate_put_urls,
+    build_uploader_html,
+)
 
 check_authentication_status()
 
-# TODO: change per file size limit?!
-# TODO: set file order (sort ascending? time modified? https://stackoverflow.com/questions/31588543/how-to-change-order-of-files-in-multiple-file-input)
+
 def upload_page_photos():
-    uploaded_files = st.file_uploader(Uploader.select_photos_label, accept_multiple_files=True, key="book_data_entry_uploader")
-    # for uploaded_file in uploaded_files:
-    #     bytes_data = uploaded_file.read()
-    #     st.write("filename:", uploaded_file.name)
-    #     #st.write(bytes_data)
+    # Direct browser-to-S3 upload (#118): replaces st.file_uploader so the native
+    # photo picker no longer drops the Streamlit websocket on mobile. This legacy
+    # page has no implemented downstream yet (Save is a stub), so the uploader is
+    # rendered here for consistency; photos land in uploads/data_entry/{session_id}/.
+    st.write(Uploader.direct_upload_instructions)
+    session_id = get_upload_session_id("data_entry")
+    put_urls = generate_put_urls("data_entry", session_id)
+    st.iframe(build_uploader_html(put_urls), height=460)
 
 
 def enter_text():

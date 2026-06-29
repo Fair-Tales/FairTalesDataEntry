@@ -1,7 +1,6 @@
 import base64
 import json
 import s3fs
-import natsort
 import streamlit as st
 import anthropic
 from data_structures import Page
@@ -13,7 +12,18 @@ from text_content import Instructions, AIPrompts, BookPhotoEntry, Uploader
 from utilities import (
     page_layout, check_authentication_status, extract_isbn, lookup_isbn
 )
-from photo_upload import cleanup_prefix
+from photo_upload import (
+    get_upload_session_id,
+    generate_put_urls,
+    build_uploader_html,
+    fetch_uploaded_photos,
+    cleanup_prefix,
+)
+
+# Direct-to-S3 upload flow key (#118) for the shared page-photo / QR-phone upload
+# widget. Namespaces its temp prefix (uploads/pages/{session_id}/) so it never
+# collides with the other migrated surfaces (single / batch / collection).
+UPLOAD_FLOW_KEY = "pages"
 
 
 def extract_page_info(image_bytes, client):
@@ -235,36 +245,45 @@ def upload_widget(on_submit='enter_text'):
         secret=st.secrets['AWS_SECRET_ACCESS_KEY']
     )
 
-    # TODO: set file order (sort ascending? time modified?)
     def upload_page_photos():
         # Photos captured in the photo-first flow (#59) are reused here so the
         # user does not have to upload them a second time.
         stashed = st.session_state.get('photo_first_pages')
+        # Streamlit re-runs on every interaction; the pipeline must run only once.
+        done = st.session_state.get('_upload_pipeline_done', False)
 
         if stashed:
-            # Only run the pipeline once (Streamlit re-runs on every interaction).
-            if not st.session_state.get('_upload_pipeline_done', False):
+            if not done:
                 st.write(BookPhotoEntry.reuse_notice.format(count=len(stashed)))
                 sort_file_names = [name for name, _ in stashed]
                 raw_bytes_list = [data for _, data in stashed]
                 _process_photo_batch(raw_bytes_list, sort_file_names, fs)
         else:
-            uploaded_files = st.file_uploader(
-                Uploader.select_photos_label,
-                accept_multiple_files=True,
-                key="uploader_file_uploader",
-            )
-            if not uploaded_files:
-                return
+            # Direct browser-to-S3 upload (#114/#118): replaces st.file_uploader,
+            # which drops the Streamlit websocket on mobile while the native photo
+            # picker is full-screen. Mint a stable per-session temp prefix
+            # (uploads/pages/{session_id}/) + presigned PUT URLs, render the
+            # browser-side uploader (each photo PUTs straight from the device to
+            # S3, full-resolution), then discover what landed by listing the S3
+            # prefix when the user taps "Process photos".
+            st.write(Uploader.direct_upload_instructions)
+            session_id = get_upload_session_id(UPLOAD_FLOW_KEY)
+            put_urls = generate_put_urls(UPLOAD_FLOW_KEY, session_id)
+            st.iframe(build_uploader_html(put_urls), height=460)
 
-            # Only run the pipeline once. Streamlit re-runs the script when the
-            # user clicks Continue — the file uploader still holds the selected
-            # files on that re-run, so without this guard the whole pipeline
-            # would fire again before st.switch_page redirects.
-            if not st.session_state.get('_upload_pipeline_done', False):
-                file_dict = {file.name: file for file in uploaded_files}
-                sort_file_names = natsort.natsorted(list(file_dict.keys()), reverse=False)
-                raw_bytes_list = [file_dict[name].getvalue() for name in sort_file_names]
+            process = st.button(Uploader.process_button, key="uploader_process_button")
+            if not done:
+                if not process:
+                    return
+                with st.spinner(BookPhotoEntry.reading_photos):
+                    pages = fetch_uploaded_photos(fs, UPLOAD_FLOW_KEY, session_id)
+                if not pages:
+                    st.warning(Uploader.no_photos_uploaded)
+                    return
+                # fetch_uploaded_photos already returns the photos in page order
+                # (natsorted page_1..page_N as the browser PUT them).
+                sort_file_names = [name for name, _ in pages]
+                raw_bytes_list = [data for _, data in pages]
                 _process_photo_batch(raw_bytes_list, sort_file_names, fs)
 
         st.write(Uploader.upload_complete)
@@ -275,12 +294,15 @@ def upload_widget(on_submit='enter_text'):
             st.session_state.pop('book_pages_dict', None)
             st.session_state.pop('photo_first_pages', None)
             # The photos have now been processed into sawimages/{title}/, so the
-            # direct-upload temp prefix (uploads/{session_id}/, #114) is no longer
-            # needed — delete it and drop the session id so a new entry mints a
-            # fresh one.
-            session_id = st.session_state.pop('photo_upload_session_id', None)
-            if session_id:
-                cleanup_prefix(fs, session_id)
+            # direct-upload temp prefixes (uploads/{flow}/{session_id}/, #114/#118)
+            # are no longer needed. Delete whichever fed this widget — the
+            # photo-first reuse path uses the "single" flow, the direct page-upload
+            # path uses "pages" — and drop the session ids so a new entry mints
+            # fresh ones.
+            for flow_key in (UPLOAD_FLOW_KEY, "single"):
+                session_id = st.session_state.pop(f"upload_session_{flow_key}", None)
+                if session_id:
+                    cleanup_prefix(fs, flow_key, session_id)
             if on_submit == 'enter_text':
                 st.switch_page("./pages/enter_text.py")
             else:

@@ -57,10 +57,12 @@ def test_collection_method_tabs_render(logged_in_page):
     )
 
     # Method 3: From photos -> the upload widget (we never trigger extraction).
+    # The uploader is now a direct-to-S3 iframe (#118, no widget key), so assert
+    # the method rendered via its always-present "Read books" extract button.
     h.click_option_menu(
         page, h.COLLECTION_MENU_PHOTO, wrapper_key=h.COLLECTION_METHOD_MENU
     )
-    page.locator(h.key(h.COLLECTION_PHOTO_UPLOADER)).wait_for(
+    page.locator(h.key(h.COLLECTION_PHOTO_EXTRACT_BUTTON)).wait_for(
         state="visible", timeout=h.RERUN_TIMEOUT
     )
 

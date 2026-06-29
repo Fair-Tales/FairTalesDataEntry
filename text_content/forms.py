@@ -252,6 +252,14 @@ class BatchBookEntry:
         create them.
     """
     upload_label = "Select all the page photos for the batch (in order)"
+    # Direct-to-S3 browser upload (#118). Each photo PUTs straight from the device
+    # to S3 at full resolution, bypassing the websocket that drops on mobile.
+    direct_upload_instructions = (
+        "Tap **Select book photos** and choose every page across all the books, in "
+        "order (remember the black separator photos between books). Each photo "
+        "uploads straight from your device — watch the progress bars, then tap "
+        "**Detect books** once they have all finished."
+    )
     no_api_key = (
         "Without an Anthropic API key we can still split books on the black "
         "separator photos, but we can't auto-detect covers, read titles, or "
@@ -939,6 +947,20 @@ class Uploader:
     upload_complete = "Page photo upload complete, you may continue."
     continue_button = "Continue"
 
+    # Direct-to-S3 browser upload (#114/#118). Replaces st.file_uploader so the
+    # native photo picker no longer drops the Streamlit websocket on mobile; each
+    # photo PUTs straight from the device to S3 at full resolution.
+    direct_upload_instructions = (
+        "Tap **Select page photos** and choose this book's pages in page order. "
+        "Each photo uploads straight from your device — watch the progress bars, "
+        "then tap **Process photos** once they have all finished."
+    )
+    process_button = "Process photos"
+    no_photos_uploaded = (
+        "We couldn't find any uploaded photos yet. Please select your page photos "
+        "above and wait for every progress bar to finish, then try again."
+    )
+
 
 class BookDataEntry:
     """Strings for the legacy book-data-entry page (pages/book_data_entry.py)."""
@@ -1102,6 +1124,18 @@ class CollectionPicker:
         books in our database.
     """
     photo_upload_label = "Upload book photo(s)"
+    # Direct-to-S3 browser upload (#118). These cover/spine photos are transient —
+    # they are only used to read titles, never archived — so the temp S3 prefix is
+    # cleaned up straight after they are read.
+    photo_direct_upload_instructions = (
+        "Tap **Select book photos** and choose your cover/spine photo(s). Each "
+        "uploads straight from your device — watch the progress bars, then tap "
+        "**Read books from photo(s)** once they have all finished."
+    )
+    photo_no_photos_uploaded = (
+        "We couldn't find any uploaded photos yet. Please select your book photo(s) "
+        "above and wait for every progress bar to finish, then try again."
+    )
     photo_extract_button = "Read books from photo(s)"
     photo_no_api_key = (
         "Photo matching is unavailable because no AI API key is configured."

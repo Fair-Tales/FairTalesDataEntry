@@ -149,8 +149,8 @@ def add_book_from_photos():
     ):
         st.session_state.pop(_key, None)
     # Start a fresh direct-to-S3 upload session (#114) so the new entry mints its
-    # own uploads/{session_id}/ prefix rather than reusing the previous one.
-    reset_upload_session()
+    # own uploads/single/{session_id}/ prefix rather than reusing the previous one.
+    reset_upload_session("single")
     # Drop persisted book-form widget state so the new (empty document_id) book
     # re-seeds from value=/index= rather than inheriting the previous new book's
     # values (see #80).
@@ -161,6 +161,9 @@ def add_books_batch():
     # Clear any leftover batch-flow state so a new batch starts at the upload step.
     for _key in ('batch_step', 'batch_method', 'batch_detected', 'batch_results'):
         st.session_state.pop(_key, None)
+    # Mint a fresh direct-to-S3 upload session (#118) for the batch's temp prefix
+    # (uploads/batch/{session_id}/) so a new batch never reuses the previous one.
+    reset_upload_session("batch")
     navigate_to("./pages/add_books_batch.py")
 
 def review_my_books():

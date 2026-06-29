@@ -38,6 +38,11 @@ from photo_upload import (
 check_authentication_status()
 page_layout(current_page="./pages/add_book_photos.py")
 
+# Direct-to-S3 upload flow key (#118): namespaces this surface's temp prefix
+# (uploads/single/{session_id}/) so it never collides with the other migrated
+# upload surfaces (pages / batch / collection) within one browser session.
+UPLOAD_FLOW_KEY = "single"
+
 
 def _match_person(extracted_name, lookup_dict_key, extracted_session_key, current_key):
     """Fuzzy-match an extracted author/illustrator name against an existing lookup
@@ -134,8 +139,8 @@ st.write(BookPhotoEntry.direct_upload_instructions)
 # the Streamlit websocket that drops on mobile while the native photo picker is
 # full-screen. The component is intentionally one-way: we discover what landed by
 # listing the S3 prefix when the user clicks "Read the book".
-session_id = get_upload_session_id()
-put_urls = generate_put_urls(session_id)
+session_id = get_upload_session_id(UPLOAD_FLOW_KEY)
+put_urls = generate_put_urls(UPLOAD_FLOW_KEY, session_id)
 # st.iframe (Streamlit 1.56+) replaces the deprecated st.components.v1.html. An HTML
 # string is embedded via srcdoc exactly as before (same-origin preserved, so the
 # browser→S3 PUT still uses the app origin that the S3 CORS policy allows).
@@ -151,7 +156,7 @@ if read_clicked:
     with st.spinner(BookPhotoEntry.reading_photos):
         # List the temp prefix and pull the uploaded photos (in page order) into
         # memory. See photo_upload.fetch_uploaded_photos for the memory tradeoff.
-        pages = fetch_uploaded_photos(_filesystem(), session_id)
+        pages = fetch_uploaded_photos(_filesystem(), UPLOAD_FLOW_KEY, session_id)
 
     if not pages:
         st.warning(BookPhotoEntry.no_photos_uploaded)
@@ -227,7 +232,7 @@ if st.session_state.get('photo_extract_empty'):
 cancel_button = st.button(BookPhotoEntry.cancel_text, key="add_book_photos_cancel_button")
 if cancel_button:
     # Remove any photos already uploaded to the temp prefix so they don't orphan.
-    cleanup_prefix(_filesystem(), session_id)
+    cleanup_prefix(_filesystem(), UPLOAD_FLOW_KEY, session_id)
     for _key in ('photo_first_pages', 'photo_extract_empty', 'photo_extract_diag'):
         st.session_state.pop(_key, None)
     st.switch_page("./pages/user_home.py")
