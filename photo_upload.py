@@ -203,6 +203,9 @@ _UPLOADER_TEMPLATE = """
     #ftu .ftu-status { width: 1.4rem; text-align: center; font-weight: 700; }
     #ftu .ftu-status.ok { color: #1f9d55; }
     #ftu .ftu-status.err { color: #d1453b; }
+    /* Bound the per-photo list so a long book scrolls internally (st.iframe has no
+       `scrolling` param like the old components.html). */
+    #ftu #ftu-list { max-height: 300px; overflow-y: auto; }
     #ftu #ftu-summary { margin-top: 0.75rem; font-weight: 600; }
   </style>
 

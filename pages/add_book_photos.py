@@ -17,7 +17,6 @@ the #63 ISBN/copyright-page machinery reachable (#103) for AI-assisted data entr
 
 import s3fs
 import streamlit as st
-import streamlit.components.v1 as components
 import anthropic
 
 from text_content import BookPhotoEntry
@@ -137,7 +136,10 @@ st.write(BookPhotoEntry.direct_upload_instructions)
 # listing the S3 prefix when the user clicks "Read the book".
 session_id = get_upload_session_id()
 put_urls = generate_put_urls(session_id)
-components.html(build_uploader_html(put_urls), height=460, scrolling=True)
+# st.iframe (Streamlit 1.56+) replaces the deprecated st.components.v1.html. An HTML
+# string is embedded via srcdoc exactly as before (same-origin preserved, so the
+# browser→S3 PUT still uses the app origin that the S3 CORS policy allows).
+st.iframe(build_uploader_html(put_urls), height=460)
 
 read_clicked = st.button(
     BookPhotoEntry.read_button,
