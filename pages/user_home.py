@@ -1,197 +1,199 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
-from text_content import Alerts, Instructions, old_books
-from utilities import check_authentication_status, page_layout, FirestoreWrapper
+from st_keyup import st_keyup
+from text_content import Alerts, Instructions, old_books, BookPhotoEntry, BatchBookEntry, UserHome
+from utilities import check_authentication_status, page_layout, navigate_to, clear_page_history, clear_entity_form_state
 from data_structures import Book
 import pandas as pd
 
 check_authentication_status()
 
+
+def _person_name_from_ref(ref):
+    """Resolve an author/illustrator value to a display name, tolerant of legacy
+    data: a Firestore DocumentReference (-> 'forename surname'), a plain string
+    stored instead of a reference (used directly), a deleted/empty doc, or a
+    missing value (-> the Unknown label)."""
+    if ref is None:
+        return UserHome.unknown
+    if isinstance(ref, str):
+        return ref.replace('_', ' ').strip() or UserHome.unknown
+    if hasattr(ref, 'get'):
+        data = ref.get().to_dict() or {}
+        return ' '.join(
+            [data.get('forename', ''), data.get('surname', '')]
+        ).strip() or UserHome.unknown
+    return UserHome.unknown
+
+
+def _publisher_name_from_ref(ref):
+    """Resolve a publisher value to a display name, tolerant of legacy data
+    (DocumentReference, plain string, deleted/empty doc, or missing)."""
+    if ref is None:
+        return UserHome.unknown
+    if isinstance(ref, str):
+        return ref.replace('_', ' ').strip() or UserHome.unknown
+    if hasattr(ref, 'get'):
+        data = ref.get().to_dict() or {}
+        return data.get('name', UserHome.unknown)
+    return UserHome.unknown
+
+
 # TODO: migrate to a proper search service like Algolia?
 def book_search():
-    book_search_string = st.text_input(
-        "Search our database by book title.",
+    # Live-filter as the user types (issue #104). st_keyup reruns on each keystroke;
+    # the 300ms debounce limits how often the book lookup runs while typing.
+    book_search_string = st_keyup(
+        UserHome.book_search_label,
         value="",
-        help="You can enter either all or part of the title."
+        debounce=300,
+        key="book_search_keyup",
     )
-    if len(book_search_string) > 0:
+    if book_search_string and len(book_search_string) > 0:
+        search_term = book_search_string.lower()
 
-        search_title = book_search_string.lower()
-
-        #old_titles = [
-        #    title for title in old_books
-        #    if book_search_string.lower() in title.lower()
-        #]
-        #if len(old_titles) > 0:
-        #    st.write(f"These titles were found from the original dataset: {old_titles}")
-
-        #else:
-        titles = [
+        matching_titles = [
             title for title in st.session_state['book_dict'].keys()
-            if search_title in title.lower()
+            if search_term in title.lower()
         ]
 
-        books = [
-            st.session_state.firestore.get_by_field(
-                'books', 'title', title
-            )
-            for title in titles
-        ]
-
-        if len(books) > 0:
-            books = pd.concat(books)
-            books.author = [
-                ' '.join([
-                    a.get().to_dict()['forename'],
-                    a.get().to_dict()['surname']
-                ])
-                for a in books.author
-            ]
-            books.publisher = [
-                a.get().to_dict()['name']
-                for a in books.publisher
-                ]
-            books.illustrator = [
-                ' '.join([
-                    a.get().to_dict()['forename'],
-                    a.get().to_dict()['surname']
-                ])
-                for a in books.illustrator
-            ]
-            st.write('Results:')
-            st.write(books[['title', 'author', 'publisher', 'illustrator']])
-        else:
+        if len(matching_titles) == 0:
             st.warning(Alerts.no_matching_book)
-        # # TODO: combine author names...
-        # if len(books) > 0:
-        #     books.author = [
-        #         a.get().to_dict()['surname']
-        #         for a in books.author
-        #     ]
-        #
-        #     st.write("Results:")
-        #     st.write(books)
+        else:
+            st.write(UserHome.results_found.format(count=len(matching_titles)))
+            for title in matching_titles:
+                book_ref = st.session_state['book_dict'][title]
+                book_data = book_ref.get().to_dict()
 
-def author_books(author):
+                author_name = _person_name_from_ref(book_data.get('author'))
 
-    db_book = st.session_state.firestore.connect_book()
-    author_ref = db_book.document(
-        f"authors/"+ author[0] + f'_' + author[1]
-    )
-    print(author_ref)
-    author_books = st.session_state.firestore.get_by_field(
-        collection="books",
-        field="author",
-        match=author_ref
-    )
+                published = book_data.get('published', '')
+                year_str = f" ({published})" if published else ""
 
-    if author_books.empty:
-        st.warning(Alerts.no_matching_book)
-    else:
-        author_books.publisher = [
-            a.get().to_dict()['name']
-            for a in author_books.publisher
-            ]
-        author_books.illustrator = [
-            ' '.join([
-                a.get().to_dict()['forename'],
-                a.get().to_dict()['surname']
-            ])
-            for a in author_books.illustrator
-        ]
-        st.subheader('Books written by ' + author[0].capitalize() + ' ' + author[1].capitalize() + ':')
-        st.dataframe(author_books, column_order=("title", "published", "publisher", "illustrator"))#, column_config={1: 'title', 2: 'publisher'})
+                with st.expander(UserHome.book_expander.format(title=title, year_str=year_str, author=author_name)):
+                    publisher_name = _publisher_name_from_ref(book_data.get('publisher'))
+                    illustrator_name = _person_name_from_ref(book_data.get('illustrator'))
 
-        clear = st.button('clear')
-        if clear:
-            del st.session_state['author_df']
-
+                    st.write(UserHome.publisher_label.format(name=publisher_name))
+                    st.write(UserHome.illustrator_label.format(name=illustrator_name))
 
 def author_search():
-    author_search_string = st.text_input(
-        "Search our database by author name.",
+    # Live-filter as the user types (issue #72). st_keyup reruns on each keystroke;
+    # the 300ms debounce limits how often the author lookup runs while typing.
+    author_search_string = st_keyup(
+        Instructions.author_search_label,
         value="",
-        help="You can enter either all or part of the name."
+        debounce=300,
+        key="author_search_keyup",
     )
-    if len(author_search_string) > 0:
+    if author_search_string and len(author_search_string) > 0:
+        search_term = author_search_string.lower()
 
-        if 'search_name' not in st.session_state:
-            st.session_state['search_name'] = author_search_string.lower().split()
+        matching_names = [
+            full_name for full_name in st.session_state['author_dict'].keys()
+            if search_term in full_name.lower()
+        ]
 
-        elif author_search_string.lower().split() != st.session_state['search_name']:
-            del st.session_state['search_name']
-            if 'author_df' in st.session_state:
-                del st.session_state['author_df']
+        if len(matching_names) == 0:
+            st.warning(Alerts.no_matching_author)
+        else:
+            st.write(UserHome.results_found.format(count=len(matching_names)))
+            for full_name in matching_names:
+                author_ref = st.session_state['author_dict'][full_name]
+                author_data = author_ref.get().to_dict()
 
+                birth_year = author_data.get('birth_year')
+                birth_year_str = str(birth_year) if birth_year and birth_year > 0 else UserHome.unknown
+                gender = author_data.get('gender') or UserHome.not_recorded
 
-        if 'search_name' in st.session_state:
-            names = []
-            for author in st.session_state['author_dict']:
-                for name in st.session_state['search_name']:
-                    if name in author.lower():
-                        names.append(author.split())
-
-            db = FirestoreWrapper().connect_book(auth=False)
-            author_stream = (
-                db.collection('authors')
-                .where('forename', '==', name[0])
-                .where('surname', '==', name[1])
-                .stream()
-                for name in names
-            )
-
-            authors = []
-
-            for author in author_stream:
-                for entry in author:
-                    authors.append([entry.to_dict()['forename'].lower(), entry.to_dict()['surname'].lower()])
-
-            if len(authors) > 0:
-                if 'author_df' not in st.session_state:
-                    st.dataframe(
-                        authors,
-                        column_config={1: 'forename', 2: 'surname'},
-                        on_select = 'rerun',
-                        selection_mode= 'single-row',
-                        key='author_df'
-                        )
-                else:
-                    author_books(authors[st.session_state['author_df'].get('selection').get('rows')[0]])
-            else:
-                st.warning(Alerts.no_matching_author)
+                with st.expander(UserHome.author_expander.format(name=full_name, birth_year=birth_year_str, gender=gender)):
+                    books_df = st.session_state.firestore.get_by_field(
+                        collection='books',
+                        field='author',
+                        match=author_ref
+                    )
+                    if books_df.empty:
+                        st.write(UserHome.no_books_for_author)
+                    else:
+                        st.write(UserHome.books_label)
+                        for _, book_row in books_df.iterrows():
+                            title = book_row.get('title', UserHome.unknown_title)
+                            published = book_row.get('published', '')
+                            year_str = f" ({published})" if published else ""
+                            st.write(f"- {title}{year_str}")
 
 
 def add_book():
     st.session_state['current_book'] = Book()
-    st.switch_page("./pages/add_book.py")
+    # Clear any leftover entity selections / flow flag from a previous (cancelled)
+    # book entry so the new book form starts blank.
+    for _key in ('current_author', 'current_illustrator', 'current_publisher', 'adding_book_entries'):
+        st.session_state.pop(_key, None)
+    # Drop persisted book-form widget state so the new (empty document_id) book
+    # re-seeds from value=/index= rather than inheriting the previous new book's
+    # values (see #80).
+    clear_entity_form_state("book_form_")
+    navigate_to("./pages/add_book.py")
+
+def add_book_from_photos():
+    st.session_state['current_book'] = Book()
+    # Clear any leftover entity selections / flow flags / extraction state from a
+    # previous (cancelled) book entry so the photo-first flow starts blank.
+    for _key in (
+        'current_author', 'current_illustrator', 'current_publisher',
+        'adding_book_entries', 'extracted_author_name',
+        'extracted_illustrator_name', 'extracted_publisher_name',
+        'photo_first_pages', 'book_extraction', 'book_extraction_raw',
+        '_upload_pipeline_done',
+    ):
+        st.session_state.pop(_key, None)
+    # Drop persisted book-form widget state so the new (empty document_id) book
+    # re-seeds from value=/index= rather than inheriting the previous new book's
+    # values (see #80).
+    clear_entity_form_state("book_form_")
+    navigate_to("./pages/add_book_photos.py")
+
+def add_books_batch():
+    # Clear any leftover batch-flow state so a new batch starts at the upload step.
+    for _key in ('batch_step', 'batch_method', 'batch_detected', 'batch_results'):
+        st.session_state.pop(_key, None)
+    navigate_to("./pages/add_books_batch.py")
 
 def review_my_books():
-    st.switch_page("./pages/review_my_books.py")
+    navigate_to("./pages/review_my_books.py")
 
-page_layout()
+clear_page_history()
+page_layout(current_page="./pages/user_home.py")
 
-st.title("Fair Tales Data Entry Tool")
+st.title(Instructions.app_title)
 
 st.write(Instructions.home_intro)
 st.write(Instructions.advise_to_search)
 
 selected_option = option_menu(
-    None, ["Search Books", "Search Authors", "Add a Book", "Edit my Books"],
+    None,
+    [UserHome.menu_search_books, UserHome.menu_search_authors, UserHome.menu_add_book, BookPhotoEntry.menu_label, BatchBookEntry.menu_label, UserHome.menu_edit_books],
     default_index=0,
-    icons=['search', 'search', 'database-add', 'pencil-square'],
+    icons=['search', 'search', 'database-add', 'camera', 'images', 'pencil-square'],
     menu_icon="cast", orientation="horizontal",
     key="user_option_menu",
     styles={
-        "nav-link": {"font-size": "15px", "text-align": "left", "margin": "0px", "--hover-color": "#eee"},
+        # The menu now has 6 items and wraps to a second row on narrow phone
+        # screens. Vertical margin gives the wrapped row breathing room so its
+        # icon isn't clipped by the row above; the smaller font reduces wrapping.
+        "container": {"flex-wrap": "wrap", "padding": "0.25rem 0"},
+        "nav-link": {"font-size": "13px", "text-align": "center", "margin": "4px 2px", "--hover-color": "#eee"},
         "nav-link-selected": {"background-color": "green"},
     }
 )
 
 navigation_dict = {
-    "Search Books": book_search,
-    "Search Authors": author_search,
-    "Add a Book": add_book,
-    "Edit my Books": review_my_books
+    UserHome.menu_search_books: book_search,
+    UserHome.menu_search_authors: author_search,
+    UserHome.menu_add_book: add_book,
+    BookPhotoEntry.menu_label: add_book_from_photos,
+    BatchBookEntry.menu_label: add_books_batch,
+    UserHome.menu_edit_books: review_my_books
 }
 
 navigation_dict[selected_option]()

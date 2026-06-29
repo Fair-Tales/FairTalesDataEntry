@@ -41,14 +41,23 @@ class Publisher(DataStructureBase):
 
         st.header(PublisherForm.header)
 
-        self.name = st.text_input("Name", value= self.name)
+        # Capture the entity id once, before any field is written back, so every
+        # widget key below stays constant for this render. Keying per
+        # document_id stops one publisher's values bleeding into the next (#80).
+        key_suffix = self.document_id
+
+        self.name = st.text_input(
+            PublisherForm.name_label, value=self.name,
+            key=f"publisher_form_name_{key_suffix}"
+        ).strip()
 
         year_given = int(st.selectbox(
-            "Which year was the publisher founded?",
+            PublisherForm.founding_year_label,
             options = (x for x in ([-1, -2]+[y for y in range(1900, (date.today().year + 1))])),
-            index=94,
-            placeholder="Select year of founding",
-            format_func = lambda x: "I don't know" if x == -1 else ("Earlier year" if x == -2 else str(x))
+            index=0,
+            placeholder=PublisherForm.founding_year_placeholder,
+            format_func = lambda x: PublisherForm.founding_year_unknown if x == -1 else (PublisherForm.founding_year_earlier if x == -2 else str(x)),
+            key=f"publisher_form_founding_year_{key_suffix}"
         ))
 
         if year_given > 0:
@@ -56,9 +65,14 @@ class Publisher(DataStructureBase):
         else:
             self.founding_year = None
 
-        submitted = st.form_submit_button("Submit")
+        submitted = st.form_submit_button(
+            PublisherForm.submit_button, key=f"publisher_form_submit_{key_suffix}"
+        )
 
         if submitted:
+            if not self.name.strip():
+                st.warning(PublisherForm.name_required)
+                return
             if st.session_state.firestore.document_exists(
                 collection='publishers',
                 doc_id=self.document_id

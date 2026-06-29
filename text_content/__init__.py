@@ -1,5 +1,13 @@
 from text_content.alerts import Alerts
 from text_content.instructions import Instructions
+from text_content.donate import Donate
 from text_content.terms import Terms
 from text_content.forms import *
 from text_content.old_books import old_books
+from text_content.ai_prompts import AIPrompts
+from text_content.forms import (
+    ReportFeedback, Login, AddCharacterPage, BookEditHome, Admin, RegisterUser,
+    PhotoUpload, ReviewBooks, Confirm, UserHome, Uploader, BookDataEntry,
+    QrLanding, Validation, CollectionPicker, BatchBookEntry,
+)
+from text_content.priority_books import PriorityBooks

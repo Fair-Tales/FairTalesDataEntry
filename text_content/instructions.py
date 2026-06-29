@@ -1,8 +1,18 @@
 class Instructions:
+    app_title = "Fair Tales Data Entry Tool"
+
     home_intro = """
         Welcome to the data entry tool for the SAWS project!
         Thank you for taking the time to enter data for us.
     """
+
+    @staticmethod
+    def last_saved(timestamp):
+        """Reassurance message that the book's edits are persisted (issue #53).
+
+        ``timestamp`` is a timezone-aware UTC datetime (Book.last_updated).
+        """
+        return f"Last saved: {timestamp:%Y-%m-%d %H:%M UTC}"
 
     advise_to_search = """
         Before adding a book to our database, please search to check that we do not already have the book. You can also 
@@ -24,6 +34,14 @@ class Instructions:
         - Try to hold the book flat - you can use your thumb or finger.  
         - Please upload all photos in one batch.
     """
+    photos_already_uploaded = """
+        You have already uploaded photos for this book.
+
+        You can continue straight to entering the text, or replace the photos if
+        you need to re-take, re-order or add pages. Replacing will re-upload and
+        re-process the whole set of photos for this book.
+    """
+
     go_to_phone_instructions = """
         First take the photos on your phone. 
         Then scan the QR code below, which will take you to the upload page.
@@ -73,3 +91,25 @@ class Instructions:
         Page photo upload was successful!
         You can now close this window and return to enter the book text on your other device.
     """
+
+    landing_intro = """
+        What would you like to do today?
+    """
+
+    landing_enter_data_label = "Enter data"
+
+    landing_enter_data_description = """
+        Contribute to the project by entering book and character data.
+    """
+
+    landing_view_results_label = "View results"
+
+    landing_view_results_description = """
+        Explore the research results for our collection of books.
+    """
+
+    landing_results_coming_soon = """
+        The results viewer is coming soon! Check back later to explore our research findings.
+    """
+
+    author_search_label = "Search by author name (filters as you type)"

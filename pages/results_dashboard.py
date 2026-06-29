@@ -1,0 +1,121 @@
+import altair as alt
+import pandas as pd
+import streamlit as st
+
+from utilities import check_authentication_status, page_layout
+from text_content import CharacterForm, ResultsDashboard
+
+check_authentication_status()
+
+page_layout(current_page="./pages/results_dashboard.py")
+
+st.title(ResultsDashboard.page_title)
+st.write(ResultsDashboard.intro)
+
+
+def _book_id(book_ref):
+    """Normalise a book reference (DocumentReference or id string) to its id.
+
+    A collection (see #75) may store either Firestore DocumentReferences or plain
+    document-id strings, and a character's ``book`` field is a DocumentReference.
+    Returning the id for both lets us compare them directly.
+    """
+    if book_ref is None:
+        return None
+    if isinstance(book_ref, str):
+        return book_ref
+    return getattr(book_ref, "id", None)
+
+
+# Determine the scope. Default is all books; if a collection of book
+# references/ids is held in session state, restrict to characters in that set.
+selected_collection = st.session_state.get("selected_collection")
+scope_ids = None
+if selected_collection:
+    scope_ids = {_book_id(item) for item in selected_collection}
+    scope_ids.discard(None)
+
+# Single read of the characters collection, aggregated in Python afterwards.
+characters = st.session_state.firestore.get_all_documents_stream(
+    collection="characters"
+)
+
+gender_options = CharacterForm.gender_options
+human_counts = {gender: 0 for gender in gender_options}
+nonhuman_counts = {gender: 0 for gender in gender_options}
+
+for character in characters:
+    data = character.to_dict()
+    gender = data.get("gender")
+    if gender not in gender_options:
+        # Skip characters with no/unknown gender so the chart only shows the
+        # four defined categories.
+        continue
+    if scope_ids is not None and _book_id(data.get("book")) not in scope_ids:
+        continue
+    if data.get("human", True):
+        human_counts[gender] += 1
+    else:
+        nonhuman_counts[gender] += 1
+
+combined_counts = {
+    gender: human_counts[gender] + nonhuman_counts[gender]
+    for gender in gender_options
+}
+total_in_scope = sum(combined_counts.values())
+
+if scope_ids:
+    st.caption(ResultsDashboard.scope_collection_caption.format(n=len(scope_ids)))
+else:
+    st.caption(ResultsDashboard.scope_all_caption)
+
+
+def _render_chart(title, counts):
+    st.subheader(title)
+    chart_df = pd.DataFrame(
+        {
+            "gender": gender_options,
+            "count": [counts[g] for g in gender_options],
+        }
+    )
+    # Percentage each bar represents of ALL characters in scope, so the human and
+    # non-human shares are directly comparable and together match the combined
+    # chart.
+    chart_df["pct"] = chart_df["count"].apply(
+        lambda c: (c / total_in_scope * 100) if total_in_scope else 0
+    )
+    chart_df["label"] = chart_df.apply(
+        lambda r: f"{int(r['count'])} ({r['pct']:.0f}%)", axis=1
+    )
+
+    base = alt.Chart(chart_df).encode(
+        x=alt.X(
+            "gender:N",
+            title=ResultsDashboard.gender_column_label,
+            sort=gender_options,
+            axis=alt.Axis(labelAngle=0),
+        ),
+        y=alt.Y("count:Q", title=ResultsDashboard.count_column_label),
+        # Explicitly disable the hover/tap tooltip that Streamlit's default chart
+        # theme enables — it lingers on touch devices and overlaps other charts.
+        tooltip=alt.value(None),
+    )
+    bars = base.mark_bar()
+    labels = base.mark_text(dy=-7, color="black").encode(text="label:N")
+    # No .interactive() and no tooltip -> a static (non-zoomable) chart.
+    chart = (bars + labels).properties(height=320)
+    st.altair_chart(chart, use_container_width=True)
+
+
+if total_in_scope == 0:
+    st.info(ResultsDashboard.empty_message)
+else:
+    _render_chart(ResultsDashboard.combined_chart_title, combined_counts)
+    _render_chart(ResultsDashboard.human_chart_title, human_counts)
+    _render_chart(ResultsDashboard.nonhuman_chart_title, nonhuman_counts)
+
+st.divider()
+st.subheader(ResultsDashboard.work_in_progress_header)
+st.write(ResultsDashboard.work_in_progress_intro)
+for item in ResultsDashboard.work_in_progress_items:
+    st.markdown(f"- {item}")

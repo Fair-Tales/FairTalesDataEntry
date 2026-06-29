@@ -1,4 +1,5 @@
 import streamlit as st
+import anthropic
 from text_content import AuthorForm
 from .base_structure import DataStructureBase, Field
 from datetime import date
@@ -10,7 +11,7 @@ class Author(DataStructureBase):
         'is_registered': False,
         'forename': "",
         'surname': "",
-        'birth_year': 1970,
+        'birth_year': None,
         'gender': "",
         'entered_by': None,
         'datetime_created': -1,
@@ -42,19 +43,51 @@ class Author(DataStructureBase):
         return self.name.lower().replace(" ", "_")
 
     def to_form(self):
+        from utilities import lookup_person_details
 
         st.header(AuthorForm.header)
 
-        self.forename = st.text_input("First name", value=self.forename)
-        self.surname = st.text_input("Surname", value=self.surname)
+        # Capture the entity id once, before any field is written back, so every
+        # widget key below stays constant for this render. Keying per
+        # document_id stops one author's values bleeding into the next (#80).
+        key_suffix = self.document_id
 
-        year_given = int(st.selectbox(
-            "What is the author's birth year?",
-            options = (x for x in ([-1, -2]+[y for y in range(1900, (date.today().year - 15))])),
-            index=94,
-            placeholder="Select year of birth",
-            format_func = lambda x: "I don't know" if x == -1 else ("Earlier year" if x == -2 else str(x))
-        ))
+        self.forename = st.text_input(
+            AuthorForm.forename_label, value=self.forename,
+            key=f"author_form_forename_{key_suffix}"
+        ).strip()
+        self.surname = st.text_input(
+            AuthorForm.surname_label, value=self.surname,
+            key=f"author_form_surname_{key_suffix}"
+        ).strip()
+
+        # Apply any suggestion stored by a previous "Look up" click
+        _suggestion = st.session_state.pop('_author_lookup_suggestion', None)
+        if _suggestion:
+            if _suggestion.get('birth_year'):
+                self.birth_year = _suggestion['birth_year']
+            if _suggestion.get('gender'):
+                self.gender = _suggestion['gender']
+        # Feedback from a previous "Look up" click that didn't produce a result.
+        if st.session_state.pop('_author_lookup_failed', None):
+            st.warning(AuthorForm.lookup_failed)
+        if st.session_state.pop('_author_lookup_no_name', None):
+            st.warning(AuthorForm.lookup_no_name)
+
+        year_options = [-1, -2] + [y for y in range(1900, (date.today().year + 1))]
+        if self.birth_year and self.birth_year in year_options:
+            year_index = year_options.index(self.birth_year)
+        else:
+            year_index = 0
+
+        year_given = st.selectbox(
+            AuthorForm.birth_year_label,
+            options=year_options,
+            index=year_index,
+            placeholder=AuthorForm.birth_year_placeholder,
+            format_func=lambda x: AuthorForm.birth_year_unknown if x == -1 else (AuthorForm.birth_year_earlier if x == -2 else str(x)),
+            key=f"author_form_birth_year_{key_suffix}"
+        )
 
         if year_given > 0:
             self.birth_year = year_given
@@ -62,20 +95,44 @@ class Author(DataStructureBase):
             self.birth_year = None
 
         st.write(AuthorForm.gender_prompt)
-        gender_index = (
-            AuthorForm.gender_options.index(self.gender)
-            if self.gender is not None and self.gender != ""
-            else 0
-        )
+        gender_index = 0
+        if self.gender in AuthorForm.gender_options:
+            gender_index = AuthorForm.gender_options.index(self.gender)
         self.gender = st.selectbox(
-            "Gender",
+            AuthorForm.gender_label,
             options=AuthorForm.gender_options,
-            index=gender_index
+            index=gender_index,
+            key=f"author_form_gender_{key_suffix}"
         )
 
-        submitted = st.form_submit_button("Submit")
+        submitted = st.form_submit_button(
+            AuthorForm.submit_button, key=f"author_form_submit_{key_suffix}"
+        )
+        ai_available = 'ANTHROPIC_API_KEY' in st.secrets
+        lookup_clicked = st.form_submit_button(
+            AuthorForm.lookup_button,
+            disabled=not ai_available,
+            help=AuthorForm.lookup_help,
+            key=f"author_form_lookup_{key_suffix}"
+        )
+
+        if lookup_clicked:
+            if self.forename.strip() or self.surname.strip():
+                ai_client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
+                with st.spinner(AuthorForm.lookup_spinner):
+                    suggestion = lookup_person_details(self.name.strip(), 'author', ai_client)
+                if suggestion:
+                    st.session_state['_author_lookup_suggestion'] = suggestion
+                else:
+                    st.session_state['_author_lookup_failed'] = True
+            else:
+                st.session_state['_author_lookup_no_name'] = True
+            st.rerun()
 
         if submitted:
+            if not self.forename.strip() or not self.surname.strip():
+                st.warning(AuthorForm.name_required)
+                return
             if st.session_state.firestore.document_exists(
                 collection='authors',
                 doc_id=self.document_id

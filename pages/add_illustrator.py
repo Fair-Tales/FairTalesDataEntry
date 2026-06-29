@@ -1,15 +1,16 @@
 import streamlit as st
 from utilities import page_layout, check_authentication_status
+from text_content import IllustratorForm
 
 check_authentication_status()
-page_layout()
+page_layout(current_page="./pages/add_illustrator.py")
 
 
 with st.form("new_illustrator"):
     st.session_state['current_illustrator'].to_form()
 
 
-cancel_button = st.button("Cancel entering new illustrator.")
+cancel_button = st.button(IllustratorForm.cancel_text, key="add_illustrator_cancel_button")
 
 if cancel_button:
     st.session_state['adding_book_entries'] = False

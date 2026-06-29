@@ -1,0 +1,108 @@
+# Decisions Log
+
+Record of significant technical and architectural decisions.
+Each entry: context → decision → reasons.
+Status: `accepted` | `superseded` | `deprecated`.
+
+---
+
+## 001 — Revert to single Firestore database (defer decoupled-DB design)
+
+**Status:** accepted
+
+**Context:** Grace's grace-dev branch introduced a split Firestore architecture: a dedicated database for user credentials and a separate database for book/content data. `FirestoreWrapper` was updated with `connect_user()` and `connect_book()` methods routing to the two databases. This also caused `entered_by` on book records to be stored as a plain string username (instead of a document reference) because cross-database references are not supported in Firestore.
+
+**Decision:** When merging grace-dev into claude-dev (June 2026), we reverted to a single Firestore database for both user credentials and book data. `connect_user()` and `connect_book()` were kept as separate methods (anticipating issue #48) but both currently route to the same default database. `entered_by` was restored to storing a Firestore document reference into the `users` collection.
+
+**Reasons:**
+- Decoupling the databases is the right long-term design but adds operational complexity before the immediate release.
+- Existing book records in Firestore already store `entered_by` as a document reference; migrating them to strings would have required a data migration.
+- Keeping the method split in code means the refactor to two databases (issue #48) can be done later with minimal code changes.
+
+**Consequences / follow-up:**
+- Issue #48 (decouple user credentials DB from book data DB) is deferred, not cancelled.
+- When #48 is implemented, `entered_by` storage will need revisiting — either migrate to strings or keep cross-collection references within a single project.
+- Credential rotation should happen around the time #48 is implemented (new Firebase service account will be needed for a second named database).
+
+---
+
+## 002 — Defer migration of existing 1970 birth-year records (issue #71)
+
+**Status:** accepted
+
+**Context:** `Author.birth_year` previously defaulted to `1970`, so any author created without a known birth year was stored with the value `1970` in Firestore. This is indistinguishable from a genuine 1970 birth year. Issue #71 changes the default to `None` and makes the form input optional, so future records will correctly represent unknown birth years as `None`.
+
+**Decision:** Existing Firestore records that store `birth_year: 1970` are left as-is. No retroactive data migration is performed.
+
+**Reasons:**
+- A `1970` value in an existing record might be a genuine birth year; blanket conversion to `None` would corrupt authentic data.
+- Safe migration would require manual review of each 1970 record, which is out of scope for this fix.
+- The display layer (`pages/user_home.py`) already renders `None` as "Unknown" and can be extended to flag 1970 as ambiguous if desired in a follow-up issue.
+
+**Consequences / follow-up:**
+- Any existing author with `birth_year: 1970` is potentially wrong but cannot be corrected programmatically without human review.
+- A future clean-up task could present all 1970 records to a data-entry user for confirmation or correction.
+
+---
+
+## 003 — Adopt `streamlit-keyup` for live author search (issue #72)
+
+**Status:** accepted
+
+**Context:** The home-page author search (`pages/user_home.py`) used `st.text_input`, which only reruns on Enter / blur, so results did not update live as the user typed. Streamlit's native per-keystroke input tracking (streamlit/streamlit#4553) is still unshipped, so there is no built-in way to filter as the user types.
+
+**Decision:** Add the `streamlit-keyup` third-party component (`st_keyup`, pinned to `0.3.0` in `requirements.txt`) and use it for the author search field. The component reruns on each keystroke and is configured with a `debounce=300` (milliseconds).
+
+**Reasons:**
+- A native Streamlit live-filter input does not exist yet, so a component is the only way to deliver the live-filter UX requested in #72.
+- `streamlit-keyup` is the component named in the issue, is also bundled in `streamlit-extras`, and exposes a `debounce` parameter.
+- The 300ms debounce means the author lookup only re-runs after the user pauses typing, avoiding a Firestore read on every individual keystroke while still feeling responsive.
+
+**Consequences / follow-up:**
+- New runtime dependency `streamlit-keyup==0.3.0`; developers/deploys must reinstall requirements before running.
+- `st_keyup` does not accept a `help` tooltip parameter (unlike `st.text_input`), so the previous help hint was folded into the field label.
+- If Streamlit ships native keystroke tracking, this component could be revisited and removed.
+
+---
+
+## 004 — Automated UI testing strategy: Playwright + Claude in Chrome (interim production-DB use)
+
+**Status:** accepted
+
+**Context:** With stable widget keys now in place (#80), we want automated testing of the Streamlit app. Three complementary approaches are available: (1) **Playwright** scripted regression tests (#82); (2) Anthropic's **"Claude in Chrome"** browser-agent extension (GA beta on paid plans, incl. Max, in 2026); and (3) driving a Chrome browser from within a Claude Code session via the `claude-in-chrome` MCP tools.
+
+**Decision:**
+- **Playwright (#82) is the deterministic regression backbone** — scripted tests for the core, *non-AI* user journeys (login, navigation, search, manual book entry/validation, manage characters, results dashboard), using the stable #80 keys. The Claude API calls are stubbed/avoided in these tests (assert the UI reaches the right state, not model output).
+- **Claude in Chrome / in-session Chrome driving is the exploratory layer** — reproducing bugs, verifying one-off flows, and offloading manual testing from the developer.
+- **Interim data policy:** while in active development (the database currently holds only a handful of books and test users, **not production**), automated tests **MAY run against the real Firestore/S3** and incur real Anthropic API costs. Accepted trade-off for development speed.
+
+**Reasons:**
+- Playwright gives repeatable, cheap, deterministic regression coverage; Claude-in-Chrome gives flexible, code-free exploration. They serve different needs.
+- The AI flows (vision extraction, ISBN lookup, character/alias detection, person lookup) are non-deterministic and cost API calls, so they are unsuitable for assertion in a deterministic suite.
+- A separate test environment is not yet justified given the tiny, non-production dataset.
+
+**Consequences / follow-up:**
+- **Before production launch / wider rollout:** stand up a **test environment** (separate Firestore database + S3 bucket, plus a way to stub the Anthropic API) so automated testing does not pollute the production database or incur uncontrolled cost. Ties into #2 (Firestore out of test mode) and #48 (decouple credentials/book DBs).
+- Anthropic notes Claude in Chrome is **not yet recommended for sensitive/mission-critical sites**; keep in mind as the app matures.
+
+---
+
+## 005 — `edit_log` audit collection as a raw-dict writer; immediate on-submit diff capture (issue #47)
+
+**Status:** accepted
+
+**Context:** The validation workflow (#47) lets a team member review SUBMITTED books and correct errors. Chris wants every correction captured — original value and change — as TRAINING DATA for future AI correction systems. Two design questions arose: (a) what data model for the audit records, and (b) when/how to compute the before/after.
+
+**Decision:**
+- **New Firestore collection `edit_log`**, written by a dedicated `EditLog` class (`data_structures/edit_log.py`) using a **raw-dict writer with a Firestore-generated id** (`collection.add()`, exposed via `FirestoreWrapper.add_document`) — i.e. it deliberately does **not** subclass `DataStructureBase`/use write-through `Field` descriptors. Schema per record: `book_id`, `book_title`, `entity_type` (`book`|`page`|`character`|`alias`), `entity_id`, `field`, `old_value`, `new_value`, `edited_by` (validator ref), `timestamp` (UTC), `context` (`validation`).
+- **Capture mechanism: immediate on-submit diff** inside `pages/validation.py`. Each editor seeds its widgets from the entity's stored values (the originals) and, on save, compares the submitted values against those originals **before** writing through, logging one record per changed field. (Chosen over the originally-suggested open-time snapshot/diff.)
+
+**Reasons:**
+- An audit record is **append-only and immutable**, has **no natural deterministic `document_id`** (the same book/entity/field recurs over time), and is produced in **batches during a diff** — none of which the `DataStructureBase` pattern (single-field write-through to a content-derived id, bound to a `to_form()`) models. Forcing the fit would require an artificial id and a no-op form. This mirrors the documented `User` raw-dict exception but is even more clearly justified.
+- Immediate on-submit diffing fits the per-form write-through pattern exactly, captures the precise before/after for each correction **including renames** (character/alias document ids are name-derived, so a rename changes identity — which an open-time snapshot keyed by id would mismatch), and needs no cross-navigation snapshot lifecycle. Page-text corrections (original transcription vs validated text) are captured as `entity_type='page', field='text'`.
+
+**Consequences / follow-up:**
+- New `edit_log` collection accumulates write-once records; include it in admin export (#69) if/when the data is needed for analysis/training.
+- `old_value`/`new_value` are coerced to serialisable scalars (refs → `path` string) so a record can never fail to serialise.
+- The book **title is read-only** in the validation review surface, because the title keys a book's pages/characters (the book `document_id` is title-derived); retitling would orphan them under the current single-DB id scheme. A safe book-rename migration is out of scope here.
+- No in-app role-management UI yet (#47/#69 also cover admin granting roles); validators are set via the `role` field on the user document (#83).

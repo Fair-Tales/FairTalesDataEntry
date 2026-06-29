@@ -52,30 +52,89 @@ class BookForm:
         You can add a comment with any thoughts you have about this book.
     """
 
+    # --- to_form() widget labels (data_structures/book.py) ---
+    title_label = "Title"
+    published_label = "Date first published"
+    author_select_label = "Select from existing authors"
+    publisher_select_label = "Select from existing publishers"
+    illustrator_select_label = "Select from existing illustrators"
+    new_author_option = "None of these (create a new author now)."
+    new_publisher_option = "None of these (create a new publisher now)."
+    new_illustrator_option = "None of these (create a new illustrator now)."
+    themes_label = "Select themes"
+    comment_label = "Comment"
+    isbn_prefill_caption = "ℹ Metadata pre-filled from ISBN lookup — please verify."
+    submit_button = "Submit"
+    title_required = "Book title is required."
+
 
 class AuthorForm:
     header = "Please enter author details."
     gender_options = ["Woman", "Man", "Non-binary", "Other", "Unknown"]
     gender_prompt = """
-        Please use a web search to enter the gender of the author to the best of your knowledge.
-        If it is not clear from a cursory search, please select `Unknown`.
+        Click "Look up birth year and gender" to auto-fill these fields using web search,
+        or select manually. If it is not clear, please select `Unknown`.
     """
+    lookup_help = (
+        "Use AI web search to suggest birth year and gender based on the name entered above."
+    )
     author_exists = """
-        This author already exists in the database. Please either select them from the 
+        This author already exists in the database. Please either select them from the
         dropdown menu above, or enter a unique name for your new author.
     """
+
+    # --- to_form() widget labels (data_structures/author.py) ---
+    forename_label = "First name"
+    surname_label = "Surname"
+    birth_year_label = "What is the author's birth year?"
+    birth_year_placeholder = "Select year of birth"
+    birth_year_unknown = "I don't know"
+    birth_year_earlier = "Earlier year"
+    gender_label = "Gender"
+    submit_button = "Submit"
+    lookup_button = "Look up birth year and gender"
+    lookup_spinner = "Looking up birth year and gender…"
+    lookup_failed = (
+        "Couldn't find reliable birth year / gender details for this name — "
+        "please enter them manually."
+    )
+    lookup_no_name = "Please enter a first name or surname before looking up."
+    name_required = "Author first name and surname are required."
+    cancel_text = "Cancel entering new author."
 
 class IllustratorForm:
     header = "Please enter illustrator details."
     gender_options = ["Woman", "Man", "Non-binary", "Other", "Unknown"]
     gender_prompt = """
-        Please use a web search to enter the gender of the illustrator to the best of your knowledge.
-        If it is not clear from a cursory search, please select `Unknown`.
+        Click "Look up birth year and gender" to auto-fill these fields using web search,
+        or select manually. If it is not clear, please select `Unknown`.
     """
+    lookup_help = (
+        "Use AI web search to suggest birth year and gender based on the name entered above."
+    )
     illustrator_exists = """
-        This illustrator already exists in the database. Please either select them from the 
+        This illustrator already exists in the database. Please either select them from the
         dropdown menu above, or enter a unique name for your new illustrator.
     """
+
+    # --- to_form() widget labels (data_structures/illustrator.py) ---
+    forename_label = "First name"
+    surname_label = "Surname"
+    birth_year_label = "What is the illustrator's birth year?"
+    birth_year_placeholder = "Select year of birth"
+    birth_year_unknown = "I don't know"
+    birth_year_earlier = "Earlier year"
+    gender_label = "Gender"
+    submit_button = "Submit"
+    lookup_button = "Look up birth year and gender"
+    lookup_spinner = "Looking up birth year and gender…"
+    lookup_failed = (
+        "Couldn't find reliable birth year / gender details for this name — "
+        "please enter them manually."
+    )
+    lookup_no_name = "Please enter a first name or surname before looking up."
+    name_required = "Illustrator first name and surname are required."
+    cancel_text = "Cancel entering new illustrator."
 
 class PublisherForm:
     header = "Please enter publisher details."
@@ -83,6 +142,158 @@ class PublisherForm:
         This publisher already exists in the database. Please either select them from the 
         dropdown menu above, or enter a unique name for your new publisher.
     """
+
+    # --- to_form() widget labels (data_structures/publisher.py) ---
+    name_label = "Name"
+    founding_year_label = "Which year was the publisher founded?"
+    founding_year_placeholder = "Select year of founding"
+    founding_year_unknown = "I don't know"
+    founding_year_earlier = "Earlier year"
+    submit_button = "Submit"
+    name_required = "Publisher name is required."
+    cancel_text = "Cancel entering new publisher."
+
+
+class BookPhotoEntry:
+    """Strings for the photo-initiated ("photos first") book entry flow (#59)."""
+
+    menu_label = "Add from Photos"
+    header = "Add a book from photos"
+    instructions = """
+        Upload photos of the book pages to get started. We'll read the title page
+        for you and use it to pre-fill the book details on the next step — you can
+        review and correct everything before saving.
+
+        Please include a clear photo of the **title page** (the inside page showing
+        the title, author and illustrator). Upload your photos in page order if you
+        can; if the title page is not the first photo, you can tell us which one it
+        is below.
+    """
+    upload_label = "Select the book's page photos to upload"
+    title_page_label = "Which photo is the title page?"
+    title_page_help = (
+        "Select the photo that shows the book's title, author and illustrator. "
+        "We read this page for the title and creators, and automatically find the "
+        "copyright page for the publisher, year and ISBN."
+    )
+    extract_button = "Read the book and pre-fill details"
+    extracting = "Reading the title and copyright pages..."
+    extract_failed = (
+        "Could not read the book automatically ({error}). "
+        "You can still enter the details manually."
+    )
+    extract_empty = (
+        "We couldn't extract any details from those photos. Please check the title "
+        "page is included and try again, or enter the details manually on the next "
+        "step."
+    )
+    no_api_key = (
+        "Automatic detail extraction requires an Anthropic API key. "
+        "You can still enter the details manually."
+    )
+    extract_success = "Book details read. Please review and correct them below."
+    reuse_notice = "Using the {count} photo(s) you already uploaded. Processing them now..."
+    cancel_text = "Cancel"
+
+
+class BatchBookEntry:
+    """Strings for the batch multi-book photo upload flow (#84).
+
+    The user uploads ONE batch of photos covering SEVERAL books (taken in
+    sequence); the app splits them into per-book groups, reads each book's
+    details, lets the user review the split, then creates a separate book
+    record per group.
+    """
+
+    menu_label = "Batch Upload"
+    header = "Batch upload — add several books at once"
+    instructions = """
+        Upload a single batch of photos that covers **several books**, taken in
+        order. We'll split the photos into separate books and create a record for
+        each one.
+
+        **To mark where one book ends and the next begins, cover the camera lens
+        and take a fully black photo between books.** We use those black photos as
+        separators and discard them. If you didn't take separator photos, we'll try
+        to detect each book's cover page automatically instead.
+
+        Upload all the photos in order, then review the detected books before we
+        create them.
+    """
+    upload_label = "Select all the page photos for the batch (in order)"
+    no_api_key = (
+        "Without an Anthropic API key we can still split books on the black "
+        "separator photos, but we can't auto-detect covers, read titles, or "
+        "extract page text — those steps will be skipped."
+    )
+    detect_button = "Detect books"
+    detecting = "Splitting the batch and reading each book..."
+    reading_book = "Reading book {n} of {total}..."
+    no_photos = "Please upload the batch photos first."
+    no_books_detected = (
+        "We couldn't split this batch into any books. Please check your photos "
+        "and try again."
+    )
+
+    # --- Review step ---
+    review_header = "Review the detected books"
+    method_black_frame = (
+        "Split into **{count}** book(s) using the black separator photos "
+        "(the separators have been discarded)."
+    )
+    method_cover_page = (
+        "No black separator photos were found, so we split into **{count}** "
+        "book(s) by detecting each book's cover page. Please check the split "
+        "carefully before continuing."
+    )
+    method_single = (
+        "We found no separators or distinct covers, so we've treated the whole "
+        "batch as a **single** book. Please check this is correct."
+    )
+    book_summary = "Book {n}: {title} — {pages} page(s)"
+    untitled_title = "Untitled book {n}"
+    detail_author = "Author: {value}"
+    detail_illustrator = "Illustrator: {value}"
+    detail_publisher = "Publisher: {value}"
+    detail_year = "First published: {value}"
+    review_metadata_warning = (
+        "We couldn't read the details for **{count}** of these book(s). They'll "
+        "still be created, but you'll need to add the title and details yourself "
+        "via **Edit my books**. They're flagged below."
+    )
+    detail_metadata_error = (
+        "⚠️ The details for this book couldn't be read — it will be created with "
+        "a placeholder title. Please add the title and details via **Edit my "
+        "books** after creating."
+    )
+    confirm_button = "Create {count} book(s)"
+    start_over_button = "Start over"
+    cancel_button = "Cancel"
+
+    # --- Processing step ---
+    creating = "Creating books and processing pages..."
+    processing_page = "{title}: processing page {page} of {total}..."
+
+    # --- Done step ---
+    done_header = "Books created"
+    done_summary = "Created **{count}** book(s) from the batch:"
+    done_needs_details = (
+        "**{count}** of these book(s) need manual details: their title and "
+        "information couldn't be read, so they were saved with a placeholder "
+        "title. Please add the missing details via **Edit my books**."
+    )
+    done_book_line = "- {title} ({pages} page(s))"
+    done_book_line_unread = (
+        "- {title} ({pages} page(s)) — ⚠️ metadata couldn't be read; please add "
+        "the title/details via **Edit my books**"
+    )
+    done_note = (
+        "Each book has been saved with its pages and any details we could read. "
+        "Open **Edit my books** to review, add authors / illustrators / "
+        "publishers, and finish each one."
+    )
+    done_home_button = "Back to home"
+    done_another_button = "Upload another batch"
 
 
 class EnterText:
@@ -113,9 +324,95 @@ class EnterText:
     """
 
     save_help = """
-        The data you enter will save automatically as you work. This button finishes entering this book. 
+        The data you enter will save automatically as you work. This button finishes entering this book.
         You will not be able to edit it again after this.
     """
+
+    # --- AI character + alias detection (issue #52) ---
+    detect_help = """
+        Use AI to read the text you have entered so far and suggest the characters and their aliases
+        across the whole book. Nothing is saved until you review and confirm the suggestions.
+    """
+    detect_intro = """
+        This will read the story text you have entered for every page and suggest a list of
+        characters and their aliases for you to review. Make sure you have entered (or auto-extracted)
+        the page text first. Nothing is saved until you confirm.
+    """
+    detect_spinner = "Reading the book text and detecting characters..."
+    detect_progress = "Detecting characters — step {done} of {total}..."
+    detect_no_api_key = "AI character detection requires an Anthropic API key."
+    detect_no_text = (
+        "No story text found. Please enter or extract text for the book pages first, "
+        "and tick 'Does this page contain story text?' on the relevant pages."
+    )
+    detect_failed = "Character detection failed: {error}"
+    detect_none_found = "The AI did not find any characters in the text. You can add characters manually."
+    review_instruction = """
+        Review the suggested characters below. Correct any names, genders or other details,
+        edit the comma-separated aliases, and choose an action for each one. To merge a duplicate,
+        choose 'Merge into' on the duplicate and select the character to keep — its name and aliases
+        will be added to that character. Nothing is saved until you press the button at the bottom.
+    """
+    review_action_create = "Create as a new character"
+    review_action_skip = "Skip (do not add)"
+    review_action_merge = "Merge into: {name}"
+    review_submit = "Create selected characters"
+    review_created = "Created {characters} character(s) and {aliases} alias(es)."
+    review_skipped = "Skipped (already in the database): {names}."
+    review_unresolved = (
+        "Could not merge these because their target was not created: {names}. "
+        "They were not added — please re-run detection or add them manually."
+    )
+
+    # --- Image view / manual correction dialog ---
+    image_edit_dialog_title = "Edit image"
+    rotation_header = "Rotation"
+    rotate_left_button = "↺ 90° left"
+    rotate_right_button = "↻ 90° right"
+    rotate_180_button = "180°"
+    fine_adjustment_label = "Fine adjustment (degrees)"
+    crop_header = "Crop margins (%)"
+    crop_left_label = "Left"
+    crop_right_label = "Right"
+    crop_top_label = "Top"
+    crop_bottom_label = "Bottom"
+    preview_caption = "Preview"
+    save_corrected_button = "💾 Save as corrected image"
+    discard_button = "✕ Discard"
+    show_original_toggle = "Show original photo"
+    showing_original_caption = "Showing original photo"
+    auto_corrected_caption = "✓ Auto-corrected"
+    auto_correction_unavailable_caption = "⚠ Auto-correction unavailable — showing original photo"
+    edit_image_button = "✏ Edit image"
+    enlarge_button = "🔍 Enlarge"
+
+    # --- Text entry / navigation controls ---
+    contains_story_label = "Does this page contain story text?"
+    add_character_button = "Add character"
+    add_alias_button = "Add alias"
+    detect_button = "Detect characters (AI)"
+    page_text_label = "Enter page text"
+    save_page_button = "Save page"
+    cancel_character_button = "Cancel adding character"
+    cancel_alias_button = "Cancel adding alias"
+    previous_page_button = "Previous page"
+    next_page_button = "Next page"
+    page_indicator = "Showing page %d of %d."
+    back_to_menu_button = "Back to menu"
+    finish_submit_button = "Finish and submit book"
+
+    # --- Detected-character review form ---
+    review_character_heading = "**Character {n}**"
+    review_name_label = "Name"
+    review_gender_label = "Gender"
+    review_human_label = "Is human?"
+    review_protagonist_label = "Is protagonist?"
+    review_plural_label = "Is plural?"
+    review_aliases_label = "Aliases (comma-separated)"
+    review_action_label = "Action"
+    back_to_text_button = "Back to text"
+    cancel_button = "Cancel"
+    run_detection_button = "Run detection"
 
 
 class CharacterForm:
@@ -129,11 +426,50 @@ class CharacterForm:
         Please do not use the illustrations to infer gender and only select
         `Transgender` if this is explicit in the text.
     """
+
+    # TODO: confirm taxonomy with team
+    ethnicity_options = [
+        "Not specified",
+        "Asian",
+        "Black / African",
+        "Hispanic / Latino",
+        "Middle Eastern",
+        "Native / Indigenous",
+        "White / European",
+        "Mixed / Other",
+    ]
+    ethnicity_help = """
+        Please select the character's apparent ethnicity as represented in the text or illustrations.
+        If it is not clear, please select `Not specified`.
+        Note: this vocabulary is a placeholder — the final taxonomy will be confirmed by the team.
+    """
+
+    # TODO: confirm taxonomy with team
+    disability_options = [
+        "Not specified",
+        "Physical disability",
+        "Sensory disability",
+        "Cognitive / Learning disability",
+        "Mental health condition",
+        "Chronic illness",
+        "No disability",
+    ]
+    disability_help = """
+        Please select the character's apparent disability status as represented in the text.
+        If it is not clear, please select `Not specified`.
+        Note: this vocabulary is a placeholder — the final taxonomy will be confirmed by the team.
+    """
+
     character_exists = """
             This character already exists in the database.
             If you want to create a new alias for an existing character, please
             cancel this entry and select `Add alias`.
         """
+    rename_exists = """
+            Another character with that name already exists in this book.
+            Please choose a different name.
+        """
+    name_required = "Character name is required."
     protagonist_help = """
         The protagonist is the main character.
     """
@@ -144,6 +480,82 @@ class CharacterForm:
             Select if character is human (rather than non-human - animal, monster etc).
         """
 
+    # --- to_form() widget labels (data_structures/character.py) ---
+    name_label = "Name"
+    gender_label = "Gender"
+    ethnicity_label = "Ethnicity"
+    disability_label = "Disability"
+    protagonist_label = "Is protagonist?"
+    human_label = "Is human?"
+    plural_label = "Is plural?"
+    save_button = "Save character"
+
+    # --- edit_form() (data_structures/character.py) ---
+    edit_header = "Edit this character's details"
+    update_button = "Save changes"
+
+
+class AddCharacterPage:
+    """Strings for the standalone add-character page (pages/add_character.py)."""
+
+    header = "Please enter the details of the new character."
+    name_label = "Full name (as most commonly used)"
+    alias_label = "Enter their alias"
+    gender_label = "Gender"
+    gender_options = [
+        'Female',
+        'Male',
+        'Non-binary/Genderqueer/Gender non-conforming',
+        'Not specified'
+    ]
+    ethnicity_label = "Ethnicity"
+    disability_label = "Disability"
+    plural_label = "Is this a group or collection of characters? (e.g. 'the cavemen')"
+    human_label = "Is this character human?"
+    submit_button = "Submit"
+    name_required = "Character name is required."
+    cancel_button = "Cancel adding new character."
+
+
+class ResultsDashboard:
+
+    page_title = "Research Results"
+
+    intro = """
+        Explore aggregated results for the books in our collection. This is an
+        early preview — the first result type is a breakdown of character counts
+        by gender.
+    """
+
+    gender_column_label = "Gender"
+    count_column_label = "Number of characters"
+
+    combined_chart_title = "All characters by gender"
+    human_chart_title = "Human characters by gender"
+    nonhuman_chart_title = "Non-human characters by gender"
+
+    scope_all_caption = "Showing results across all books in the collection."
+    scope_collection_caption = (
+        "Showing results for the selected collection of {n} book(s)."
+    )
+
+    empty_message = """
+        There are no characters in the current selection yet, so there is nothing
+        to chart. Enter some character data (or choose a different collection) and
+        check back.
+    """
+
+    work_in_progress_header = "Work in progress"
+    work_in_progress_intro = """
+        More result types are on the way. Planned breakdowns include:
+    """
+    work_in_progress_items = [
+        "Speech statistics — how much each character speaks.",
+        "Ethnicity breakdowns per character (see issue #46).",
+        "Disability breakdowns per character (see issue #46).",
+        "Author, illustrator and publisher diversity summaries.",
+    ]
+
 
 class AliasForm:
 
@@ -151,3 +563,511 @@ class AliasForm:
     character_exists = """
             This alias already exists in the database.
     """
+    no_characters = """
+        There are no characters in this book yet. Please add a character first,
+        then you can record their aliases.
+    """
+
+    # --- to_form() widget labels (data_structures/alias.py) ---
+    select_character_label = "Select character"
+    alias_label = "Alias"
+    save_button = "Save alias"
+
+
+class ManageCharacters:
+
+    header = "Manage characters and aliases"
+    intro = """
+        Below are the characters you have recorded for this book. You can edit a
+        character's details, delete a character — which also deletes all of its
+        aliases — or delete an individual alias. Deletions are permanent and
+        cannot be undone.
+    """
+    no_characters = "No characters have been added to this book yet."
+    aliases_label = "Aliases:"
+    no_aliases = "No aliases recorded for this character."
+    manage_button = "Manage characters"
+    manage_help = """
+        View the characters recorded for this book, edit their details, and
+        delete characters or their aliases.
+    """
+    edit_character_button = "Edit character"
+    cancel_edit_button = "Cancel editing"
+    delete_character_button = "Delete character"
+    delete_alias_button = "Delete"
+    done_button = "Done"
+    delete_character_dialog_title = "Delete character?"
+    delete_character_warning = (
+        "Are you sure you want to delete '{name}'? This will also delete all of "
+        "this character's aliases. This action cannot be undone."
+    )
+    delete_alias_dialog_title = "Delete alias?"
+    delete_alias_warning = (
+        "Are you sure you want to delete the alias '{name}'? This action cannot "
+        "be undone."
+    )
+    confirm_delete_button = "Yes, delete"
+    cancel_button = "Cancel"
+    character_deleted = "Character deleted."
+    alias_deleted = "Alias deleted."
+
+
+class UserForm:
+
+    header = "Account Settings"
+    save_button_text = "Save changes"
+    birth_year_question = "What is your birth year?"
+    newsletter_label = (
+        "Keep me updated with research findings and project news from Fair Tales "
+        "(max. one email per month). You can opt out at any time."
+    )
+    save_success = "Your account settings have been updated."
+    page_header = "Your Account"
+    page_intro = "Update your personal details below. Changes are saved when you click 'Save changes'."
+
+
+class PasswordReset:
+
+    # --- Login page "Forgot your password?" area ---
+    request_email_label = "Enter your email address"
+    request_button_text = "Send password reset link"
+    request_blank_email = "Please enter your email address."
+    # Shown unconditionally after a reset request to avoid revealing whether an
+    # account exists for the entered address (account-enumeration protection).
+    request_acknowledgement = (
+        "If an account exists for that email address, we've sent it a password "
+        "reset link. Please check your inbox (and junk folder). The link expires "
+        "in one hour."
+    )
+
+    # --- Reset email contents ---
+    email_subject = "Reset your account password"
+    # %s is the recipient's name.
+    email_body = (
+        "Dear %s,\n\n"
+        "We received a request to reset the password for your account on our "
+        "data entry tool. Click the link below to choose a new password. This "
+        "link will expire in one hour.\n\n"
+        "If you did not request a password reset, you can safely ignore this "
+        "email — your password will not be changed.\n\n"
+        "Thanks,\n"
+        "The Fair Tales team\n\n"
+    )
+
+    # --- Reset page (pages/reset_password.py) ---
+    page_title = "Reset Your Password"
+    new_password_label = "New password"
+    confirm_password_label = "Confirm new password"
+    submit_button_text = "Set new password"
+    invalid_link = (
+        "This password reset link is invalid or has already been used. Please "
+        "request a new one from the login page."
+    )
+    expired_link = (
+        "This password reset link has expired. Please request a new one from the "
+        "login page."
+    )
+    blank_password = "Please enter and confirm your new password."
+    passwords_do_not_match = "The passwords you entered do not match."
+    reset_success = (
+        "Your password has been reset. You can now log in with your new password "
+        "by selecting `Home` from the navigation menu."
+    )
+    reset_failed = "Password reset failed. Please try again or request a new link."
+
+
+class ReportFeedback:
+
+    page_title = "Report a Bug / Request a Feature"
+    instruction = (
+        "Spotted a bug or have an idea? Tell us briefly what happened and what you "
+        "expected — or describe the feature you'd like. If it's a bug, include the "
+        "page and the steps so we can reproduce it."
+    )
+    type_label = "Is this a bug report or a feature request?"
+    type_options = ["Bug", "Feature"]
+    text_label = "Your report"
+    text_placeholder = "Describe the bug or feature here…"
+    submit_label = "Submit"
+    success_message = "Thank you — your report has been submitted!"
+    empty_text_warning = "Please enter some text before submitting."
+
+
+class FeedbackExport:
+
+    header = "Feedback export"
+    description = (
+        "Download all submitted bug reports and feature requests (from the "
+        "Report a Bug / Request a Feature page) for review. May take a moment "
+        "for large datasets."
+    )
+    prepare_button = "Prepare feedback download"
+    download_button = "⬇ Download feedback (CSV)"
+    file_name = "fairtales_feedback.csv"
+    empty_message = "No feedback has been submitted yet."
+    error_message = "Could not load the feedback collection: {error}"
+
+
+class Login:
+    """Strings for the sign-in / sign-out / register page (pages/login.py)."""
+
+    # --- Signed-in (sign out) view ---
+    sign_out_title = "Sign Out"
+    signed_in_as = "Currently signed in as {username}"
+    sign_out_prompt = "Would you like to sign out?"
+    sign_out_button = "Sign Out"
+
+    # --- Signed-out view ---
+    sign_in_title = "Sign In"
+    menu_login = "Login"
+    menu_register = "Register"
+    login_header = "Login"
+    email_label = "Email"
+    password_label = "Password"
+    confirm_button = "Confirm"
+    resend_button = "Resend confirmation email"
+    forgot_password_expander = "Forgot your password?"
+    register_header = "Register"
+    accept_checkbox = "Accept"
+
+
+class BookEditHome:
+    """Strings for the book edit/home page (pages/book_edit_home.py)."""
+
+    # %s placeholders / format fields filled at render time.
+    editing_book_title = "Editing book: {title}"
+    no_api_key = "AI theme suggestion requires an Anthropic API key."
+    no_story_text = "No story text found. Please enter text for the book pages first."
+    analysing_spinner = "Analysing book text for themes..."
+    detection_failed = "Theme detection failed: {error}"
+    themes_suggested = "Themes suggested: {themes}. Reasoning: {reasoning}"
+    no_new_themes = "No new themes to add. Reasoning: {reasoning}"
+
+    # option_menu items (also used as the navigation dispatch keys)
+    menu_instructions = "Instructions"
+    menu_edit_metadata = "Edit metadata"
+    menu_upload_photos = "Upload photos"
+    menu_enter_text = "Enter text"
+    menu_manage_characters = "Manage characters"
+
+    suggest_themes_button = "🏷 Suggest themes"
+    back_to_home_button = "Back to home menu."
+    finish_submit_button = "Finish and submit book"
+
+
+class Admin:
+    """Strings for the admin page (pages/admin.py)."""
+
+    not_admin = "This page is only accessible to admin users."
+    title = "Admin"
+    validation_link_label = "→ Go to data validation"
+
+    user_data_header = "User data"
+    user_data_description = "Download all available fields for confirmed users (excluding sensitive fields such as password and confirmation token) for analysis."
+    prepare_user_download_button = "Prepare user data download"
+    download_user_button = "⬇ Download user list (CSV)"
+    user_file_name = "fairtales_users.csv"
+
+    book_export_header = "Book database export"
+    book_export_description = "Download a ZIP of CSV files — one per collection — for research use. May take a moment for large datasets."
+    prepare_book_download_button = "Prepare book data download"
+    download_book_button = "⬇ Download book database (ZIP of CSVs)"
+    book_file_name = "fairtales_book_data.zip"
+
+    # Role management (#47 / #83). Admins can grant or revoke roles in-app
+    # instead of editing the Firestore user document by hand.
+    manage_roles_header = "Manage user roles"
+    manage_roles_description = (
+        "Set each user's permission tier. Archivists can enter and edit their "
+        "own books; Team members can additionally edit others' books and "
+        "validate data; Admins can additionally delete users/books and export "
+        "data."
+    )
+    # User-facing labels for the three role values (utilities.VALID_ROLES).
+    role_labels = {
+        "archivist": "Archivist",
+        "team": "Team member",
+        "admin": "Admin",
+    }
+    role_select_label = "Role"
+    role_save_button = "Save role"
+    role_current_caption = "Current role: {role}"
+    role_updated_success = "Updated {username}'s role to {role}."
+    role_update_error = "Could not update the role for {username}: {error}"
+    roles_load_error = "Could not load the user list: {error}"
+    roles_empty_message = "No users found."
+    # Self-lockout safeguard: an admin must not demote their own account out of
+    # the admin role, or they would lose access to this page.
+    role_self_demote_blocked = (
+        "You cannot remove your own admin access — this would lock you out of "
+        "admin management. Ask another admin to change your role."
+    )
+
+
+class RegisterUser:
+    """Strings for the registration form (pages/register_user.py and
+    pages/register_user_done.py)."""
+
+    title = "User Registration"
+    email_label = "Email"
+    name_label = "Name"
+    password_label = "Password"
+    birth_year_label = "What is your birth year?"
+    birth_year_placeholder = "Select year of birth"
+    # Validation field name shown in the "{field} cannot be empty" warning.
+    birth_year_field = "Birth year"
+    newsletter_label = (
+        "Keep me updated with research findings and project news from Fair Tales "
+        "(max. one email per month). You can opt out at any time."
+    )
+    register_button = "Register"
+
+
+class PhotoUpload:
+    """Strings for the photo-upload page (pages/page_photo_upload.py)."""
+
+    enter_book_data_title = "Enter book data: {title}"
+    link_line = "Or you can use the following link: [%s](%s)"
+    finished_instruction = "When you have finished, you can continue below to enter the text for this book, or return to the menu."
+    continue_button = "Continue"
+    back_to_menu_button = "Back to menu"
+    continue_to_text_button = "Continue to enter text"
+    replace_button = "Replace / re-upload photos"
+
+
+class ReviewBooks:
+    """Strings for the review-my-books page (pages/review_my_books.py)."""
+
+    header = "Review my books"
+    select_label = "My entered books:"
+    # Team-member / admin variants: they may edit books uploaded by anyone (#83).
+    all_header = "Review all books"
+    all_select_label = "All entered books:"
+    edit_button = "Edit this book."
+    cancel_button = "Cancel editing books."
+
+
+class Confirm:
+    """Strings for the email-confirmation page (pages/confirm.py)."""
+
+    already_confirmed = "User account already confirmed. Please proceed to login by selecting `Home` in navigation menu."
+    success = "User registration successful! You can now proceed to login by selecting `Home` from the navigation menu."
+    invalid_link = "Invalid or expired confirmation link. Please request a new confirmation email."
+    failed = "Registration failed. Please try again."
+
+
+class UserHome:
+    """Strings for the user home / search page (pages/user_home.py)."""
+
+    book_search_label = "Search by book title (filters as you type)"
+    book_search_help = "You can enter either all or part of the title."
+    results_found = "Results ({count} found):"
+    unknown = "Unknown"
+    not_recorded = "Not recorded"
+    unknown_title = "Unknown title"
+    publisher_label = "**Publisher:** {name}"
+    illustrator_label = "**Illustrator:** {name}"
+    book_expander = "{title}{year_str}  —  {author}"
+    author_expander = "{name}  —  b. {birth_year}  |  {gender}"
+    no_books_for_author = "No books found for this author."
+    books_label = "**Books:**"
+
+    # option_menu items (also used as the navigation dispatch keys)
+    menu_search_books = "Search Books"
+    menu_search_authors = "Search Authors"
+    menu_add_book = "Add a Book"
+    menu_edit_books = "Edit my Books"
+
+
+class Uploader:
+    """Strings for the shared upload widget (pages/uploader.py)."""
+
+    select_photos_label = "Select page photos to upload"
+    saving_photo = "Saving photo {current} of {total}..."
+    photos_saved = "Photos saved."
+    processing_page = "Processing page {page} of {total} (correcting image, extracting text)..."
+    page_corrected = "✓ Page {page} of {total} — auto-corrected ({method})"
+    page_correction_unavailable = "⚠ Page {page} of {total} — correction unavailable, using original"
+    processing_complete = "Processing complete."
+    isbn_metadata_found = "Found book metadata via ISBN {isbn}: {title}"
+    upload_complete = "Page photo upload complete, you may continue."
+    continue_button = "Continue"
+
+
+class BookDataEntry:
+    """Strings for the legacy book-data-entry page (pages/book_data_entry.py)."""
+
+    # option_menu items (also used as the navigation dispatch keys)
+    menu_upload_photos = "Upload page photos"
+    menu_enter_text = "Enter text"
+    menu_add_character = "Add a Character"
+    save_button = "Save"
+    not_implemented = "Not implemented yet!"
+
+
+class QrLanding:
+    """Strings for the QR deep-link upload page (pages/qr_landing.py)."""
+
+    title = "Photo uploader."
+
+
+class Validation:
+    """Strings for the data-validation page (pages/validation.py)."""
+
+    intro = "Here you may validate inputted data"
+    # Shown when an archivist (below team tier) tries to open the validation page.
+    not_authorised = "This page is only accessible to project team members and admins."
+
+    # --- Awaiting-validation list (issue #47, Part A) ---
+    list_header = "Books to validate"
+    list_intro = (
+        "Select any book to review and validate. Every book that has not yet "
+        "been validated appears here."
+    )
+    none_pending = "There are no books awaiting validation right now."
+    select_book_label = "Books:"
+    open_review_button = "Open for review"
+    submitted_only_toggle = "Show only books submitted for validation"
+
+    # --- Review surface ---
+    review_header = "Reviewing: {title}"
+    entered_by_label = "Originally entered by: {name}"
+    review_intro = (
+        "Correct any errors in the metadata, page text and characters below. "
+        "Every correction you make is recorded — together with the original "
+        "value — to the edit log. When the entry is correct and complete, "
+        "approve it at the bottom of the page."
+    )
+    back_to_list_button = "← Back to list (do not approve)"
+    tab_metadata = "Metadata"
+    tab_pages = "Page text"
+    tab_characters = "Characters & aliases"
+
+    # --- Metadata editor ---
+    metadata_header = "Book metadata"
+    title_readonly_caption = (
+        "The title is the book's identity (it keys its pages and characters) and "
+        "cannot be changed here."
+    )
+    none_option = "—"
+    save_metadata_button = "Save metadata corrections"
+    metadata_saved = "Metadata corrections saved."
+
+    # --- Page-text editor ---
+    pages_header = "Page text"
+    no_pages = "This book has no pages recorded yet."
+    page_select_label = "Page:"
+    page_contains_story_label = "This page contains story text"
+    page_text_label = "Page text (correct the transcription):"
+    page_not_entered = "No text has been entered for this page yet — you can add it below."
+    save_page_button = "Save page-text corrections"
+    page_saved = "Page-text corrections saved."
+
+    # --- Characters & aliases editor ---
+    characters_header = "Characters & aliases"
+    no_characters = "This book has no characters recorded yet."
+    character_select_label = "Character:"
+    save_character_button = "Save character corrections"
+    character_saved = "Character corrections saved."
+    character_name_required = "A character must have a name."
+    rename_exists = "Another character with that name already exists in this book."
+    aliases_label = "Aliases"
+    no_aliases = "No aliases are recorded for this character."
+    alias_name_label = "Alias name:"
+    save_alias_button = "Save alias"
+    alias_saved = "Alias correction saved."
+    alias_exists = "Another alias with that name already exists in this book."
+
+    # --- Approval ---
+    approve_header = "Approve this entry"
+    approve_help = (
+        "Mark this book as validated once you are confident the data is correct "
+        "and complete. This records you as the validator."
+    )
+    approve_button = "Approve & mark validated"
+    approved_success = "“{title}” has been approved and marked as validated."
+
+
+class CollectionPicker:
+    """Strings for the results collection-picker page (pages/collection_picker.py, #75)."""
+
+    page_title = "Choose a book collection"
+    intro = """
+        Pick which collection of books you want to see results for. You can choose
+        a ready-made collection, search our database to build your own, or upload
+        photos of a stack of books and we will match them for you.
+    """
+
+    # Method menu (option_menu)
+    menu_search = "Search & select"
+    menu_predefined = "Predefined collections"
+    menu_photo = "From photos"
+
+    # --- Current selection panel ---
+    selection_header = "Your selection"
+    selection_empty = (
+        "No books selected yet. Use one of the methods below to build a "
+        "collection, or view results across all books."
+    )
+    selection_count = "{n} book(s) in your collection."
+    remove_book_button = "Remove"
+    clear_selection_button = "Clear selection"
+    view_results_button = "View results for this collection"
+    view_all_button = "View results for all books instead"
+
+    # --- Method 1: search & select ---
+    search_header = "Search our database and tick the books you want"
+    search_label = "Search book titles"
+    search_results_found = "{count} matching book(s):"
+    add_book_checkbox = "{title}"
+
+    # --- Method 2: predefined collections ---
+    predefined_header = "Browse predefined collections"
+    predefined_none = "There are no predefined collections yet."
+    predefined_select_label = "Choose a collection"
+    predefined_owner_label = "Scope: {owner}"
+    predefined_books_label = "Books in this collection:"
+    predefined_use_button = "Load this collection into my selection"
+    predefined_view_button = "View results for this collection"
+    predefined_empty_collection = "This collection has no books."
+
+    create_header = "Save your current selection as a predefined collection"
+    create_help = (
+        "Creating predefined collections is intended for the FairTales team / "
+        "admins. You can still save one here; please use a clear, descriptive name."
+    )
+    create_name_label = "Collection name"
+    create_owner_label = "Owner / scope (optional — e.g. a school name)"
+    create_nothing_selected = (
+        "Select some books first (via search or photos), then save them as a "
+        "collection."
+    )
+    create_name_required = "Please give the collection a name."
+    create_exists = "A collection with that name and scope already exists."
+    create_button = "Save collection"
+    create_success = "Saved collection '{name}' with {n} book(s)."
+
+    # --- Method 3: from photos ---
+    photo_header = "Upload photos of your books"
+    photo_instructions = """
+        Upload one or more photos showing several books — either their front
+        covers, or a stack/shelf with the spines facing the camera so the titles
+        and authors are legible. We will read off the titles and match them to
+        books in our database.
+    """
+    photo_upload_label = "Upload book photo(s)"
+    photo_extract_button = "Read books from photo(s)"
+    photo_no_api_key = (
+        "Photo matching is unavailable because no AI API key is configured."
+    )
+    photo_extracting = "Reading the books in your photo(s)…"
+    photo_extract_failed = "Could not read the photo(s): {error}"
+    photo_none_found = (
+        "No book titles could be read from the photo(s). Try clearer, closer "
+        "photos with the titles facing the camera."
+    )
+    photo_matched_header = "Matched to our database ({count}):"
+    photo_unmatched_header = "Could not match these ({count}):"
+    photo_matched_item = "{extracted} → {matched}"
+    photo_add_matched_button = "Add matched books to my selection"
+    photo_added = "Added {n} matched book(s) to your selection."

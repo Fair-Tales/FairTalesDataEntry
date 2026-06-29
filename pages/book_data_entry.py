@@ -1,14 +1,14 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
-from utilities import page_layout, check_authentication_status
-from text_content import Instructions
+from utilities import page_layout, check_authentication_status, navigate_to
+from text_content import Instructions, PhotoUpload, Uploader, BookDataEntry
 
 check_authentication_status()
 
 # TODO: change per file size limit?!
 # TODO: set file order (sort ascending? time modified? https://stackoverflow.com/questions/31588543/how-to-change-order-of-files-in-multiple-file-input)
 def upload_page_photos():
-    uploaded_files = st.file_uploader("Select page photos to upload", accept_multiple_files=True)
+    uploaded_files = st.file_uploader(Uploader.select_photos_label, accept_multiple_files=True, key="book_data_entry_uploader")
     # for uploaded_file in uploaded_files:
     #     bytes_data = uploaded_file.read()
     #     st.write("filename:", uploaded_file.name)
@@ -16,23 +16,23 @@ def upload_page_photos():
 
 
 def enter_text():
-    st.switch_page("./pages/enter_text.py")
+    navigate_to("./pages/enter_text.py")
 
 
 def add_character():
-    st.switch_page("./pages/add_character.py")
+    navigate_to("./pages/add_character.py")
 
 
-page_layout()
+page_layout(current_page="./pages/book_data_entry.py")
 
 st.title(
-    f"Enter book data: {st.session_state.current_book.title}"
+    PhotoUpload.enter_book_data_title.format(title=st.session_state.current_book.title)
 )
 st.header(Instructions.photo_upload_header)
 st.write(Instructions.photo_upload_instructions)
 
 selected_option = option_menu(
-    None, ["Upload page photos", "Enter text", "Add a Character"],
+    None, [BookDataEntry.menu_upload_photos, BookDataEntry.menu_enter_text, BookDataEntry.menu_add_character],
     default_index=0,
     icons=['search', 'search', 'database-add'],
     menu_icon="cast", orientation="horizontal",
@@ -40,15 +40,15 @@ selected_option = option_menu(
 )
 
 navigation_dict = {
-    "Upload page photos": upload_page_photos,
-    "Enter text": enter_text,
-    "Add a Character": add_character
+    BookDataEntry.menu_upload_photos: upload_page_photos,
+    BookDataEntry.menu_enter_text: enter_text,
+    BookDataEntry.menu_add_character: add_character
 }
 
 navigation_dict[selected_option]()
 
-save_button = st.button('Save')
+save_button = st.button(BookDataEntry.save_button, key="book_data_entry_save_button")
 
 if save_button:
-    st.warning("Not implemented yet!")
+    st.warning(BookDataEntry.not_implemented)
 

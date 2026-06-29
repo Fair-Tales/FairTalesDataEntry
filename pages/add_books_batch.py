@@ -1,0 +1,360 @@
+"""Batch multi-book photo upload (#84): split one batch of photos covering
+several books into separate book records (bulk create).
+
+Builds on the photo-first single-book flow (#59) and its two-pass metadata
+extraction (#109). The user uploads ONE batch of photos that spans MULTIPLE
+books, taken in sequence. A two-stage splitter groups the photos by book:
+
+  Stage 1 (primary): a cheap OpenCV/PIL detector flags FULLY BLACK separator
+    frames — the user covers the lens and takes a black photo between books.
+    Each black frame is a book boundary and is DISCARDED. (``image_processing.
+    is_black_frame`` / ``utilities.split_photo_batch``.)
+  Stage 2 (fallback): when no black separators are present, a Claude Haiku pass
+    detects each book's cover/title page and splits there
+    (``utilities.locate_cover_pages``).
+
+Each grouped set is then fed through the existing single-book photo-first
+machinery: metadata extraction (``extract_photo_first_metadata``) reads each
+book's title/creators/year, and the per-page processing pipeline
+(``pages.uploader._process_page`` + ``extract_page_info``) uploads, corrects and
+text-extracts every page — creating a SEPARATE ``Book`` record per group.
+
+A REVIEW step lists the detected books (count + extracted titles) so the user
+can confirm the split before anything is committed. Because this is a bulk
+create, author / illustrator / publisher are only fuzzy-matched against existing
+records (no interactive "create new" sub-forms); unmatched creators are left for
+the user to fill in later via the normal Edit-my-books flow.
+"""
+
+import s3fs
+import natsort
+import streamlit as st
+import anthropic
+
+from data_structures import Book, Page
+from image_processing import exif_transpose_bytes
+from pages.uploader import _process_page, extract_page_info
+from text_content import BatchBookEntry
+from utilities import (
+    page_layout,
+    check_authentication_status,
+    split_photo_batch,
+    extract_photo_first_metadata,
+    fuzzy_match_name,
+    load_book_dict,
+)
+
+check_authentication_status()
+page_layout(current_page="./pages/add_books_batch.py")
+
+
+_BATCH_STATE_KEYS = ('batch_step', 'batch_method', 'batch_detected', 'batch_results')
+
+
+def _reset_batch_state():
+    """Drop all batch-flow session state (large photo payloads included)."""
+    for key in _BATCH_STATE_KEYS:
+        st.session_state.pop(key, None)
+
+
+def _doc_id(title):
+    """Mirror ``Book.document_id`` so collisions can be checked before a Book is
+    created from an extracted title."""
+    return title.lower().replace(" ", "_")
+
+
+def _detect_books(pages, client):
+    """Split the batch and read each detected book's metadata.
+
+    Returns (method, detected) where ``method`` is the split method string and
+    ``detected`` is a list of ``{'pages': [(name, bytes)], 'metadata': dict}``.
+    """
+    split = split_photo_batch(pages, client)
+    groups = split['groups']
+
+    detected = []
+    progress = st.progress(0.0)
+    status = st.empty()
+    total = len(groups)
+    for index, group in enumerate(groups):
+        status.write(BatchBookEntry.reading_book.format(n=index + 1, total=total))
+        metadata = {}
+        metadata_error = None
+        if client is not None:
+            try:
+                metadata = extract_photo_first_metadata(group, client) or {}
+            except anthropic.AnthropicError as exc:
+                # Reading one book failed — record the error and keep the group
+                # (titled with a fallback) so it is still created AND visibly
+                # flagged for manual editing, rather than dropped or silently
+                # saved as "Untitled book N".
+                metadata = {}
+                metadata_error = str(exc)
+        detected.append({
+            'pages': group,
+            'metadata': metadata,
+            'metadata_error': metadata_error,
+        })
+        progress.progress((index + 1) / max(total, 1))
+    status.empty()
+    progress.empty()
+    return split['method'], detected
+
+
+def _match_existing(book, field, names, dict_key):
+    """Fuzzy-match the first of ``names`` against an existing lookup dict and, on
+    a hit, set the Book's reference field (the Field descriptor resolves the
+    matched name string to a Firestore reference). No-op on no match — bulk
+    create never creates new people/publishers."""
+    if not names:
+        return
+    options = list(st.session_state.get(dict_key, {}).keys())
+    match = fuzzy_match_name(names[0], options)
+    if match:
+        setattr(book, field, match)
+
+
+def _make_book_from_metadata(metadata, used_ids):
+    """Build an unregistered ``Book`` from extracted metadata, guaranteeing a
+    unique, non-colliding title/document id within this batch and the database."""
+    firestore = st.session_state['firestore']
+    raw_title = (metadata.get('title') or "").strip()
+    base_title = raw_title or BatchBookEntry.untitled_title.format(n=len(used_ids) + 1)
+
+    title = base_title
+    suffix = 2
+    while _doc_id(title) in used_ids or firestore.document_exists('books', _doc_id(title)):
+        title = f"{base_title} ({suffix})"
+        suffix += 1
+
+    book = Book()
+    book.title = title
+
+    year = metadata.get('published_year')
+    if isinstance(year, int):
+        book.published = year
+
+    _match_existing(book, 'author', metadata.get('authors') or [], 'author_dict')
+    _match_existing(book, 'illustrator', metadata.get('illustrators') or [], 'illustrator_dict')
+    publisher = metadata.get('publisher')
+    _match_existing(book, 'publisher', [publisher] if publisher else [], 'publisher_dict')
+    return book
+
+
+def _process_group_pages(book, group_pages, fs, ai_client, status):
+    """Upload, correct and text-extract every page of one book group, mirroring
+    the single-book pipeline (``uploader._process_photo_batch``) but scoped to an
+    explicit, already-registered ``book``."""
+    photos_url = f"sawimages/{book.title}"
+    total = len(group_pages)
+
+    # Phase 1 — orientation-normalise and upload the raw photos.
+    corrected = []
+    for index, (_name, raw_bytes) in enumerate(group_pages):
+        raw_bytes = exif_transpose_bytes(raw_bytes)
+        corrected.append(raw_bytes)
+        with fs.open(f"{photos_url}/page_{index + 1}.jpg", 'wb') as handle:
+            handle.write(raw_bytes)
+
+    book.photos_uploaded = True
+    book.photos_url = photos_url
+    book.page_count = total
+
+    # Phase 2 — per-page correction + text extraction (when an AI client exists).
+    if ai_client is not None:
+        for index, raw_bytes in enumerate(corrected):
+            page_number = index + 1
+            status.write(BatchBookEntry.processing_page.format(
+                title=book.title, page=page_number, total=total
+            ))
+            bytes_for_extraction, _method = _process_page(
+                raw_bytes, page_number, photos_url, fs, ai_client
+            )
+            page = Page(page_number=page_number, book=book.title)
+            page.register()
+            text, is_story, _page_type = extract_page_info(bytes_for_extraction, ai_client)
+            if text:
+                page.text = text
+            page.contains_story = is_story
+    else:
+        # No API key — register pages without extraction.
+        for index in range(total):
+            page = Page(page_number=index + 1, book=book.title)
+            page.register()
+
+
+def _create_books(detected, fs, ai_client):
+    """Create a separate registered ``Book`` per detected group and process its
+    pages. Returns a list of ``{'title', 'pages'}`` summaries."""
+    results = []
+    used_ids = set()
+    overall = st.progress(0.0)
+    status = st.empty()
+    total = len(detected)
+
+    for index, entry in enumerate(detected):
+        book = _make_book_from_metadata(entry['metadata'], used_ids)
+        used_ids.add(book.document_id)
+        book.register()
+        # Register into the session lookup so Page.book string resolution works,
+        # then invalidate the shared cache for other/new sessions.
+        st.session_state['book_dict'][book.title] = book.get_ref()
+        _process_group_pages(book, entry['pages'], fs, ai_client, status)
+        results.append({
+            'title': book.title,
+            'pages': len(entry['pages']),
+            'metadata_error': entry.get('metadata_error'),
+        })
+        overall.progress((index + 1) / max(total, 1))
+
+    load_book_dict.clear()
+    status.empty()
+    overall.empty()
+    return results
+
+
+def _render_upload(client, ai_available):
+    st.write(BatchBookEntry.instructions)
+    if not ai_available:
+        st.warning(BatchBookEntry.no_api_key)
+
+    uploaded_files = st.file_uploader(
+        BatchBookEntry.upload_label,
+        accept_multiple_files=True,
+        key="add_books_batch_uploader",
+    )
+
+    detect = st.button(BatchBookEntry.detect_button, key="add_books_batch_detect_button")
+    if st.button(BatchBookEntry.cancel_button, key="add_books_batch_cancel_upload_button"):
+        _reset_batch_state()
+        st.switch_page("./pages/user_home.py")
+
+    if detect:
+        if not uploaded_files:
+            st.warning(BatchBookEntry.no_photos)
+            return
+        file_dict = {file.name: file for file in uploaded_files}
+        sorted_names = natsort.natsorted(list(file_dict.keys()), reverse=False)
+        pages = [(name, file_dict[name].getvalue()) for name in sorted_names]
+        with st.spinner(BatchBookEntry.detecting):
+            method, detected = _detect_books(pages, client)
+        if not detected:
+            st.warning(BatchBookEntry.no_books_detected)
+            return
+        st.session_state['batch_method'] = method
+        st.session_state['batch_detected'] = detected
+        st.session_state['batch_step'] = 'review'
+        st.rerun()
+
+
+def _render_review(client):
+    detected = st.session_state.get('batch_detected', [])
+    method = st.session_state.get('batch_method', 'single')
+    count = len(detected)
+
+    st.header(BatchBookEntry.review_header)
+    method_message = {
+        'black_frame': BatchBookEntry.method_black_frame,
+        'cover_page': BatchBookEntry.method_cover_page,
+        'single': BatchBookEntry.method_single,
+    }.get(method, BatchBookEntry.method_single)
+    st.info(method_message.format(count=count))
+
+    unreadable = sum(1 for entry in detected if entry.get('metadata_error'))
+    if unreadable:
+        st.warning(BatchBookEntry.review_metadata_warning.format(count=unreadable))
+
+    for index, entry in enumerate(detected):
+        metadata = entry.get('metadata') or {}
+        title = (metadata.get('title') or "").strip() or \
+            BatchBookEntry.untitled_title.format(n=index + 1)
+        with st.expander(
+            BatchBookEntry.book_summary.format(
+                n=index + 1, title=title, pages=len(entry['pages'])
+            ),
+            expanded=True,
+        ):
+            if entry.get('metadata_error'):
+                st.warning(BatchBookEntry.detail_metadata_error)
+            authors = metadata.get('authors') or []
+            illustrators = metadata.get('illustrators') or []
+            publisher = metadata.get('publisher')
+            year = metadata.get('published_year')
+            if authors:
+                st.write(BatchBookEntry.detail_author.format(value=", ".join(authors)))
+            if illustrators:
+                st.write(BatchBookEntry.detail_illustrator.format(value=", ".join(illustrators)))
+            if publisher:
+                st.write(BatchBookEntry.detail_publisher.format(value=publisher))
+            if year:
+                st.write(BatchBookEntry.detail_year.format(value=year))
+
+    confirm = st.button(
+        BatchBookEntry.confirm_button.format(count=count),
+        key="add_books_batch_confirm_button",
+    )
+    if st.button(BatchBookEntry.start_over_button, key="add_books_batch_start_over_button"):
+        _reset_batch_state()
+        st.rerun()
+
+    if confirm:
+        fs = s3fs.S3FileSystem(
+            anon=False,
+            key=st.secrets['AWS_ACCESS_KEY_ID'],
+            secret=st.secrets['AWS_SECRET_ACCESS_KEY'],
+        )
+        with st.spinner(BatchBookEntry.creating):
+            results = _create_books(detected, fs, client)
+        st.session_state['batch_results'] = results
+        st.session_state['batch_step'] = 'done'
+        # Free the large image payloads now they are persisted to S3.
+        st.session_state.pop('batch_detected', None)
+        st.rerun()
+
+
+def _render_done():
+    results = st.session_state.get('batch_results', [])
+    st.header(BatchBookEntry.done_header)
+
+    needs_details = sum(1 for result in results if result.get('metadata_error'))
+    st.success(BatchBookEntry.done_summary.format(count=len(results)))
+    if needs_details:
+        st.warning(BatchBookEntry.done_needs_details.format(count=needs_details))
+
+    for result in results:
+        if result.get('metadata_error'):
+            # This book was created with a fallback title because its details
+            # couldn't be read — flag it clearly so the user knows to finish it.
+            st.write(BatchBookEntry.done_book_line_unread.format(
+                title=result['title'], pages=result['pages']
+            ))
+        else:
+            st.write(BatchBookEntry.done_book_line.format(
+                title=result['title'], pages=result['pages']
+            ))
+    st.info(BatchBookEntry.done_note)
+
+    home_col, again_col = st.columns(2)
+    if home_col.button(BatchBookEntry.done_home_button, key="add_books_batch_done_home_button"):
+        _reset_batch_state()
+        st.switch_page("./pages/user_home.py")
+    if again_col.button(BatchBookEntry.done_another_button, key="add_books_batch_done_another_button"):
+        _reset_batch_state()
+        st.rerun()
+
+
+st.header(BatchBookEntry.header)
+
+_ai_available = 'ANTHROPIC_API_KEY' in st.secrets
+_client = (
+    anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
+    if _ai_available else None
+)
+
+_step = st.session_state.get('batch_step', 'upload')
+if _step == 'review':
+    _render_review(_client)
+elif _step == 'done':
+    _render_done()
+else:
+    _render_upload(_client, _ai_available)

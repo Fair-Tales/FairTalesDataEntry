@@ -38,28 +38,51 @@ class Alias(DataStructureBase):
 
         st.header(AliasForm.header)
 
-        character_options = list(
-            st.session_state['character_dict'].keys()
-        )
-        character_index = (
-            character_options.index(
-                self.character.get().to_dict()['name']
-            )
-            if self.character is not None and self.character.get().to_dict()['name'] in character_options
-            else 0
-        )
+        # Capture the entity id once, before any field is written back, so every
+        # widget key below stays constant for this render. Keying per
+        # document_id stops one alias's values bleeding into the next (#80).
+        key_suffix = self.document_id
 
-        self.character = st.selectbox(
-            "Select character",
+        # Aliases may only be added to characters that belong to the book
+        # currently being edited, so scope the options to the book-specific
+        # lookup rather than the global character dict.
+        book_character_dict = st.session_state.get('book_character_dict', {})
+        character_options = list(book_character_dict.keys())
+
+        if not character_options:
+            st.warning(AliasForm.no_characters)
+            return
+
+        character_index = 0
+        if self.character is not None:
+            _character_name = self.character.get().to_dict()['name']
+            if _character_name in character_options:
+                character_index = character_options.index(_character_name)
+
+        selected_character = st.selectbox(
+            AliasForm.select_character_label,
             options=character_options,
-            index=character_index
+            index=character_index,
+            key=f"alias_form_character_{key_suffix}"
         )
 
-        self.name = st.text_input("Alias", value=self.name)
+        self.name = st.text_input(
+            AliasForm.alias_label, value=self.name,
+            key=f"alias_form_name_{key_suffix}"
+        )
 
-        submitted = st.form_submit_button("Save alias")
+        submitted = st.form_submit_button(
+            AliasForm.save_button, key=f"alias_form_submit_{key_suffix}"
+        )
 
         if submitted:
+            # Resolve the selected name to its reference via the book-scoped
+            # dict (guarded with .get) so we link the right character even when
+            # two books contain characters that share a name.
+            self.character = book_character_dict.get(selected_character)
+            if self.character is None:
+                st.warning(AliasForm.no_characters)
+                return
             if st.session_state.firestore.document_exists(
                 collection='aliases',
                 doc_id=self.document_id
@@ -68,4 +91,11 @@ class Alias(DataStructureBase):
             else:
                 self.register()
                 st.session_state['now_entering'] = 'text'
+                st.session_state.pop('current_alias', None)
                 st.rerun()
+
+    def delete(self):
+        """Delete this alias document from Firestore."""
+        st.session_state['firestore'].delete_document(
+            collection='aliases', doc_id=self.document_id
+        )
