@@ -272,7 +272,12 @@ class BatchBookEntry:
 
     # --- Processing step ---
     creating = "Creating books and processing pages..."
+    creating_complete = "All books created."
     processing_page = "{title}: processing page {page} of {total}..."
+    # Per-book prefix for the shared per-page sub-step messages (Uploader.substep_*),
+    # so the batch flow shows the same fine-grained progress as the single-book
+    # upload and keeps the websocket alive across many books (#110).
+    page_prefix = "{title} — "
 
     # --- Done step ---
     done_header = "Books created"
@@ -883,9 +888,17 @@ class Uploader:
     """Strings for the shared upload widget (pages/uploader.py)."""
 
     select_photos_label = "Select page photos to upload"
+    status_header = "Processing your photos..."
     saving_photo = "Saving photo {current} of {total}..."
     photos_saved = "Photos saved."
     processing_page = "Processing page {page} of {total} (correcting image, extracting text)..."
+    # Fine-grained per-page sub-steps (#110). Updating the status at every sub-step
+    # gives the browser frequent messages so the websocket does not look hung /
+    # drop to "Connecting…" during the long synchronous AI pipeline.
+    substep_correcting = "Page {page} of {total}: straightening and cropping the image..."
+    substep_checking_crop = "Page {page} of {total}: checking the crop..."
+    substep_detecting_rotation = "Page {page} of {total}: checking the orientation..."
+    substep_extracting = "Page {page} of {total}: reading the text..."
     page_corrected = "✓ Page {page} of {total} — auto-corrected ({method})"
     page_correction_unavailable = "⚠ Page {page} of {total} — correction unavailable, using original"
     processing_complete = "Processing complete."
