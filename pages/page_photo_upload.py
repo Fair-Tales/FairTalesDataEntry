@@ -77,6 +77,7 @@ def already_uploaded_options():
 def show_upload_options():
     st.header(Instructions.photo_upload_header)
     st.write(Instructions.photo_upload_instructions)
+    st.write(Instructions.photo_naming_instructions)
 
     # When photos were already captured via the photo-first flow (#59), default
     # to "Upload here" — that path reuses the stashed photos rather than

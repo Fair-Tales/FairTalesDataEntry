@@ -149,14 +149,22 @@ def correct_book_page(image_bytes):
     """
     Attempt to detect the book page boundary and correct perspective/rotation.
 
-    Returns (corrected_bytes, success):
+    Returns (corrected_bytes, success, high_confidence):
     - corrected_bytes: JPEG bytes of the corrected image, or None on failure
     - success: True if a plausible book page boundary was found and corrected
+    - high_confidence: True only when the accepted boundary is a *well-framed,
+      clearly portrait-proportioned single page* — a large crop (45-88% of the
+      frame) whose output aspect ratio (width/height) is 0.55-0.85. Such a
+      detection is almost certainly the real, upright page, so the caller may
+      skip the extra Haiku crop-quality check to save a per-page model call
+      (#110). The band is deliberately narrow and conservative: a page
+      photographed sideways warps to a *landscape* aspect (>1) and a double-page
+      spread is landscape too, so neither qualifies — both still get verified.
     """
     nparr = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     if img is None:
-        return None, False
+        return None, False, False
 
     h, w = img.shape[:2]
 
@@ -174,7 +182,7 @@ def correct_book_page(image_bytes):
 
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
-        return None, False
+        return None, False, False
 
     # Try the five largest contours in case the first isn't the book
     for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:5]:
@@ -215,9 +223,12 @@ def correct_book_page(image_bytes):
         pil_img = Image.fromarray(cv2.cvtColor(warped, cv2.COLOR_BGR2RGB))
         buf = io.BytesIO()
         pil_img.save(buf, format='JPEG', quality=95)
-        return buf.getvalue(), True
 
-    return None, False
+        aspect = out_w / out_h
+        high_confidence = (0.45 <= area_ratio <= 0.88) and (0.55 <= aspect <= 0.85)
+        return buf.getvalue(), True, high_confidence
+
+    return None, False, False
 
 
 def get_rotation_angle(image_bytes, client):

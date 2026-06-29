@@ -26,7 +26,8 @@ decorator>=5.1.1
 defusedxml>=0.7.1
 exceptiongroup>=1.2.0
 executing>=2.0.1
-extra-streamlit-components>=0.1.70
+# Pinned for the signed remember-me cookie (#111 / DECISIONS 006): provides CookieManager.
+extra-streamlit-components==0.1.71
 fastjsonschema>=2.19.1
 firebase-admin>=6.4.0
 fqdn>=1.5.1
