@@ -927,9 +927,11 @@ class Validation:
     none_pending = "There are no books awaiting validation right now."
     select_book_label = "Books:"
     open_review_button = "Open for review"
+    submitted_only_toggle = "Show only books submitted for validation"
 
     # --- Review surface ---
     review_header = "Reviewing: {title}"
+    entered_by_label = "Originally entered by: {name}"
     review_intro = (
         "Correct any errors in the metadata, page text and characters below. "
         "Every correction you make is recorded — together with the original "

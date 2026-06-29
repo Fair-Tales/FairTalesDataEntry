@@ -38,6 +38,9 @@ Schema of an ``edit_log`` document
   old_value    (scalar)             — the ORIGINAL value (archivist's entry)
   new_value    (scalar)             — the validator's corrected value
   edited_by    (DocumentReference)  — the validator's user document
+  entered_by   (str|ref)            — who ORIGINALLY entered the book (the book's
+                                      own entered_by, denormalised for self-
+                                      contained training data)
   timestamp    (datetime, UTC)      — when the correction was recorded
   context      (str)                — 'validation'
 """
@@ -76,13 +79,18 @@ class EditLog:
 
     @classmethod
     def record(cls, *, book_id, book_title, entity_type, entity_id, field,
-               old_value, new_value, edited_by, context=CONTEXT_VALIDATION):
+               old_value, new_value, edited_by, entered_by=None,
+               context=CONTEXT_VALIDATION):
         """Write a single before/after audit record to the ``edit_log`` collection.
 
         ``old_value``/``new_value`` are coerced to serialisable scalars (see
         ``_coerce``). ``edited_by`` should be the validator's user
         ``DocumentReference`` (stored as a reference, mirroring ``entered_by``
-        elsewhere). Returns the created ``DocumentReference``.
+        elsewhere). ``entered_by`` is who ORIGINALLY entered the book (the book's
+        own ``entered_by``), denormalised here too — already in the book data, but
+        duplicated onto each record so the audit log is self-contained training
+        data; coerced via ``_coerce`` (a reference becomes its path string).
+        Returns the created ``DocumentReference``.
         """
         return st.session_state['firestore'].add_document(
             collection=cls.COLLECTION,
@@ -95,6 +103,7 @@ class EditLog:
                 'old_value': cls._coerce(old_value),
                 'new_value': cls._coerce(new_value),
                 'edited_by': edited_by,
+                'entered_by': cls._coerce(entered_by),
                 'timestamp': datetime.now(timezone.utc),
                 'context': context,
             },

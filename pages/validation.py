@@ -63,6 +63,7 @@ def _log(book, entity_type, entity_id, field, old_value, new_value):
         old_value=old_value,
         new_value=new_value,
         edited_by=_validator_ref(),
+        entered_by=book.entered_by,
     )
 
 
@@ -91,15 +92,22 @@ def render_list():
     st.header(Validation.list_header)
     st.write(Validation.list_intro)
 
+    # Admin/team can validate ANY book; a toggle lets them narrow to just the books
+    # archivists formally submitted (entry_status == 'completed').
+    submitted_only = st.toggle(
+        Validation.submitted_only_toggle, value=False,
+        key="validation_submitted_only_toggle",
+    )
+
     docs = st.session_state.firestore.get_all_documents_stream(collection="books")
-    # Admin and team members can validate ANY book, so the list is every book that
-    # has not yet been validated — not only those an archivist formally 'submitted'.
-    # Filter in Python (rather than a Firestore query) so a missing 'validated'
-    # field falls back to False instead of excluding a document or raising.
+    # Filter in Python (rather than a Firestore query) so missing legacy fields
+    # ('validated' / 'entry_status') fall back to a default instead of excluding a
+    # document or raising.
     pending = [
         data
         for data in (doc.to_dict() for doc in docs)
         if not data.get('validated', False)
+        and (not submitted_only or data.get('entry_status') == 'completed')
     ]
     pending.sort(key=lambda d: (d.get('title') or '').lower())
 
@@ -461,6 +469,15 @@ def render_review():
     st.session_state['current_book'] = book
 
     st.header(Validation.review_header.format(title=book.title))
+    # Show the validator who originally entered this book. entered_by may be a
+    # plain username string or a user DocumentReference; guard both.
+    entered_by = book.entered_by
+    if entered_by:
+        entered_by_name = (
+            entered_by if isinstance(entered_by, str)
+            else getattr(entered_by, 'id', None) or str(entered_by)
+        )
+        st.caption(Validation.entered_by_label.format(name=entered_by_name))
     st.write(Validation.review_intro)
 
     if st.button(Validation.back_to_list_button, key="validation_back_to_list_button"):
