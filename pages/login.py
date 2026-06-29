@@ -3,10 +3,11 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from utilities import (
     page_layout, clear_page_history, authenticate_user, is_authenticated,
-    get_admin, get_user, send_confirmation_email, send_password_reset_email,
-    FirestoreWrapper,
+    get_role, get_user, send_confirmation_email, send_password_reset_email,
+    FirestoreWrapper, ROLE_ARCHIVIST, ROLE_ADMIN,
 )
 from text_content import Terms, Alerts, PasswordReset, Login
+from data_structures import Book, Author, Publisher, Illustrator
 from streamlit_option_menu import option_menu
 
 # Validity window for an emailed password-reset link.
@@ -19,8 +20,12 @@ def confirm(username, password):
         st.session_state['authentication_status'] = True
         st.session_state['username'] = username
         st.session_state.pop('unconfirmed_username', None)
-        if get_admin(username):
-            st.session_state['admin'] = True
+        # Resolve the three-tier role (#83) and store it on the session. Keep the
+        # legacy 'admin' flag in sync so existing admin-gated pages and the
+        # sidebar Admin link keep working unchanged.
+        role = get_role(username)
+        st.session_state['role'] = role
+        st.session_state['admin'] = (role == ROLE_ADMIN)
         st.switch_page("./pages/landing.py")
     elif result == "not_confirmed":
         # Password was correct but account not yet confirmed.  Store the
@@ -76,10 +81,34 @@ def _request_password_reset(email):
     )
 
 
+# Session keys that are shared infrastructure (not user-specific) and must survive
+# a logout: the Firestore client and the cached lookup dicts, plus the first-load
+# 'initialised' flag. Everything else is per-user working state.
+_LOGOUT_KEEP = {
+    'firestore', 'initialised',
+    'author_dict', 'publisher_dict', 'illustrator_dict',
+    'book_dict', 'character_dict',
+}
+
+
 def logout():
+    # Wipe ALL per-session state except the shared infrastructure above, then
+    # re-seed the empty working entities. Without this, one user's in-progress
+    # state — e.g. a validator's open book review (`_validation_book_id`), a
+    # half-entered book (`current_book`), or stale widget values — leaks into the
+    # next login on a shared browser (the validation stale-data bug).
+    for key in list(st.session_state.keys()):
+        if key not in _LOGOUT_KEEP:
+            del st.session_state[key]
     st.session_state['authentication_status'] = False
     st.session_state['username'] = ""
+    st.session_state['role'] = ROLE_ARCHIVIST
     st.session_state['admin'] = False
+    st.session_state['current_book'] = Book()
+    st.session_state['author'] = Author()
+    st.session_state['publisher'] = Publisher()
+    st.session_state['illustrator'] = Illustrator()
+    st.session_state['active_form_to_confirm'] = None
     clear_page_history()
     st.rerun()
 

@@ -5,7 +5,7 @@ import streamlit as st
 from google.api_core import exceptions as gapi_exceptions
 from google.cloud import firestore
 
-from utilities import FirestoreWrapper, page_layout, hash_password
+from utilities import FirestoreWrapper, page_layout, hash_password, ROLE_ARCHIVIST
 from text_content import PasswordReset
 from Home import ensure_session
 
@@ -80,6 +80,7 @@ if _is_expired(expiry):
 # (Mirrors qr_landing.py, the other interactive logged-out deep-link page.)
 if 'initialised' not in st.session_state:
     st.session_state['initialised'] = True
+    st.session_state['role'] = ROLE_ARCHIVIST
     st.session_state['admin'] = False
     ensure_session()
 

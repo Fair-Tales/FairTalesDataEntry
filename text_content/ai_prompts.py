@@ -205,6 +205,56 @@ expected format:
 
 Now analyse the image and return JSON:"""
 
+    # --- Collection from photos (issue #75) -------------------------------
+    # Sent ALL of the user's uploaded photos (front covers and/or spine stacks)
+    # at once; Claude lists the visible books (title + author) so they can be
+    # fuzzy-matched against the book database and assembled into a collection.
+    collection_books_extraction = """\
+You are shown one or more photographs of a group of children's picture books — \
+either their front covers facing the camera, or a stack/shelf of books with the \
+spines facing the camera. Identify EVERY distinct book you can read well enough \
+to make out its title.
+
+For each book, read off:
+- title: the book's title, exactly as printed on the cover or spine.
+- author: the author's name if it is legible, otherwise an empty string.
+
+Rules:
+- Only list a book if you can actually read its title. Do NOT guess, invent, or \
+look up titles or authors that are not clearly legible in the photo(s).
+- List each distinct book once, even if it appears in more than one photo.
+
+Respond with valid JSON only — no other text before or after. Example of the \
+expected format:
+{"books": [{"title": "The Gruffalo", "author": "Julia Donaldson"}, \
+{"title": "Room on the Broom", "author": "Julia Donaldson"}]}
+
+If you cannot read any books at all, respond with {"books": []}.
+
+Now analyse the image(s) and return JSON:"""
+
+    # --- Batch multi-book splitting, Stage 2 fallback (issue #84) ----------
+    # Used only when NO black separator frames were found in a batch covering
+    # several books. A single cheap Haiku call over ALL page images finds the
+    # cover/title page that starts each book, and the batch is split immediately
+    # before each detected cover.
+    locate_cover_pages = """\
+You are shown the page images of SEVERAL children's picture books that were \
+photographed one after another, in order, as a single batch. Each image is \
+preceded by its page number ("Page 1", "Page 2", and so on).
+
+Identify the FRONT COVER or TITLE PAGE that marks where each NEW book BEGINS — \
+the page showing a book's title prominently (with cover artwork, or a title-page \
+layout giving the title plus author and/or illustrator) at the START of that \
+book. Do NOT list ordinary interior story pages, copyright/imprint pages, \
+dedication pages, or back covers.
+
+Return the page numbers that begin a new book, in ascending order. There is \
+always at least one (the first book's cover, usually page 1).
+
+Respond with valid JSON only — no other text before or after:
+{"cover_pages": [1, 12, 23]}"""
+
     page_extraction = """\
 Analyse this photo of a children's picture book page.
 

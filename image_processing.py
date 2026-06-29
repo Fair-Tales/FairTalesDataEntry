@@ -51,6 +51,88 @@ def exif_transpose_bytes(image_bytes):
         return image_bytes
 
 
+def downscale_for_vision(image_bytes, max_edge=1568, quality=85):
+    """Downscale and normalise an image for a Claude vision request.
+
+    Phone photos are commonly several megabytes and many megapixels. Sent raw,
+    a single one can approach Claude's per-image (~5MB) size limit, and a
+    multi-image request (e.g. ``locate_key_pages`` sending every page of a book
+    at once) easily exceeds the ~32MB per-request limit, raising an
+    ``anthropic.AnthropicError`` before any metadata can be extracted (#84).
+
+    This bakes in any EXIF orientation (matching ``exif_transpose_bytes``),
+    converts to RGB, and resizes so the longest edge is at most ``max_edge``
+    (Claude's vision sweet spot — larger images are downsampled server-side
+    anyway, so sending them only wastes payload). The result is re-encoded as
+    JPEG, which also normalises PNG/HEIC inputs to the declared
+    ``image/jpeg`` media type used by the vision callers.
+
+    Only shrinks: images already within ``max_edge`` are re-encoded without
+    upscaling. On an unreadable/truncated image the original bytes are returned
+    unchanged so the caller can still attempt the request rather than crash.
+    """
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        img = ImageOps.exif_transpose(img)
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        longest_edge = max(img.size)
+        if longest_edge > max_edge:
+            scale = max_edge / longest_edge
+            new_size = (
+                max(1, round(img.width * scale)),
+                max(1, round(img.height * scale)),
+            )
+            img = img.resize(new_size, Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=quality)
+        return buf.getvalue()
+    except (UnidentifiedImageError, OSError):
+        # Undecodable or truncated image: return the original bytes so the
+        # caller can still handle/send it rather than crashing here.
+        return image_bytes
+
+
+def is_black_frame(image_bytes, mean_threshold=10.0, percentile=99,
+                   percentile_threshold=40.0):
+    """
+    Detect a fully black "separator" frame in a sequential photo batch (#84).
+
+    The batch multi-book upload protocol (issue #84) asks the user to cover the
+    camera lens and take a fully black photo between consecutive books. Such a
+    frame carries almost no light: its average pixel brightness sits near 0 and
+    even its brightest pixels stay dark. This cheap PIL/NumPy check flags those
+    frames so the batch can be split into per-book groups; the separator frames
+    themselves are then discarded (never stored as pages).
+
+    Brightness is measured on the 0-255 grayscale scale, and BOTH conditions
+    must hold for a frame to count as a separator:
+      - mean brightness < ``mean_threshold`` (default 10 — i.e. under ~4% of
+        full brightness on average); AND
+      - the ``percentile``-th brightest pixel < ``percentile_threshold``
+        (default: the 99th percentile must be below 40).
+
+    The percentile guard is what stops a genuinely dark-but-real page (a black
+    book cover with light title text, a lens glint, a dim photo) from being
+    mistaken for a separator: those have a small number of bright pixels that
+    push the high percentile up even when the mean is low. Defaults are tuned
+    for lens-covered photos, which are near-uniformly black.
+
+    Returns False for undecodable/empty bytes so a corrupt image is treated as
+    an ordinary page rather than a (spurious) book boundary.
+    """
+    try:
+        img = Image.open(io.BytesIO(image_bytes)).convert('L')
+    except (UnidentifiedImageError, OSError):
+        return False
+    arr = np.asarray(img, dtype=np.float32)
+    if arr.size == 0:
+        return False
+    mean_brightness = float(arr.mean())
+    bright_pixel = float(np.percentile(arr, percentile))
+    return mean_brightness < mean_threshold and bright_pixel < percentile_threshold
+
+
 def _order_points(pts):
     """Order four corner points as: top-left, top-right, bottom-right, bottom-left."""
     rect = np.zeros((4, 2), dtype=np.float32)
@@ -145,7 +227,7 @@ def get_rotation_angle(image_bytes, client):
     Returns an integer angle in degrees, or 0 if no rotation is needed,
     the model is uncertain, or the API call fails.
     """
-    image_data = base64.standard_b64encode(image_bytes).decode('utf-8')
+    image_data = base64.standard_b64encode(downscale_for_vision(image_bytes)).decode('utf-8')
     try:
         response = client.messages.create(
             model="claude-sonnet-4-6",
@@ -194,7 +276,7 @@ def check_crop_quality(image_bytes, client):
     Defaults to True on API errors so a successful OpenCV result is not
     discarded due to a transient network failure.
     """
-    image_data = base64.standard_b64encode(image_bytes).decode('utf-8')
+    image_data = base64.standard_b64encode(downscale_for_vision(image_bytes)).decode('utf-8')
     try:
         response = client.messages.create(
             model="claude-haiku-4-5",

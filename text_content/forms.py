@@ -196,6 +196,106 @@ class BookPhotoEntry:
     cancel_text = "Cancel"
 
 
+class BatchBookEntry:
+    """Strings for the batch multi-book photo upload flow (#84).
+
+    The user uploads ONE batch of photos covering SEVERAL books (taken in
+    sequence); the app splits them into per-book groups, reads each book's
+    details, lets the user review the split, then creates a separate book
+    record per group.
+    """
+
+    menu_label = "Batch Upload"
+    header = "Batch upload — add several books at once"
+    instructions = """
+        Upload a single batch of photos that covers **several books**, taken in
+        order. We'll split the photos into separate books and create a record for
+        each one.
+
+        **To mark where one book ends and the next begins, cover the camera lens
+        and take a fully black photo between books.** We use those black photos as
+        separators and discard them. If you didn't take separator photos, we'll try
+        to detect each book's cover page automatically instead.
+
+        Upload all the photos in order, then review the detected books before we
+        create them.
+    """
+    upload_label = "Select all the page photos for the batch (in order)"
+    no_api_key = (
+        "Without an Anthropic API key we can still split books on the black "
+        "separator photos, but we can't auto-detect covers, read titles, or "
+        "extract page text — those steps will be skipped."
+    )
+    detect_button = "Detect books"
+    detecting = "Splitting the batch and reading each book..."
+    reading_book = "Reading book {n} of {total}..."
+    no_photos = "Please upload the batch photos first."
+    no_books_detected = (
+        "We couldn't split this batch into any books. Please check your photos "
+        "and try again."
+    )
+
+    # --- Review step ---
+    review_header = "Review the detected books"
+    method_black_frame = (
+        "Split into **{count}** book(s) using the black separator photos "
+        "(the separators have been discarded)."
+    )
+    method_cover_page = (
+        "No black separator photos were found, so we split into **{count}** "
+        "book(s) by detecting each book's cover page. Please check the split "
+        "carefully before continuing."
+    )
+    method_single = (
+        "We found no separators or distinct covers, so we've treated the whole "
+        "batch as a **single** book. Please check this is correct."
+    )
+    book_summary = "Book {n}: {title} — {pages} page(s)"
+    untitled_title = "Untitled book {n}"
+    detail_author = "Author: {value}"
+    detail_illustrator = "Illustrator: {value}"
+    detail_publisher = "Publisher: {value}"
+    detail_year = "First published: {value}"
+    review_metadata_warning = (
+        "We couldn't read the details for **{count}** of these book(s). They'll "
+        "still be created, but you'll need to add the title and details yourself "
+        "via **Edit my books**. They're flagged below."
+    )
+    detail_metadata_error = (
+        "⚠️ The details for this book couldn't be read — it will be created with "
+        "a placeholder title. Please add the title and details via **Edit my "
+        "books** after creating."
+    )
+    confirm_button = "Create {count} book(s)"
+    start_over_button = "Start over"
+    cancel_button = "Cancel"
+
+    # --- Processing step ---
+    creating = "Creating books and processing pages..."
+    processing_page = "{title}: processing page {page} of {total}..."
+
+    # --- Done step ---
+    done_header = "Books created"
+    done_summary = "Created **{count}** book(s) from the batch:"
+    done_needs_details = (
+        "**{count}** of these book(s) need manual details: their title and "
+        "information couldn't be read, so they were saved with a placeholder "
+        "title. Please add the missing details via **Edit my books**."
+    )
+    done_book_line = "- {title} ({pages} page(s))"
+    done_book_line_unread = (
+        "- {title} ({pages} page(s)) — ⚠️ metadata couldn't be read; please add "
+        "the title/details via **Edit my books**"
+    )
+    done_note = (
+        "Each book has been saved with its pages and any details we could read. "
+        "Open **Edit my books** to review, add authors / illustrators / "
+        "publishers, and finish each one."
+    )
+    done_home_button = "Back to home"
+    done_another_button = "Upload another batch"
+
+
 class EnterText:
 
     header = "Please enter text and add characters"
@@ -648,6 +748,7 @@ class BookEditHome:
     menu_edit_metadata = "Edit metadata"
     menu_upload_photos = "Upload photos"
     menu_enter_text = "Enter text"
+    menu_manage_characters = "Manage characters"
 
     suggest_themes_button = "🏷 Suggest themes"
     back_to_home_button = "Back to home menu."
@@ -672,6 +773,35 @@ class Admin:
     prepare_book_download_button = "Prepare book data download"
     download_book_button = "⬇ Download book database (ZIP of CSVs)"
     book_file_name = "fairtales_book_data.zip"
+
+    # Role management (#47 / #83). Admins can grant or revoke roles in-app
+    # instead of editing the Firestore user document by hand.
+    manage_roles_header = "Manage user roles"
+    manage_roles_description = (
+        "Set each user's permission tier. Archivists can enter and edit their "
+        "own books; Team members can additionally edit others' books and "
+        "validate data; Admins can additionally delete users/books and export "
+        "data."
+    )
+    # User-facing labels for the three role values (utilities.VALID_ROLES).
+    role_labels = {
+        "archivist": "Archivist",
+        "team": "Team member",
+        "admin": "Admin",
+    }
+    role_select_label = "Role"
+    role_save_button = "Save role"
+    role_current_caption = "Current role: {role}"
+    role_updated_success = "Updated {username}'s role to {role}."
+    role_update_error = "Could not update the role for {username}: {error}"
+    roles_load_error = "Could not load the user list: {error}"
+    roles_empty_message = "No users found."
+    # Self-lockout safeguard: an admin must not demote their own account out of
+    # the admin role, or they would lose access to this page.
+    role_self_demote_blocked = (
+        "You cannot remove your own admin access — this would lock you out of "
+        "admin management. Ask another admin to change your role."
+    )
 
 
 class RegisterUser:
@@ -710,6 +840,9 @@ class ReviewBooks:
 
     header = "Review my books"
     select_label = "My entered books:"
+    # Team-member / admin variants: they may edit books uploaded by anyone (#83).
+    all_header = "Review all books"
+    all_select_label = "All entered books:"
     edit_button = "Edit this book."
     cancel_button = "Cancel editing books."
 
@@ -782,3 +915,159 @@ class Validation:
     """Strings for the data-validation page (pages/validation.py)."""
 
     intro = "Here you may validate inputted data"
+    # Shown when an archivist (below team tier) tries to open the validation page.
+    not_authorised = "This page is only accessible to project team members and admins."
+
+    # --- Awaiting-validation list (issue #47, Part A) ---
+    list_header = "Books to validate"
+    list_intro = (
+        "Select any book to review and validate. Every book that has not yet "
+        "been validated appears here."
+    )
+    none_pending = "There are no books awaiting validation right now."
+    select_book_label = "Books:"
+    open_review_button = "Open for review"
+    submitted_only_toggle = "Show only books submitted for validation"
+
+    # --- Review surface ---
+    review_header = "Reviewing: {title}"
+    entered_by_label = "Originally entered by: {name}"
+    review_intro = (
+        "Correct any errors in the metadata, page text and characters below. "
+        "Every correction you make is recorded — together with the original "
+        "value — to the edit log. When the entry is correct and complete, "
+        "approve it at the bottom of the page."
+    )
+    back_to_list_button = "← Back to list (do not approve)"
+    tab_metadata = "Metadata"
+    tab_pages = "Page text"
+    tab_characters = "Characters & aliases"
+
+    # --- Metadata editor ---
+    metadata_header = "Book metadata"
+    title_readonly_caption = (
+        "The title is the book's identity (it keys its pages and characters) and "
+        "cannot be changed here."
+    )
+    none_option = "—"
+    save_metadata_button = "Save metadata corrections"
+    metadata_saved = "Metadata corrections saved."
+
+    # --- Page-text editor ---
+    pages_header = "Page text"
+    no_pages = "This book has no pages recorded yet."
+    page_select_label = "Page:"
+    page_contains_story_label = "This page contains story text"
+    page_text_label = "Page text (correct the transcription):"
+    page_not_entered = "No text has been entered for this page yet — you can add it below."
+    save_page_button = "Save page-text corrections"
+    page_saved = "Page-text corrections saved."
+
+    # --- Characters & aliases editor ---
+    characters_header = "Characters & aliases"
+    no_characters = "This book has no characters recorded yet."
+    character_select_label = "Character:"
+    save_character_button = "Save character corrections"
+    character_saved = "Character corrections saved."
+    character_name_required = "A character must have a name."
+    rename_exists = "Another character with that name already exists in this book."
+    aliases_label = "Aliases"
+    no_aliases = "No aliases are recorded for this character."
+    alias_name_label = "Alias name:"
+    save_alias_button = "Save alias"
+    alias_saved = "Alias correction saved."
+    alias_exists = "Another alias with that name already exists in this book."
+
+    # --- Approval ---
+    approve_header = "Approve this entry"
+    approve_help = (
+        "Mark this book as validated once you are confident the data is correct "
+        "and complete. This records you as the validator."
+    )
+    approve_button = "Approve & mark validated"
+    approved_success = "“{title}” has been approved and marked as validated."
+
+
+class CollectionPicker:
+    """Strings for the results collection-picker page (pages/collection_picker.py, #75)."""
+
+    page_title = "Choose a book collection"
+    intro = """
+        Pick which collection of books you want to see results for. You can choose
+        a ready-made collection, search our database to build your own, or upload
+        photos of a stack of books and we will match them for you.
+    """
+
+    # Method menu (option_menu)
+    menu_search = "Search & select"
+    menu_predefined = "Predefined collections"
+    menu_photo = "From photos"
+
+    # --- Current selection panel ---
+    selection_header = "Your selection"
+    selection_empty = (
+        "No books selected yet. Use one of the methods below to build a "
+        "collection, or view results across all books."
+    )
+    selection_count = "{n} book(s) in your collection."
+    remove_book_button = "Remove"
+    clear_selection_button = "Clear selection"
+    view_results_button = "View results for this collection"
+    view_all_button = "View results for all books instead"
+
+    # --- Method 1: search & select ---
+    search_header = "Search our database and tick the books you want"
+    search_label = "Search book titles"
+    search_results_found = "{count} matching book(s):"
+    add_book_checkbox = "{title}"
+
+    # --- Method 2: predefined collections ---
+    predefined_header = "Browse predefined collections"
+    predefined_none = "There are no predefined collections yet."
+    predefined_select_label = "Choose a collection"
+    predefined_owner_label = "Scope: {owner}"
+    predefined_books_label = "Books in this collection:"
+    predefined_use_button = "Load this collection into my selection"
+    predefined_view_button = "View results for this collection"
+    predefined_empty_collection = "This collection has no books."
+
+    create_header = "Save your current selection as a predefined collection"
+    create_help = (
+        "Creating predefined collections is intended for the FairTales team / "
+        "admins. You can still save one here; please use a clear, descriptive name."
+    )
+    create_name_label = "Collection name"
+    create_owner_label = "Owner / scope (optional — e.g. a school name)"
+    create_nothing_selected = (
+        "Select some books first (via search or photos), then save them as a "
+        "collection."
+    )
+    create_name_required = "Please give the collection a name."
+    create_exists = "A collection with that name and scope already exists."
+    create_button = "Save collection"
+    create_success = "Saved collection '{name}' with {n} book(s)."
+
+    # --- Method 3: from photos ---
+    photo_header = "Upload photos of your books"
+    photo_instructions = """
+        Upload one or more photos showing several books — either their front
+        covers, or a stack/shelf with the spines facing the camera so the titles
+        and authors are legible. We will read off the titles and match them to
+        books in our database.
+    """
+    photo_upload_label = "Upload book photo(s)"
+    photo_extract_button = "Read books from photo(s)"
+    photo_no_api_key = (
+        "Photo matching is unavailable because no AI API key is configured."
+    )
+    photo_extracting = "Reading the books in your photo(s)…"
+    photo_extract_failed = "Could not read the photo(s): {error}"
+    photo_none_found = (
+        "No book titles could be read from the photo(s). Try clearer, closer "
+        "photos with the titles facing the camera."
+    )
+    photo_matched_header = "Matched to our database ({count}):"
+    photo_unmatched_header = "Could not match these ({count}):"
+    photo_matched_item = "{extracted} → {matched}"
+    photo_add_matched_button = "Add matched books to my selection"
+    photo_added = "Added {n} matched book(s) to your selection."

@@ -6,3 +6,5 @@ from data_structures.page import Page
 from data_structures.character import Character
 from data_structures.alias import Alias
 from data_structures.user import User
+from data_structures.edit_log import EditLog
+from data_structures.collection import Collection

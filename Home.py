@@ -133,13 +133,23 @@ def navigate_pages():
             st.Page("./pages/review_my_books.py"),
             st.Page("./pages/uploader.py"),
             st.Page("./pages/donate.py"),
+            st.Page("./pages/collection_picker.py"),
             st.Page("./pages/results_dashboard.py"),
+            st.Page("./pages/add_books_batch.py"),
         ]
     }
 
-    if 'admin' in st.session_state and st.session_state['admin']:
+    # Role-based extra pages (#83/#47). Team members and admins can reach the
+    # data-validation page directly from the sidebar; admin-only tools (the Admin
+    # page) stay admin-gated and remain hidden from team members.
+    role = st.session_state.get('role', 'archivist')
+    is_admin_user = st.session_state.get('admin', False) or role == 'admin'
+    is_team_or_above = is_admin_user or role == 'team'
+
+    if is_team_or_above:
+        pages["Menu"].append(st.Page("./pages/validation.py", title='Data validation'))
+    if is_admin_user:
         pages["Menu"].append(st.Page("./pages/admin.py", title='Admin'))
-        pages["Other pages"].append(st.Page("./pages/validation.py"))
 
     st.navigation(pages, position="hidden").run()
 

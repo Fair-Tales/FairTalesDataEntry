@@ -30,6 +30,20 @@ def enter_text():
         st.warning(Alerts.please_uploaded_photos)
 
 
+def manage_characters():
+    # Character management lives in the text-entry page's "manage" view. Open
+    # enter_text.py directly there via the _open_manage_characters flag, which
+    # enter_text applies after its own per-book state init (issue #106). Like
+    # enter_text(), this requires uploaded photos because enter_text.py always
+    # renders the page image.
+    if st.session_state.current_book.photos_uploaded:
+        st.session_state['current_page_number'] = 1
+        st.session_state['_open_manage_characters'] = True
+        st.switch_page("./pages/enter_text.py")
+    else:
+        st.warning(Alerts.please_uploaded_photos)
+
+
 def suggest_themes():
     if 'ANTHROPIC_API_KEY' not in st.secrets:
         st.warning(BookEditHome.no_api_key)
@@ -100,9 +114,9 @@ if isinstance(st.session_state.current_book.last_updated, datetime):
 check_authentication_status()
 
 edit_option = option_menu(
-    None, [BookEditHome.menu_instructions, BookEditHome.menu_edit_metadata, BookEditHome.menu_upload_photos, BookEditHome.menu_enter_text],
+    None, [BookEditHome.menu_instructions, BookEditHome.menu_edit_metadata, BookEditHome.menu_upload_photos, BookEditHome.menu_enter_text, BookEditHome.menu_manage_characters],
     default_index=0,
-    icons=['info-circle', 'list-stars', 'image', 'pencil-square'],
+    icons=['info-circle', 'list-stars', 'image', 'pencil-square', 'people'],
     menu_icon="cast", orientation="horizontal",
     key="book_edit_option_menu",
     styles={
@@ -115,7 +129,8 @@ edit_navigation_dict = {
     BookEditHome.menu_instructions: instructions,
     BookEditHome.menu_edit_metadata: edit_book_details,
     BookEditHome.menu_upload_photos: add_photos,
-    BookEditHome.menu_enter_text: enter_text
+    BookEditHome.menu_enter_text: enter_text,
+    BookEditHome.menu_manage_characters: manage_characters
 }
 
 edit_navigation_dict[edit_option]()

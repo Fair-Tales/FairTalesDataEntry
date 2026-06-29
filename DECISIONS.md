@@ -84,3 +84,25 @@ Status: `accepted` | `superseded` | `deprecated`.
 **Consequences / follow-up:**
 - **Before production launch / wider rollout:** stand up a **test environment** (separate Firestore database + S3 bucket, plus a way to stub the Anthropic API) so automated testing does not pollute the production database or incur uncontrolled cost. Ties into #2 (Firestore out of test mode) and #48 (decouple credentials/book DBs).
 - Anthropic notes Claude in Chrome is **not yet recommended for sensitive/mission-critical sites**; keep in mind as the app matures.
+
+---
+
+## 005 — `edit_log` audit collection as a raw-dict writer; immediate on-submit diff capture (issue #47)
+
+**Status:** accepted
+
+**Context:** The validation workflow (#47) lets a team member review SUBMITTED books and correct errors. Chris wants every correction captured — original value and change — as TRAINING DATA for future AI correction systems. Two design questions arose: (a) what data model for the audit records, and (b) when/how to compute the before/after.
+
+**Decision:**
+- **New Firestore collection `edit_log`**, written by a dedicated `EditLog` class (`data_structures/edit_log.py`) using a **raw-dict writer with a Firestore-generated id** (`collection.add()`, exposed via `FirestoreWrapper.add_document`) — i.e. it deliberately does **not** subclass `DataStructureBase`/use write-through `Field` descriptors. Schema per record: `book_id`, `book_title`, `entity_type` (`book`|`page`|`character`|`alias`), `entity_id`, `field`, `old_value`, `new_value`, `edited_by` (validator ref), `timestamp` (UTC), `context` (`validation`).
+- **Capture mechanism: immediate on-submit diff** inside `pages/validation.py`. Each editor seeds its widgets from the entity's stored values (the originals) and, on save, compares the submitted values against those originals **before** writing through, logging one record per changed field. (Chosen over the originally-suggested open-time snapshot/diff.)
+
+**Reasons:**
+- An audit record is **append-only and immutable**, has **no natural deterministic `document_id`** (the same book/entity/field recurs over time), and is produced in **batches during a diff** — none of which the `DataStructureBase` pattern (single-field write-through to a content-derived id, bound to a `to_form()`) models. Forcing the fit would require an artificial id and a no-op form. This mirrors the documented `User` raw-dict exception but is even more clearly justified.
+- Immediate on-submit diffing fits the per-form write-through pattern exactly, captures the precise before/after for each correction **including renames** (character/alias document ids are name-derived, so a rename changes identity — which an open-time snapshot keyed by id would mismatch), and needs no cross-navigation snapshot lifecycle. Page-text corrections (original transcription vs validated text) are captured as `entity_type='page', field='text'`.
+
+**Consequences / follow-up:**
+- New `edit_log` collection accumulates write-once records; include it in admin export (#69) if/when the data is needed for analysis/training.
+- `old_value`/`new_value` are coerced to serialisable scalars (refs → `path` string) so a record can never fail to serialise.
+- The book **title is read-only** in the validation review surface, because the title keys a book's pages/characters (the book `document_id` is title-derived); retitling would orphan them under the current single-DB id scheme. A safe book-rename migration is out of scope here.
+- No in-app role-management UI yet (#47/#69 also cover admin granting roles); validators are set via the `role` field on the user document (#83).
