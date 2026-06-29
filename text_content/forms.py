@@ -724,6 +724,8 @@ class Login:
     login_header = "Login"
     email_label = "Email"
     password_label = "Password"
+    remember_me_checkbox = "Remember me"
+    remember_me_help = "Stay signed in on this browser for 7 days, even after a reload."
     confirm_button = "Confirm"
     resend_button = "Resend confirmation email"
     forgot_password_expander = "Forgot your password?"

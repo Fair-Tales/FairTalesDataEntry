@@ -106,3 +106,29 @@ Status: `accepted` | `superseded` | `deprecated`.
 - `old_value`/`new_value` are coerced to serialisable scalars (refs → `path` string) so a record can never fail to serialise.
 - The book **title is read-only** in the validation review surface, because the title keys a book's pages/characters (the book `document_id` is title-derived); retitling would orphan them under the current single-DB id scheme. A safe book-rename migration is out of scope here.
 - No in-app role-management UI yet (#47/#69 also cover admin granting roles); validators are set via the `role` field on the user document (#83).
+
+---
+
+## 006 — Persistent "Remember me" login via a signed, expiring cookie (issue #111)
+
+**Status:** accepted
+
+**Context:** Authentication lived only in Streamlit's per-tab `session_state`, so a hard page reload or a server restart/redeploy started a fresh session and bounced the user to the login form (#111). This is friction for a data-entry tool used in sessions, and it forces a human to re-enter the password after every restart during browser smoke-testing (Claude-in-Chrome can't autofill Streamlit's login form). Chris approved a **7-day** persistent session.
+
+**Decision:**
+- **Cookie component:** use the `CookieManager` from **`extra-streamlit-components`** (pinned `==0.1.71` in `requirements.txt`, mirroring DECISIONS 003's `streamlit-keyup` pin). It is **already a project dependency** (the package streamlit-authenticator builds on), so no new package is added — preferred over `streamlit-cookies-controller` / `streamlit-cookies-manager` for that reason. Streamlit cannot set cookies natively, hence a component is required.
+- **What the cookie stores:** ONLY the `username` and an absolute `exp` (epoch-seconds) timestamp, base64url-encoded as a compact JSON payload, plus an **HMAC-SHA256 signature** over that payload: `"<payload_b64>.<hex_sig>"`. The **password is never stored**, nor anything else sensitive.
+- **Signing key:** read from `st.secrets["cookie_signing_key"]`. **If the secret is absent the feature disables cleanly** — no cookie is written, no restore attempted, login behaves exactly as before (session-only). No key is invented or committed.
+- **Restore point:** `Home.py` (the single entry script that runs before every page body, consistent with #107) calls `init_cookie_manager()` then `restore_session_from_cookie()` each rerun, before `navigate_pages().run()`. Restore verifies the signature (constant-time `hmac.compare_digest`) and expiry; on success it sets `authentication_status`/`username`.
+- **Re-resolve role on restore (security):** the role/admin flag is **NOT trusted from the cookie**. On restore the role is re-fetched from the Firestore user document via `get_role()` and the user's continued existence is confirmed, so a **stale or forged cookie cannot escalate privileges** and a deleted user cannot be restored. Coordinates with the #83 three-tier roles.
+- **Teardown:** `logout()` clears the cookie (`clear_remember_cookie()`) before wiping session state, so Sign Out cannot be silently undone by the next reload.
+
+**Reasons:**
+- Reusing an existing, maintained dependency avoids new supply-chain surface and matches how streamlit-authenticator already manages cookies.
+- A signed (not encrypted) token is sufficient because the payload is non-secret (username + expiry); integrity — not confidentiality — is what matters, and HMAC provides it. Re-resolving role server-side closes the privilege-escalation vector that baking a role into the cookie would open.
+- Gating on a secret keeps the feature opt-in per deployment and avoids committing any key.
+
+**Consequences / follow-up:**
+- **Deployment:** the feature is dormant until `cookie_signing_key = "<random-hex>"` is added to `.streamlit/secrets.toml` (and the Streamlit Cloud secrets). Generate with `python -c "import secrets; print(secrets.token_hex(32))"`.
+- The `CookieManager` reads cookies via a frontend round-trip, so on the very first script run of a fresh page load the cookie may not yet be available; the component auto-reruns when it arrives and the session restores within a rerun or two (a brief flash of the login page is possible on a cold hard-reload). The login page redirects a freshly-restored user to their home page via a one-shot `_remember_restored` flag.
+- `secure` is left unset (works over local HTTP); `same_site="strict"` limits CSRF exposure. Revisit `secure=True` if a stricter HTTPS-only posture is wanted in production.

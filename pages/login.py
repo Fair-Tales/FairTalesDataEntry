@@ -9,12 +9,15 @@ from utilities import (
 from text_content import Terms, Alerts, PasswordReset, Login
 from data_structures import Book, Author, Publisher, Illustrator
 from streamlit_option_menu import option_menu
+from cookie_auth import (
+    set_remember_cookie, clear_remember_cookie, remember_me_available, RESTORED_FLAG,
+)
 
 # Validity window for an emailed password-reset link.
 PASSWORD_RESET_VALIDITY = timedelta(hours=1)
 
 
-def confirm(username, password):
+def confirm(username, password, remember=False):
     result = authenticate_user(username, password)
     if result == "ok":
         st.session_state['authentication_status'] = True
@@ -26,6 +29,11 @@ def confirm(username, password):
         role = get_role(username)
         st.session_state['role'] = role
         st.session_state['admin'] = (role == ROLE_ADMIN)
+        # Persist a signed, expiring (7-day) cookie so the session survives a page
+        # reload or a server restart (#111). No-op when the box was unticked or no
+        # cookie_signing_key secret is configured.
+        if remember:
+            set_remember_cookie(username)
         st.switch_page("./pages/landing.py")
     elif result == "not_confirmed":
         # Password was correct but account not yet confirmed.  Store the
@@ -92,6 +100,11 @@ _LOGOUT_KEEP = {
 
 
 def logout():
+    # Clear the persistent remember-me cookie (#111) BEFORE wiping session state,
+    # so a signed-out user is not silently re-authenticated on the next reload.
+    # Done first because the cookie component is read from session_state, which the
+    # wipe loop below clears.
+    clear_remember_cookie()
     # Wipe ALL per-session state except the shared infrastructure above, then
     # re-seed the empty working entities. Without this, one user's in-progress
     # state — e.g. a validator's open book review (`_validation_book_id`), a
@@ -116,6 +129,12 @@ def logout():
 page_layout()
 
 if is_authenticated():
+    # If the user was just re-authenticated from a remember-me cookie on a hard
+    # reload (#111), send them straight to their home page rather than showing the
+    # sign-out prompt. A user who navigated here deliberately while logged in (no
+    # restore flag) still sees the sign-out view below.
+    if st.session_state.pop(RESTORED_FLAG, False):
+        st.switch_page("./pages/landing.py")
     username = st.session_state['username']
     st.title(Login.sign_out_title)
     st.text(Login.signed_in_as.format(username=username))
@@ -133,9 +152,20 @@ else:
         with st.form('LoginForm'):
             username = st.text_input(Login.email_label, value="", key='login_email').lower()
             password = st.text_input(Login.password_label, type="password", value="", key='login_password')
+            # "Remember me" persistent login (#111). Only offered when a signing
+            # key is configured; otherwise the feature is disabled and the box is
+            # hidden so login behaves exactly as before.
+            remember = False
+            if remember_me_available():
+                remember = st.checkbox(
+                    Login.remember_me_checkbox,
+                    value=False,
+                    key="login_remember_me_checkbox",
+                    help=Login.remember_me_help,
+                )
             confirmed = st.form_submit_button(label=Login.confirm_button, key="login_submit_button")
             if confirmed:
-                confirm(username, password)
+                confirm(username, password, remember)
 
         # Show the "not confirmed" warning and resend button only when the last
         # login attempt was a correct-password / unconfirmed-account case.
