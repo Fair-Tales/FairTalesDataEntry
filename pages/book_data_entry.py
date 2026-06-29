@@ -30,6 +30,7 @@ st.title(
 )
 st.header(Instructions.photo_upload_header)
 st.write(Instructions.photo_upload_instructions)
+st.write(Instructions.photo_naming_instructions)
 
 selected_option = option_menu(
     None, [BookDataEntry.menu_upload_photos, BookDataEntry.menu_enter_text, BookDataEntry.menu_add_character],
