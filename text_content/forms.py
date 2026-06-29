@@ -195,6 +195,30 @@ class BookPhotoEntry:
     reuse_notice = "Using the {count} photo(s) you already uploaded. Processing them now..."
     cancel_text = "Cancel"
 
+    # Direct-to-S3 browser upload (#114). The phone PUTs each photo straight to
+    # S3 via presigned URLs, bypassing the Streamlit websocket that drops on
+    # mobile while the native photo picker is open.
+    direct_upload_instructions = (
+        "Tap **Select book photos** and choose the book's pages (in page order if "
+        "you can, with a clear shot of the title page). Each photo uploads straight "
+        "from your phone — watch the progress bars, then tap **Read the book** once "
+        "they are all done."
+    )
+    upload_select_button = "Select book photos"
+    upload_component_hint = (
+        "Full resolution, uploaded directly to secure storage. You can tap again "
+        "to add more photos."
+    )
+    upload_progress = "Uploaded {done} of {total} photo(s)."
+    upload_failed_count = "({failed} failed — please tap Select book photos to retry.)"
+    upload_max_reached = "Maximum number of photos reached."
+    read_button = "Read the book"
+    no_photos_uploaded = (
+        "We couldn't find any uploaded photos yet. Please select your book photos "
+        "above and wait for every progress bar to finish, then try again."
+    )
+    reading_photos = "Fetching your uploaded photos..."
+
 
 class BatchBookEntry:
     """Strings for the batch multi-book photo upload flow (#84).

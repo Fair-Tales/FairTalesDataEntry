@@ -13,6 +13,7 @@ from text_content import Instructions, AIPrompts, BookPhotoEntry, Uploader
 from utilities import (
     page_layout, check_authentication_status, extract_isbn, lookup_isbn
 )
+from photo_upload import cleanup_prefix
 
 
 def extract_page_info(image_bytes, client):
@@ -273,6 +274,13 @@ def upload_widget(on_submit='enter_text'):
             st.session_state.pop('_upload_pipeline_done', None)
             st.session_state.pop('book_pages_dict', None)
             st.session_state.pop('photo_first_pages', None)
+            # The photos have now been processed into sawimages/{title}/, so the
+            # direct-upload temp prefix (uploads/{session_id}/, #114) is no longer
+            # needed — delete it and drop the session id so a new entry mints a
+            # fresh one.
+            session_id = st.session_state.pop('photo_upload_session_id', None)
+            if session_id:
+                cleanup_prefix(fs, session_id)
             if on_submit == 'enter_text':
                 st.switch_page("./pages/enter_text.py")
             else:
