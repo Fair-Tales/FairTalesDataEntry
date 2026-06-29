@@ -340,10 +340,14 @@ def method_photo():
 st.title(CollectionPicker.page_title)
 st.write(CollectionPicker.intro)
 
-render_selection()
-
 st.divider()
 
+# The method selector and search box are custom iframe components
+# (streamlit_option_menu, st_keyup). Render them and the chosen method FIRST, at a
+# stable position near the top of the page, then show the running-selection panel
+# BELOW. Rendering the variable-height selection panel ABOVE these components made
+# the panel lag one interaction behind the builder, and shifted the components on
+# rerun so they blanked out / fell back to default state (#75 fixes).
 selected_method = option_menu(
     None,
     [
@@ -375,3 +379,9 @@ method_dict = {
 }
 
 method_dict[selected_method]()
+
+st.divider()
+
+# Rendered AFTER the methods so the panel always reflects the just-updated builder
+# (no one-interaction lag) and never shifts the iframe components above it.
+render_selection()
