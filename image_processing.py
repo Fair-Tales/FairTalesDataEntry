@@ -16,6 +16,17 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+# Register HEIC/HEIF decoding so PIL can read iPhone (and Android HEIF) photos.
+# iPhones default to HEIC, which Claude's vision API cannot read directly; decoding
+# it here means downscale_for_vision / exif_transpose_bytes re-encode it to JPEG
+# transparently. If the optional dependency is unavailable, HEIC simply isn't
+# supported (the app still runs — no crash).
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    pass
+
 from text_content import AIPrompts
 
 
