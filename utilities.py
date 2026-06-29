@@ -27,6 +27,13 @@ def check_authentication_status():
     if not is_authenticated():
         st.switch_page("./pages/login.py")
 
+    # Consume the remember-me restore flag (#111) on any normally-reached
+    # authenticated page, so it cannot go stale and wrongly redirect a later,
+    # deliberate visit to the login/sign-out page. The login page itself does not
+    # call this function, so it still sees the flag and redirects a freshly
+    # restored user home.
+    st.session_state.pop('_remember_restored', None)
+
 
 _MAX_HISTORY = 10
 
