@@ -106,3 +106,53 @@ Status: `accepted` | `superseded` | `deprecated`.
 - `old_value`/`new_value` are coerced to serialisable scalars (refs → `path` string) so a record can never fail to serialise.
 - The book **title is read-only** in the validation review surface, because the title keys a book's pages/characters (the book `document_id` is title-derived); retitling would orphan them under the current single-DB id scheme. A safe book-rename migration is out of scope here.
 - No in-app role-management UI yet (#47/#69 also cover admin granting roles); validators are set via the `role` field on the user document (#83).
+
+---
+
+## 006 — Persistent "Remember me" login via a signed, expiring cookie (issue #111)
+
+**Status:** accepted
+
+**Context:** Authentication lived only in Streamlit's per-tab `session_state`, so a hard page reload or a server restart/redeploy started a fresh session and bounced the user to the login form (#111). This is friction for a data-entry tool used in sessions, and it forces a human to re-enter the password after every restart during browser smoke-testing (Claude-in-Chrome can't autofill Streamlit's login form). Chris approved a **7-day** persistent session.
+
+**Decision:**
+- **Cookie component:** use the `CookieManager` from **`extra-streamlit-components`** (pinned `==0.1.71` in `requirements.txt`, mirroring DECISIONS 003's `streamlit-keyup` pin). It is **already a project dependency** (the package streamlit-authenticator builds on), so no new package is added — preferred over `streamlit-cookies-controller` / `streamlit-cookies-manager` for that reason. Streamlit cannot set cookies natively, hence a component is required.
+- **What the cookie stores:** ONLY the `username` and an absolute `exp` (epoch-seconds) timestamp, base64url-encoded as a compact JSON payload, plus an **HMAC-SHA256 signature** over that payload: `"<payload_b64>.<hex_sig>"`. The **password is never stored**, nor anything else sensitive.
+- **Signing key:** read from `st.secrets["cookie_signing_key"]`. **If the secret is absent the feature disables cleanly** — no cookie is written, no restore attempted, login behaves exactly as before (session-only). No key is invented or committed.
+- **Restore point:** `Home.py` (the single entry script that runs before every page body, consistent with #107) calls `init_cookie_manager()` then `restore_session_from_cookie()` each rerun, before `navigate_pages().run()`. Restore verifies the signature (constant-time `hmac.compare_digest`) and expiry; on success it sets `authentication_status`/`username`.
+- **Re-resolve role on restore (security):** the role/admin flag is **NOT trusted from the cookie**. On restore the role is re-fetched from the Firestore user document via `get_role()` and the user's continued existence is confirmed, so a **stale or forged cookie cannot escalate privileges** and a deleted user cannot be restored. Coordinates with the #83 three-tier roles.
+- **Teardown:** `logout()` clears the cookie (`clear_remember_cookie()`) before wiping session state, so Sign Out cannot be silently undone by the next reload.
+
+**Reasons:**
+- Reusing an existing, maintained dependency avoids new supply-chain surface and matches how streamlit-authenticator already manages cookies.
+- A signed (not encrypted) token is sufficient because the payload is non-secret (username + expiry); integrity — not confidentiality — is what matters, and HMAC provides it. Re-resolving role server-side closes the privilege-escalation vector that baking a role into the cookie would open.
+- Gating on a secret keeps the feature opt-in per deployment and avoids committing any key.
+
+**Consequences / follow-up:**
+- **Deployment:** the feature is dormant until `cookie_signing_key = "<random-hex>"` is added to `.streamlit/secrets.toml` (and the Streamlit Cloud secrets). Generate with `python -c "import secrets; print(secrets.token_hex(32))"`.
+- The `CookieManager` reads cookies via a frontend round-trip, so on the very first script run of a fresh page load the cookie may not yet be available; the component auto-reruns when it arrives and the session restores within a rerun or two (a brief flash of the login page is possible on a cold hard-reload). The login page redirects a freshly-restored user to their home page via a one-shot `_remember_restored` flag.
+- `secure` is left unset (works over local HTTP); `same_site="strict"` limits CSRF exposure. Revisit `secure=True` if a stricter HTTPS-only posture is wanted in production.
+
+---
+
+## 007 — Direct browser-to-S3 photo upload via presigned PUT URLs (issue #114)
+
+**Status:** accepted (Phase 1 — single-book "Add from Photos"; back-end + UI landed, **needs real-device + live-S3 testing and the S3 CORS policy applied before it works**)
+
+**Context:** `st.file_uploader` fails on mobile (confirmed Pixel 8 Pro + Samsung S22+, even with two small photos): while the native full-screen photo picker is open the mobile browser drops the Streamlit websocket, so the selection is lost on reconnect (streamlit/streamlit#7230). Not a size/RAM/version issue. Archivists can't be relied on to switch browsers.
+
+**Decision:**
+- **Transfer path:** the phone PUTs each photo **straight to S3** using presigned PUT URLs the app mints, inside an `st.components.v1.html` iframe running vanilla JS (`XMLHttpRequest` per file → per-file progress bars, full resolution, no client resize). This bypasses the Streamlit websocket **and** the 1GB server entirely, fixing mobile reliability, server memory, and archival resolution at once. New module `photo_upload.py` holds the presign helpers + the component builder; user-facing strings live in `text_content` (`BookPhotoEntry`).
+- **New dependency:** **`boto3`** (added to `requirements.txt`), used only to call `generate_presigned_url('put_object', …)`. `botocore` was already present transitively via `s3fs`/`aiobotocore`; installing `boto3` only bumped `botocore` 1.43.0 → 1.43.36 (patch) and added `s3transfer` — `s3fs`/`aiobotocore` still import and function.
+- **Regional, SigV4-signed URLs:** the bucket is in **`eu-north-1`**, which only supports SigV4 and the *regional* endpoint. boto3's default emits the legacy global host `bucket.s3.amazonaws.com`, which a browser PUT cannot follow when it 400s on region mismatch. The client therefore pins `signature_version='s3v4'`, forces virtual-hosted addressing, and sets an explicit `endpoint_url=https://s3.{region}.amazonaws.com`, yielding `{bucket}.s3.{region}.amazonaws.com`. `Content-Type` is **not** signed so the browser may PUT jpeg/png/heic without header-matching.
+- **Handshake (one-way component):** keys are `uploads/{session_id}/page_{i}.jpg` (i = selection order, MAX 60). `session_id` is `<safe-username>_<counter>_<timestamp>`, minted once and stored in `st.session_state` so reruns/reloads reuse the same prefix instead of orphaning a new one. A normal Streamlit **"Read the book"** button triggers a rerun; the page then **lists the S3 prefix** (`fs.ls(..., refresh=True)` to defeat fsspec's listing cache), natural-sorts, and feeds the bytes into the existing `extract_photo_first_metadata` pipeline. No bidirectional component is needed.
+- **Final storage + cleanup:** the downloaded bytes are stashed in `photo_first_pages`, so the **existing** downstream pipeline (`uploader.upload_widget` → `_process_photo_batch`) orientation-corrects, crops, OCRs and writes them to `sawimages/{title}/page_N.jpg` exactly as today. The temp `uploads/{session_id}/` prefix is deleted on Continue (and on Cancel). `user_home.add_book_from_photos` resets the session so each new entry gets a fresh prefix.
+
+**Reasons:**
+- A presigned-URL, one-way component is the minimal change that removes the websocket from the transfer path; the "list the prefix" handshake avoids the complexity/fragility of a bidirectional Streamlit component.
+- **In-memory download chosen over a pure S3 server-side copy** for Phase 1 (the issue's sanctioned fallback): the extraction "locate" pass must see every page anyway, and the existing downstream pipeline must read the bytes to orientation-correct/crop/OCR before writing `sawimages/{title}/`. A pure `uploads/→sawimages/` server-side copy would bypass that processing and regress behaviour, so the temp prefix is treated as a mobile-reliable transfer buffer that is processed then cleaned up. The phone→S3 transfer — the actual memory win — never touches the server.
+
+**Consequences / follow-up:**
+- **HARD PREREQUISITE (AWS, Chris):** the `sawimages` bucket needs a CORS policy allowing `PUT`/`GET` from the app origin, or the browser PUT is blocked (the `image/jpeg` PUT is non-simple, so the browser sends a CORS preflight). The Streamlit `components.html` iframe carries `allow-same-origin`, so requests use the **app origin** (the Streamlit/HF app URL), not `null`. CORS JSON is in the PR summary.
+- **Untestable here:** mobile and live-S3 behaviour cannot be exercised in CI — this needs real-device + live-S3 testing on the deploy, with CORS applied first.
+- **Phase-1 scope:** per-item *remove* in the uploader is deferred (true remove needs an S3 delete); the UI supports *adding* more photos. Batch upload (#84) and the QR/phone flow (#81) are the remaining follow-ups.

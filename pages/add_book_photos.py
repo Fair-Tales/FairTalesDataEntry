@@ -15,8 +15,9 @@ This is an ADDITIONAL entry path — the manual Add Book flow is unchanged. It m
 the #63 ISBN/copyright-page machinery reachable (#103) for AI-assisted data entry.
 """
 
-import natsort
+import s3fs
 import streamlit as st
+import streamlit.components.v1 as components
 import anthropic
 
 from text_content import BookPhotoEntry
@@ -26,6 +27,13 @@ from utilities import (
     navigate_to,
     extract_photo_first_metadata,
     fuzzy_match_name,
+)
+from photo_upload import (
+    get_upload_session_id,
+    generate_put_urls,
+    build_uploader_html,
+    fetch_uploaded_photos,
+    cleanup_prefix,
 )
 
 check_authentication_status()
@@ -102,6 +110,16 @@ def _apply_extracted_metadata(metadata):
             st.session_state['extracted_publisher_name'] = publisher
 
 
+def _filesystem():
+    """Build an authenticated s3fs filesystem from the AWS secrets (same config
+    as the rest of the app)."""
+    return s3fs.S3FileSystem(
+        anon=False,
+        key=st.secrets['AWS_ACCESS_KEY_ID'],
+        secret=st.secrets['AWS_SECRET_ACCESS_KEY'],
+    )
+
+
 st.header(BookPhotoEntry.header)
 st.write(BookPhotoEntry.instructions)
 
@@ -109,46 +127,47 @@ ai_available = 'ANTHROPIC_API_KEY' in st.secrets
 if not ai_available:
     st.warning(BookPhotoEntry.no_api_key)
 
-uploaded_files = st.file_uploader(
-    BookPhotoEntry.upload_label,
-    accept_multiple_files=True,
-    key="add_book_photos_uploader",
+st.write(BookPhotoEntry.direct_upload_instructions)
+
+# Direct browser-to-S3 upload (#114). Mint a stable per-session temp prefix
+# (uploads/{session_id}/) and a batch of presigned PUT URLs, then render the
+# browser-side uploader. Each photo PUTs straight from the phone to S3, bypassing
+# the Streamlit websocket that drops on mobile while the native photo picker is
+# full-screen. The component is intentionally one-way: we discover what landed by
+# listing the S3 prefix when the user clicks "Read the book".
+session_id = get_upload_session_id()
+put_urls = generate_put_urls(session_id)
+components.html(build_uploader_html(put_urls), height=460, scrolling=True)
+
+read_clicked = st.button(
+    BookPhotoEntry.read_button,
+    disabled=not ai_available,
+    key="add_book_photos_read_button",
 )
 
-if uploaded_files:
-    file_dict = {file.name: file for file in uploaded_files}
-    sorted_names = natsort.natsorted(list(file_dict.keys()), reverse=False)
+if read_clicked:
+    with st.spinner(BookPhotoEntry.reading_photos):
+        # List the temp prefix and pull the uploaded photos (in page order) into
+        # memory. See photo_upload.fetch_uploaded_photos for the memory tradeoff.
+        pages = fetch_uploaded_photos(_filesystem(), session_id)
 
-    title_page_name = st.selectbox(
-        BookPhotoEntry.title_page_label,
-        options=sorted_names,
-        index=0,
-        help=BookPhotoEntry.title_page_help,
-        key="add_book_photos_title_page_select",
-    )
-
-    extract_clicked = st.button(
-        BookPhotoEntry.extract_button,
-        disabled=not ai_available,
-        key="add_book_photos_extract_button",
-    )
-
-    if extract_clicked:
-        # Read all uploaded photos into memory and stash them (in page order) so the
-        # later page-upload step can reuse them without a second upload.
-        pages = [(name, file_dict[name].getvalue()) for name in sorted_names]
+    if not pages:
+        st.warning(BookPhotoEntry.no_photos_uploaded)
+    else:
+        # Reuse the existing in-memory pipeline: stash the downloaded photos so the
+        # downstream page-upload step (uploader.upload_widget) orientation-corrects,
+        # crops, OCRs and writes them to sawimages/{title}/ exactly as today, then
+        # cleans up this temp prefix.
         st.session_state['photo_first_pages'] = pages
-        # The user's title-page selection is a 1-based hint into the page order; the
-        # Haiku locate pass finds the copyright page (whose position varies).
-        title_page_hint = sorted_names.index(title_page_name) + 1
 
         client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
         metadata = None
         try:
             with st.spinner(BookPhotoEntry.extracting):
-                metadata = extract_photo_first_metadata(
-                    pages, client, title_page_hint=title_page_hint
-                )
+                # Auto-detect the title page (and the copyright page) via the Haiku
+                # locate pass — consistent with the batch flow; no manual selection.
+                # If detection is wrong, the user corrects the details on the form.
+                metadata = extract_photo_first_metadata(pages, client)
         except anthropic.AnthropicError as exc:
             st.error(BookPhotoEntry.extract_failed.format(error=exc))
 
@@ -173,5 +192,7 @@ if uploaded_files:
 
 cancel_button = st.button(BookPhotoEntry.cancel_text, key="add_book_photos_cancel_button")
 if cancel_button:
+    # Remove any photos already uploaded to the temp prefix so they don't orphan.
+    cleanup_prefix(_filesystem(), session_id)
     st.session_state.pop('photo_first_pages', None)
     st.switch_page("./pages/user_home.py")

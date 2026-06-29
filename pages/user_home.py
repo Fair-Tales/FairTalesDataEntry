@@ -4,6 +4,7 @@ from st_keyup import st_keyup
 from text_content import Alerts, Instructions, old_books, BookPhotoEntry, BatchBookEntry, UserHome
 from utilities import check_authentication_status, page_layout, navigate_to, clear_page_history, clear_entity_form_state
 from data_structures import Book
+from photo_upload import reset_upload_session
 import pandas as pd
 
 check_authentication_status()
@@ -147,6 +148,9 @@ def add_book_from_photos():
         '_upload_pipeline_done',
     ):
         st.session_state.pop(_key, None)
+    # Start a fresh direct-to-S3 upload session (#114) so the new entry mints its
+    # own uploads/{session_id}/ prefix rather than reusing the previous one.
+    reset_upload_session()
     # Drop persisted book-form widget state so the new (empty document_id) book
     # re-seeds from value=/index= rather than inheriting the previous new book's
     # values (see #80).

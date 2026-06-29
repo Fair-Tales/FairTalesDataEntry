@@ -13,6 +13,7 @@ bcrypt>=4.1.2
 beautifulsoup4>=4.12.3
 bleach>=6.1.0
 blinker>=1.7.0
+boto3>=1.34.0
 CacheControl>=0.14.0
 cachetools>=5.3.3
 certifi>=2024.7.4
@@ -26,7 +27,8 @@ decorator>=5.1.1
 defusedxml>=0.7.1
 exceptiongroup>=1.2.0
 executing>=2.0.1
-extra-streamlit-components>=0.1.70
+# Pinned for the signed remember-me cookie (#111 / DECISIONS 006): provides CookieManager.
+extra-streamlit-components==0.1.71
 fastjsonschema>=2.19.1
 firebase-admin>=6.4.0
 fqdn>=1.5.1

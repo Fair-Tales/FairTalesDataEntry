@@ -13,6 +13,7 @@ from text_content import Instructions, AIPrompts, BookPhotoEntry, Uploader
 from utilities import (
     page_layout, check_authentication_status, extract_isbn, lookup_isbn
 )
+from photo_upload import cleanup_prefix
 
 
 def extract_page_info(image_bytes, client):
@@ -52,31 +53,73 @@ def extract_page_info(image_bytes, client):
         return "", False, ""
 
 
-def _process_page(raw_bytes, page_number, photos_url, fs, ai_client):
+def _make_reporter(status, page_number, total, prefix=""):
+    """Build a per-sub-step progress callback for one page (#110).
+
+    Returns a callable taking a message *template* (e.g. ``Uploader.substep_*``)
+    that updates the shared ``st.status`` label, formatting in this page's number
+    and the batch total. Emitting one of these before every model call keeps the
+    browser fed with frequent messages so the websocket does not drop to
+    'Connecting…' during the long synchronous pipeline. A ``None`` status yields
+    a no-op reporter so ``_process_page`` can still be called without a UI.
+    """
+    if status is None:
+        return lambda _template: None
+
+    def report(template):
+        status.update(label=f"{prefix}{template.format(page=page_number, total=total)}")
+
+    return report
+
+
+def _process_page(raw_bytes, page_number, photos_url, fs, ai_client, report=None):
     """
     Run the staged correction pipeline for one page.
 
     Stage 1: OpenCV perspective correction + Haiku quality check.
     Stage 2: Rotation-only Sonnet fallback + Haiku quality check.
 
+    ``report`` is an optional per-sub-step progress callback (see
+    ``_make_reporter``) invoked before each model call so the frontend keeps
+    receiving updates (#110).
+
+    Model-call reduction (#110): when OpenCV returns a *high-confidence*,
+    well-framed portrait crop we trust it and skip the Stage 1 Haiku
+    crop-quality check, saving one model call on the dominant happy path. This
+    is conservative — the high-confidence band (see ``correct_book_page``) only
+    matches large, clearly upright single pages, where the Haiku verification
+    almost always agrees — and it never touches the text-extraction step, so
+    extraction accuracy is unchanged. Sideways/landscape/low-confidence crops
+    still get the full Haiku check and the Sonnet rotation fallback.
+
     Returns (image_bytes_for_extraction, method) where method is
     'opencv', 'rotation', or None (no correction applied).
     Saves page_{n}_cropped.jpg to S3 when a stage succeeds.
     """
+    report = report or (lambda _template: None)
+
     def _save_and_return(corrected, method):
         with fs.open(f"{photos_url}/page_{page_number}_cropped.jpg", 'wb') as f:
             f.write(corrected)
         return corrected, method
 
     # Stage 1 — OpenCV perspective correction
-    corrected_bytes, opencv_ok = correct_book_page(raw_bytes)
-    if opencv_ok and check_crop_quality(corrected_bytes, ai_client):
-        return _save_and_return(corrected_bytes, 'opencv')
+    report(Uploader.substep_correcting)
+    corrected_bytes, opencv_ok, high_confidence = correct_book_page(raw_bytes)
+    if opencv_ok:
+        if high_confidence:
+            # Trust the geometry and skip the Haiku verification (one fewer call).
+            return _save_and_return(corrected_bytes, 'opencv')
+        report(Uploader.substep_checking_crop)
+        if check_crop_quality(corrected_bytes, ai_client):
+            return _save_and_return(corrected_bytes, 'opencv')
 
     # Stage 2 — rotation-only fallback via Sonnet
+    report(Uploader.substep_detecting_rotation)
     angle = get_rotation_angle(raw_bytes, ai_client)
     if angle != 0:
         rotated_bytes = rotate_image(raw_bytes, angle)
+        report(Uploader.substep_checking_crop)
         if check_crop_quality(rotated_bytes, ai_client):
             return _save_and_return(rotated_bytes, 'rotation')
 
@@ -94,95 +137,92 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
     """
     total = len(sort_file_names)
     photos_url = f"sawimages/{st.session_state['current_book'].title}"
+    copyright_text = None
 
-    # Phase 1 — upload raw photos to S3
-    upload_status = st.empty()
-    upload_progress = st.progress(0)
-    corrected_bytes_list = []
-    for fi, raw_bytes in enumerate(raw_bytes_list):
-        upload_status.write(Uploader.saving_photo.format(current=fi + 1, total=total))
-        # Normalise orientation so the stored photo and every downstream stage
-        # (correction, extraction, display) work on correctly-oriented pixels
-        # (fixes portrait photos, #51). Idempotent — a no-op once the EXIF tag is
-        # baked in — so it's safe for both the manual-upload and photo-first
-        # reuse paths that share this function.
-        raw_bytes = exif_transpose_bytes(raw_bytes)
-        corrected_bytes_list.append(raw_bytes)
-        with fs.open(f"{photos_url}/page_{fi + 1}.jpg", 'wb') as f:
-            f.write(raw_bytes)
-        upload_progress.progress((fi + 1) / total)
-    # Downstream correction/extraction should use the orientation-corrected bytes.
-    raw_bytes_list = corrected_bytes_list
+    # One live st.status drives the whole pipeline. Updating its label at every
+    # sub-step (upload → correct → check → extract) sends the browser frequent
+    # messages, which keeps the websocket alive instead of dropping to
+    # 'Connecting…' on slow/mobile links during the long synchronous run (#110).
+    with st.status(Uploader.status_header, expanded=True) as status:
+        progress = st.progress(0.0)
 
-    st.session_state.current_book.photos_uploaded = True
-    st.session_state.current_book.photos_url = photos_url
-    st.session_state.current_book.page_count = total
-    upload_status.write(Uploader.photos_saved)
+        # Phase 1 — upload raw photos to S3
+        corrected_bytes_list = []
+        for fi, raw_bytes in enumerate(raw_bytes_list):
+            status.update(label=Uploader.saving_photo.format(current=fi + 1, total=total))
+            # Normalise orientation so the stored photo and every downstream stage
+            # (correction, extraction, display) work on correctly-oriented pixels
+            # (fixes portrait photos, #51). Idempotent — a no-op once the EXIF tag
+            # is baked in — so it's safe for both the manual-upload and photo-first
+            # reuse paths that share this function.
+            raw_bytes = exif_transpose_bytes(raw_bytes)
+            corrected_bytes_list.append(raw_bytes)
+            with fs.open(f"{photos_url}/page_{fi + 1}.jpg", 'wb') as f:
+                f.write(raw_bytes)
+            progress.progress((fi + 1) / total)
+        # Downstream correction/extraction should use the orientation-corrected bytes.
+        raw_bytes_list = corrected_bytes_list
 
-    # Phase 2 — image correction + text extraction per page
-    if 'ANTHROPIC_API_KEY' in st.secrets:
-        ai_client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
-        process_status = st.empty()
-        process_progress = st.progress(0)
-        copyright_text = None
+        st.session_state.current_book.photos_uploaded = True
+        st.session_state.current_book.photos_url = photos_url
+        st.session_state.current_book.page_count = total
+        status.update(label=Uploader.photos_saved)
 
-        for i, raw_bytes in enumerate(raw_bytes_list):
-            page_number = i + 1
-            process_status.write(
-                Uploader.processing_page.format(page=page_number, total=total)
-            )
+        # Phase 2 — image correction + text extraction per page
+        if 'ANTHROPIC_API_KEY' in st.secrets:
+            ai_client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
 
-            bytes_for_extraction, method = _process_page(
-                raw_bytes, page_number, photos_url, fs, ai_client
-            )
+            for i, raw_bytes in enumerate(raw_bytes_list):
+                page_number = i + 1
+                report = _make_reporter(status, page_number, total)
 
-            page = Page(
-                page_number=page_number,
-                book=st.session_state['current_book'].title
-            )
-            page.register()
-
-            text, is_story, page_type = extract_page_info(
-                bytes_for_extraction, ai_client
-            )
-            if text:
-                page.text = text
-            page.contains_story = is_story
-
-            if page_type == 'copyright' and text and copyright_text is None:
-                copyright_text = text
-
-            if method:
-                process_status.write(
-                    Uploader.page_corrected.format(page=page_number, total=total, method=method)
+                bytes_for_extraction, _method = _process_page(
+                    raw_bytes, page_number, photos_url, fs, ai_client, report
                 )
-            else:
-                process_status.write(
-                    Uploader.page_correction_unavailable.format(page=page_number, total=total)
+
+                page = Page(
+                    page_number=page_number,
+                    book=st.session_state['current_book'].title
                 )
-            process_progress.progress((i + 1) / total)
+                page.register()
 
-        process_status.write(Uploader.processing_complete)
+                report(Uploader.substep_extracting)
+                text, is_story, page_type = extract_page_info(
+                    bytes_for_extraction, ai_client
+                )
+                if text:
+                    page.text = text
+                page.contains_story = is_story
 
-        # ISBN lookup — use the copyright page text to fetch book metadata
-        # and pre-populate the Add Book form.
-        if copyright_text:
-            isbn = extract_isbn(copyright_text)
-            if isbn:
-                isbn_metadata = lookup_isbn(isbn)
-                if isbn_metadata:
-                    st.session_state['isbn_metadata'] = isbn_metadata
-                    st.info(
-                        Uploader.isbn_metadata_found.format(isbn=isbn, title=isbn_metadata['title'])
-                    )
-    else:
-        # No API key — register pages without extraction
-        for i in range(total):
-            page = Page(
-                page_number=i + 1,
-                book=st.session_state['current_book'].title
-            )
-            page.register()
+                if page_type == 'copyright' and text and copyright_text is None:
+                    copyright_text = text
+
+                progress.progress((i + 1) / total)
+
+            status.update(label=Uploader.processing_complete, state="complete")
+        else:
+            # No API key — register pages without extraction
+            for i in range(total):
+                page = Page(
+                    page_number=i + 1,
+                    book=st.session_state['current_book'].title
+                )
+                page.register()
+            status.update(label=Uploader.processing_complete, state="complete")
+
+    # ISBN lookup — use the copyright page text to fetch book metadata and
+    # pre-populate the Add Book form. Done outside the st.status block so the
+    # resulting st.info renders as a normal page message, not hidden inside the
+    # (now collapsed) status container.
+    if copyright_text:
+        isbn = extract_isbn(copyright_text)
+        if isbn:
+            isbn_metadata = lookup_isbn(isbn)
+            if isbn_metadata:
+                st.session_state['isbn_metadata'] = isbn_metadata
+                st.info(
+                    Uploader.isbn_metadata_found.format(isbn=isbn, title=isbn_metadata['title'])
+                )
 
     st.session_state['_upload_pipeline_done'] = True
 
@@ -234,6 +274,13 @@ def upload_widget(on_submit='enter_text'):
             st.session_state.pop('_upload_pipeline_done', None)
             st.session_state.pop('book_pages_dict', None)
             st.session_state.pop('photo_first_pages', None)
+            # The photos have now been processed into sawimages/{title}/, so the
+            # direct-upload temp prefix (uploads/{session_id}/, #114) is no longer
+            # needed — delete it and drop the session id so a new entry mints a
+            # fresh one.
+            session_id = st.session_state.pop('photo_upload_session_id', None)
+            if session_id:
+                cleanup_prefix(fs, session_id)
             if on_submit == 'enter_text':
                 st.switch_page("./pages/enter_text.py")
             else:

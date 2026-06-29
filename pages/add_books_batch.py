@@ -33,8 +33,8 @@ import anthropic
 
 from data_structures import Book, Page
 from image_processing import exif_transpose_bytes
-from pages.uploader import _process_page, extract_page_info
-from text_content import BatchBookEntry
+from pages.uploader import _process_page, extract_page_info, _make_reporter
+from text_content import BatchBookEntry, Uploader
 from utilities import (
     page_layout,
     check_authentication_status,
@@ -147,10 +147,15 @@ def _process_group_pages(book, group_pages, fs, ai_client, status):
     explicit, already-registered ``book``."""
     photos_url = f"sawimages/{book.title}"
     total = len(group_pages)
+    # Per-book prefix so the shared sub-step messages name the current book (#110).
+    prefix = BatchBookEntry.page_prefix.format(title=book.title)
 
     # Phase 1 — orientation-normalise and upload the raw photos.
     corrected = []
     for index, (_name, raw_bytes) in enumerate(group_pages):
+        status.update(label=prefix + Uploader.saving_photo.format(
+            current=index + 1, total=total
+        ))
         raw_bytes = exif_transpose_bytes(raw_bytes)
         corrected.append(raw_bytes)
         with fs.open(f"{photos_url}/page_{index + 1}.jpg", 'wb') as handle:
@@ -161,17 +166,18 @@ def _process_group_pages(book, group_pages, fs, ai_client, status):
     book.page_count = total
 
     # Phase 2 — per-page correction + text extraction (when an AI client exists).
+    # Report at every sub-step (correct → check → extract) so the websocket stays
+    # alive across a long multi-book batch (#110).
     if ai_client is not None:
         for index, raw_bytes in enumerate(corrected):
             page_number = index + 1
-            status.write(BatchBookEntry.processing_page.format(
-                title=book.title, page=page_number, total=total
-            ))
+            report = _make_reporter(status, page_number, total, prefix)
             bytes_for_extraction, _method = _process_page(
-                raw_bytes, page_number, photos_url, fs, ai_client
+                raw_bytes, page_number, photos_url, fs, ai_client, report
             )
             page = Page(page_number=page_number, book=book.title)
             page.register()
+            report(Uploader.substep_extracting)
             text, is_story, _page_type = extract_page_info(bytes_for_extraction, ai_client)
             if text:
                 page.text = text
@@ -188,28 +194,30 @@ def _create_books(detected, fs, ai_client):
     pages. Returns a list of ``{'title', 'pages'}`` summaries."""
     results = []
     used_ids = set()
-    overall = st.progress(0.0)
-    status = st.empty()
     total = len(detected)
 
-    for index, entry in enumerate(detected):
-        book = _make_book_from_metadata(entry['metadata'], used_ids)
-        used_ids.add(book.document_id)
-        book.register()
-        # Register into the session lookup so Page.book string resolution works,
-        # then invalidate the shared cache for other/new sessions.
-        st.session_state['book_dict'][book.title] = book.get_ref()
-        _process_group_pages(book, entry['pages'], fs, ai_client, status)
-        results.append({
-            'title': book.title,
-            'pages': len(entry['pages']),
-            'metadata_error': entry.get('metadata_error'),
-        })
-        overall.progress((index + 1) / max(total, 1))
+    # A single live st.status, updated at every per-page sub-step inside
+    # _process_group_pages, keeps the browser fed with frequent messages so the
+    # websocket survives a long multi-book batch instead of hanging (#110).
+    with st.status(BatchBookEntry.creating, expanded=True) as status:
+        overall = st.progress(0.0)
+        for index, entry in enumerate(detected):
+            book = _make_book_from_metadata(entry['metadata'], used_ids)
+            used_ids.add(book.document_id)
+            book.register()
+            # Register into the session lookup so Page.book string resolution
+            # works, then invalidate the shared cache for other/new sessions.
+            st.session_state['book_dict'][book.title] = book.get_ref()
+            _process_group_pages(book, entry['pages'], fs, ai_client, status)
+            results.append({
+                'title': book.title,
+                'pages': len(entry['pages']),
+                'metadata_error': entry.get('metadata_error'),
+            })
+            overall.progress((index + 1) / max(total, 1))
 
-    load_book_dict.clear()
-    status.empty()
-    overall.empty()
+        load_book_dict.clear()
+        status.update(label=BatchBookEntry.creating_complete, state="complete")
     return results
 
 
@@ -303,8 +311,7 @@ def _render_review(client):
             key=st.secrets['AWS_ACCESS_KEY_ID'],
             secret=st.secrets['AWS_SECRET_ACCESS_KEY'],
         )
-        with st.spinner(BatchBookEntry.creating):
-            results = _create_books(detected, fs, client)
+        results = _create_books(detected, fs, client)
         st.session_state['batch_results'] = results
         st.session_state['batch_step'] = 'done'
         # Free the large image payloads now they are persisted to S3.

@@ -1,2 +1,5 @@
 [server]
-maxUploadSize = 20
+# 200 = Streamlit's default. The previous 20 MB per-file cap could reject larger
+# photos (50 MP / RAW modes); it is NOT the cause of the mobile upload failure
+# (that's the native-picker websocket drop — see #114, the direct-to-S3 fix).
+maxUploadSize = 200

@@ -9,6 +9,7 @@ from utilities import (
     load_character_dict,
 )
 from data_structures import Author, Book, Illustrator, Publisher
+from cookie_auth import init_cookie_manager, restore_session_from_cookie
 
 # TODO: make better use of st-pages to show/hide and use icons: https://github.com/blackary/st_pages?tab=readme-ov-file
 # TODO: fix this Arrow table issue https://discuss.streamlit.io/t/applying-automatic-fixes-for-column-types-to-make-the-dataframe-arrow-compatible/52717/2
@@ -160,12 +161,24 @@ if __name__ == "__main__":
     # idempotent and has no redirect side-effect.
     ensure_session()
 
+    # Persistent "Remember me" login (#111). init_cookie_manager() builds the
+    # cookie component once per run (required before any page sets/reads cookies);
+    # restore_session_from_cookie() re-establishes an authenticated session from a
+    # valid signed cookie BEFORE any page body runs — re-resolving role/admin from
+    # the DB, never trusting the cookie. Both are no-ops when no cookie_signing_key
+    # secret is configured, so deployments without it behave exactly as before.
+    init_cookie_manager()
+    restore_session_from_cookie()
+
     navigate_pages()
 
     # First-load routing to login. 'initialised' (distinct from 'firestore' above)
     # still governs this redirect; the public deep-link pages set it themselves to
     # opt out, so reordering the init above does not change their behaviour.
+    # Skip the redirect when a remember-me cookie has just re-authenticated the
+    # user (#111), so a valid persistent session lands on their page, not login.
     if 'initialised' not in st.session_state:
         st.session_state['initialised'] = True
-        st.session_state['admin'] = False
-        st.switch_page("./pages/login.py")
+        if not is_authenticated():
+            st.session_state['admin'] = False
+            st.switch_page("./pages/login.py")
