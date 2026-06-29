@@ -227,7 +227,7 @@ def get_rotation_angle(image_bytes, client):
     Returns an integer angle in degrees, or 0 if no rotation is needed,
     the model is uncertain, or the API call fails.
     """
-    image_data = base64.standard_b64encode(image_bytes).decode('utf-8')
+    image_data = base64.standard_b64encode(downscale_for_vision(image_bytes)).decode('utf-8')
     try:
         response = client.messages.create(
             model="claude-sonnet-4-6",
@@ -276,7 +276,7 @@ def check_crop_quality(image_bytes, client):
     Defaults to True on API errors so a successful OpenCV result is not
     discarded due to a transient network failure.
     """
-    image_data = base64.standard_b64encode(image_bytes).decode('utf-8')
+    image_data = base64.standard_b64encode(downscale_for_vision(image_bytes)).decode('utf-8')
     try:
         response = client.messages.create(
             model="claude-haiku-4-5",

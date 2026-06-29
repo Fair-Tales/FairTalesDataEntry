@@ -919,13 +919,13 @@ class Validation:
     not_authorised = "This page is only accessible to project team members and admins."
 
     # --- Awaiting-validation list (issue #47, Part A) ---
-    list_header = "Books awaiting validation"
+    list_header = "Books to validate"
     list_intro = (
-        "Select a submitted book to review and validate. A book appears here "
-        "once an archivist has submitted it and it has not yet been validated."
+        "Select any book to review and validate. Every book that has not yet "
+        "been validated appears here."
     )
-    none_pending = "There are no submitted books awaiting validation right now."
-    select_book_label = "Submitted books:"
+    none_pending = "There are no books awaiting validation right now."
+    select_book_label = "Books:"
     open_review_button = "Open for review"
 
     # --- Review surface ---

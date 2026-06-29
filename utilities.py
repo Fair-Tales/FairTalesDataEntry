@@ -590,6 +590,7 @@ def extract_books_from_photos(images, client):
     response-parsing problems are handled here, by returning an empty list.
     """
     from text_content import AIPrompts
+    from image_processing import downscale_for_vision
 
     content = []
     for image_bytes in images:
@@ -598,7 +599,9 @@ def extract_books_from_photos(images, client):
             "source": {
                 "type": "base64",
                 "media_type": "image/jpeg",
-                "data": base64.standard_b64encode(image_bytes).decode('utf-8'),
+                "data": base64.standard_b64encode(
+                    downscale_for_vision(image_bytes)
+                ).decode('utf-8'),
             },
         })
     content.append({"type": "text", "text": AIPrompts.collection_books_extraction})

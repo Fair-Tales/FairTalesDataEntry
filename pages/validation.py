@@ -92,13 +92,16 @@ def render_list():
     st.write(Validation.list_intro)
 
     docs = st.session_state.firestore.get_all_documents_stream(collection="books")
-    # Filter in Python (rather than a Firestore query) so missing legacy fields
-    # fall back to a default instead of excluding a document or raising.
+    # Admin and team members can validate ANY book, so the list is every book that
+    # has not yet been validated — not only those an archivist formally 'submitted'.
+    # Filter in Python (rather than a Firestore query) so a missing 'validated'
+    # field falls back to False instead of excluding a document or raising.
     pending = [
         data
         for data in (doc.to_dict() for doc in docs)
-        if data.get('entry_status') == 'completed' and not data.get('validated', False)
+        if not data.get('validated', False)
     ]
+    pending.sort(key=lambda d: (d.get('title') or '').lower())
 
     if not pending:
         st.info(Validation.none_pending)
