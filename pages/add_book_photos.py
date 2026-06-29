@@ -119,14 +119,6 @@ if uploaded_files:
     file_dict = {file.name: file for file in uploaded_files}
     sorted_names = natsort.natsorted(list(file_dict.keys()), reverse=False)
 
-    title_page_name = st.selectbox(
-        BookPhotoEntry.title_page_label,
-        options=sorted_names,
-        index=0,
-        help=BookPhotoEntry.title_page_help,
-        key="add_book_photos_title_page_select",
-    )
-
     extract_clicked = st.button(
         BookPhotoEntry.extract_button,
         disabled=not ai_available,
@@ -138,17 +130,15 @@ if uploaded_files:
         # later page-upload step can reuse them without a second upload.
         pages = [(name, file_dict[name].getvalue()) for name in sorted_names]
         st.session_state['photo_first_pages'] = pages
-        # The user's title-page selection is a 1-based hint into the page order; the
-        # Haiku locate pass finds the copyright page (whose position varies).
-        title_page_hint = sorted_names.index(title_page_name) + 1
 
         client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
         metadata = None
         try:
             with st.spinner(BookPhotoEntry.extracting):
-                metadata = extract_photo_first_metadata(
-                    pages, client, title_page_hint=title_page_hint
-                )
+                # Auto-detect the title page (and the copyright page) via the Haiku
+                # locate pass — consistent with the batch flow; no manual selection.
+                # If detection is wrong, the user corrects the details on the form.
+                metadata = extract_photo_first_metadata(pages, client)
         except anthropic.AnthropicError as exc:
             st.error(BookPhotoEntry.extract_failed.format(error=exc))
 
