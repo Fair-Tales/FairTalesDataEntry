@@ -51,6 +51,48 @@ def exif_transpose_bytes(image_bytes):
         return image_bytes
 
 
+def downscale_for_vision(image_bytes, max_edge=1568, quality=85):
+    """Downscale and normalise an image for a Claude vision request.
+
+    Phone photos are commonly several megabytes and many megapixels. Sent raw,
+    a single one can approach Claude's per-image (~5MB) size limit, and a
+    multi-image request (e.g. ``locate_key_pages`` sending every page of a book
+    at once) easily exceeds the ~32MB per-request limit, raising an
+    ``anthropic.AnthropicError`` before any metadata can be extracted (#84).
+
+    This bakes in any EXIF orientation (matching ``exif_transpose_bytes``),
+    converts to RGB, and resizes so the longest edge is at most ``max_edge``
+    (Claude's vision sweet spot — larger images are downsampled server-side
+    anyway, so sending them only wastes payload). The result is re-encoded as
+    JPEG, which also normalises PNG/HEIC inputs to the declared
+    ``image/jpeg`` media type used by the vision callers.
+
+    Only shrinks: images already within ``max_edge`` are re-encoded without
+    upscaling. On an unreadable/truncated image the original bytes are returned
+    unchanged so the caller can still attempt the request rather than crash.
+    """
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        img = ImageOps.exif_transpose(img)
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        longest_edge = max(img.size)
+        if longest_edge > max_edge:
+            scale = max_edge / longest_edge
+            new_size = (
+                max(1, round(img.width * scale)),
+                max(1, round(img.height * scale)),
+            )
+            img = img.resize(new_size, Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=quality)
+        return buf.getvalue()
+    except (UnidentifiedImageError, OSError):
+        # Undecodable or truncated image: return the original bytes so the
+        # caller can still handle/send it rather than crashing here.
+        return image_bytes
+
+
 def is_black_frame(image_bytes, mean_threshold=10.0, percentile=99,
                    percentile_threshold=40.0):
     """

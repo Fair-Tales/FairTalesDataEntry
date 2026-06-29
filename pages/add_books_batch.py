@@ -79,15 +79,22 @@ def _detect_books(pages, client):
     for index, group in enumerate(groups):
         status.write(BatchBookEntry.reading_book.format(n=index + 1, total=total))
         metadata = {}
+        metadata_error = None
         if client is not None:
             try:
                 metadata = extract_photo_first_metadata(group, client) or {}
-            except anthropic.AnthropicError:
-                # Reading one book failed — keep the group with empty metadata so
-                # it is still created (titled with a fallback) and surfaced for
-                # manual editing, rather than dropped.
+            except anthropic.AnthropicError as exc:
+                # Reading one book failed — record the error and keep the group
+                # (titled with a fallback) so it is still created AND visibly
+                # flagged for manual editing, rather than dropped or silently
+                # saved as "Untitled book N".
                 metadata = {}
-        detected.append({'pages': group, 'metadata': metadata})
+                metadata_error = str(exc)
+        detected.append({
+            'pages': group,
+            'metadata': metadata,
+            'metadata_error': metadata_error,
+        })
         progress.progress((index + 1) / max(total, 1))
     status.empty()
     progress.empty()
@@ -193,7 +200,11 @@ def _create_books(detected, fs, ai_client):
         # then invalidate the shared cache for other/new sessions.
         st.session_state['book_dict'][book.title] = book.get_ref()
         _process_group_pages(book, entry['pages'], fs, ai_client, status)
-        results.append({'title': book.title, 'pages': len(entry['pages'])})
+        results.append({
+            'title': book.title,
+            'pages': len(entry['pages']),
+            'metadata_error': entry.get('metadata_error'),
+        })
         overall.progress((index + 1) / max(total, 1))
 
     load_book_dict.clear()
@@ -249,6 +260,10 @@ def _render_review(client):
     }.get(method, BatchBookEntry.method_single)
     st.info(method_message.format(count=count))
 
+    unreadable = sum(1 for entry in detected if entry.get('metadata_error'))
+    if unreadable:
+        st.warning(BatchBookEntry.review_metadata_warning.format(count=unreadable))
+
     for index, entry in enumerate(detected):
         metadata = entry.get('metadata') or {}
         title = (metadata.get('title') or "").strip() or \
@@ -259,6 +274,8 @@ def _render_review(client):
             ),
             expanded=True,
         ):
+            if entry.get('metadata_error'):
+                st.warning(BatchBookEntry.detail_metadata_error)
             authors = metadata.get('authors') or []
             illustrators = metadata.get('illustrators') or []
             publisher = metadata.get('publisher')
@@ -298,11 +315,23 @@ def _render_review(client):
 def _render_done():
     results = st.session_state.get('batch_results', [])
     st.header(BatchBookEntry.done_header)
+
+    needs_details = sum(1 for result in results if result.get('metadata_error'))
     st.success(BatchBookEntry.done_summary.format(count=len(results)))
+    if needs_details:
+        st.warning(BatchBookEntry.done_needs_details.format(count=needs_details))
+
     for result in results:
-        st.write(BatchBookEntry.done_book_line.format(
-            title=result['title'], pages=result['pages']
-        ))
+        if result.get('metadata_error'):
+            # This book was created with a fallback title because its details
+            # couldn't be read — flag it clearly so the user knows to finish it.
+            st.write(BatchBookEntry.done_book_line_unread.format(
+                title=result['title'], pages=result['pages']
+            ))
+        else:
+            st.write(BatchBookEntry.done_book_line.format(
+                title=result['title'], pages=result['pages']
+            ))
     st.info(BatchBookEntry.done_note)
 
     home_col, again_col = st.columns(2)
