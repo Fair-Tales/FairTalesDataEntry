@@ -11,6 +11,7 @@ from data_structures import Book, Author, Publisher, Illustrator
 from streamlit_option_menu import option_menu
 from cookie_auth import (
     set_remember_cookie, clear_remember_cookie, remember_me_available, RESTORED_FLAG,
+    JUST_LOGGED_OUT_FLAG,
 )
 
 # Validity window for an emailed password-reset link.
@@ -129,6 +130,16 @@ def logout():
     st.session_state['publisher'] = Publisher()
     st.session_state['illustrator'] = Illustrator()
     st.session_state['active_form_to_confirm'] = None
+    # Defeat the Sign-Out vs remember-me race (#125): clear_remember_cookie() above
+    # deletes the cookie via the ASYNC CookieManager, but restore_session_from_cookie()
+    # reads SYNCHRONOUSLY from st.context.cookies, so the st.rerun() below would
+    # otherwise re-read the not-yet-expired request cookie and re-authenticate —
+    # making Sign Out a no-op while 'Remember me' is active. This one-shot flag
+    # survives the rerun (it is in-session state) and is consumed by restore on the
+    # next run, which then skips re-authenticating. Set AFTER the wipe loop above so
+    # the wipe cannot delete it; it is not in _LOGOUT_KEEP because it must not
+    # persist beyond the single post-logout rerun.
+    st.session_state[JUST_LOGGED_OUT_FLAG] = True
     clear_page_history()
     st.rerun()
 
