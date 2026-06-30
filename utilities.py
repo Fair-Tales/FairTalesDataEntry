@@ -99,6 +99,9 @@ def page_layout(current_page=None):
     is_admin_user = st.session_state.get('admin', False) or role == 'admin'
     if is_admin_user or role == 'team':
         st.sidebar.page_link("pages/validation.py", label="Data validation")
+        st.sidebar.page_link(
+            "pages/reconstruct_orphans.py", label="Reconstruct orphaned books"
+        )
     if is_admin_user:
         st.sidebar.page_link("pages/admin.py", label="Admin")
     history = st.session_state.get('_page_history', [])

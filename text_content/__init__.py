@@ -9,5 +9,6 @@ from text_content.forms import (
     ReportFeedback, Login, AddCharacterPage, BookEditHome, Admin, RegisterUser,
     PhotoUpload, ReviewBooks, Confirm, UserHome, Uploader, BookDataEntry,
     QrLanding, Validation, CollectionPicker, BatchBookEntry,
+    Reconstruction, ReconstructOrphans,
 )
 from text_content.priority_books import PriorityBooks

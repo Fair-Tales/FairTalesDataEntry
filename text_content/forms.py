@@ -1151,3 +1151,76 @@ class CollectionPicker:
     photo_matched_item = "{extracted} → {matched}"
     photo_add_matched_button = "Add matched books to my selection"
     photo_added = "Added {n} matched book(s) to your selection."
+
+
+class Reconstruction:
+    """Progress + error strings for the shared book-reconstruction core
+    (``book_reconstruction.py``), used by both the orphan-reconstruction admin
+    page (#122) and the fully-automated upload flow (#123)."""
+
+    # Pipeline progress (passed to the caller's progress callback).
+    extracting_metadata = "Reading the book's title page and details…"
+    saving_photo = "Saving photo {current} of {total}…"
+    processing_page = "Processing page {page} of {total} (correcting image, reading text)…"
+    detecting_characters = "Looking for characters across the story…"
+    detecting_progress = "Identifying characters ({done} of {total})…"
+    finalising = "Finishing up and sending the book to the validation queue…"
+
+    # Errors (raised as ValueError, surfaced by the caller).
+    error_no_photos = "No photos were provided to reconstruct a book from."
+    error_no_title = (
+        "Could not read a title for this book, and no folder name was available "
+        "to fall back on. Reconstruction needs at least one of these."
+    )
+    error_book_exists = (
+        "A book titled '{title}' already exists in the database, so it was not "
+        "recreated. Open it in the existing tools instead of reconstructing it."
+    )
+
+
+class ReconstructOrphans:
+    """Strings for the admin 'Reconstruct orphaned books' page
+    (pages/reconstruct_orphans.py, #122)."""
+
+    header = "Reconstruct orphaned books"
+    intro = (
+        "Some image folders in storage hold a complete set of page photos but have "
+        "no matching book record — usually because the book was deleted or lost. "
+        "Pick one below to rebuild the book from its photos using the AI pipeline. "
+        "The reconstructed book is sent straight to the validation queue for a "
+        "human to review."
+    )
+    # Shown when a below-team user reaches the page.
+    not_authorised = "This page is only accessible to project team members and admins."
+    no_api_key = (
+        "Reconstruction is unavailable because no AI API key is configured."
+    )
+
+    refresh_button = "Refresh the list"
+    scanning = "Scanning storage for orphaned photo folders…"
+    none_found = "No orphaned photo folders were found. Nothing to reconstruct."
+    found_count = "Found {count} orphaned photo folder(s)."
+    select_label = "Orphaned photo folder:"
+    folder_option = "{folder} ({count} photos)"
+    reconstruct_button = "Reconstruct this book"
+
+    status_header = "Reconstructing the book…"
+    success_header = "Book reconstructed and sent for validation."
+    success_summary = (
+        "Created '{title}' with {pages} page(s), {characters} character(s) and "
+        "{aliases} alias(es). It now appears in the **Data validation** queue for "
+        "review."
+    )
+    moved_notice = (
+        "The reconstructed book's photos were written to the canonical folder "
+        "'{photos_folder}', which differs from the original folder "
+        "'{source_folder}'. The original folder was left untouched — once you have "
+        "validated the book, remove the now-duplicate '{source_folder}' folder with "
+        "the data-cleanup tool."
+    )
+    error = "Could not reconstruct the book: {error}"
+    no_photos_in_folder = (
+        "No page photos could be read from that folder. It may have been emptied "
+        "since the list was built — refresh and try another."
+    )
+    validation_link_label = "Go to Data validation"
