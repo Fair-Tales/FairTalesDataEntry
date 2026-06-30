@@ -149,6 +149,9 @@ def navigate_pages():
 
     if is_team_or_above:
         pages["Menu"].append(st.Page("./pages/validation.py", title='Data validation'))
+        pages["Menu"].append(
+            st.Page("./pages/reconstruct_orphans.py", title='Reconstruct orphaned books')
+        )
     if is_admin_user:
         pages["Menu"].append(st.Page("./pages/admin.py", title='Admin'))
 
