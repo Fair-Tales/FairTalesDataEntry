@@ -15,10 +15,15 @@ Gated to team members and admins (#83), mirroring the validation page.
 import anthropic
 import streamlit as st
 
-from utilities import page_layout, check_authentication_status, is_team_or_above
+from utilities import (
+    page_layout,
+    check_authentication_status,
+    is_team_or_above,
+    get_s3_filesystem,
+    get_anthropic_client,
+)
 from text_content import ReconstructOrphans
 from book_reconstruction import (
-    build_s3_filesystem,
     list_orphan_folders,
     fetch_folder_photos,
     reconstruct_book_from_photos,
@@ -103,13 +108,13 @@ if st.button(
     disabled=not ai_available,
     key="reconstruct_run_button",
 ):
-    fs = build_s3_filesystem()
+    fs = get_s3_filesystem()
     photos = fetch_folder_photos(fs, selected_folder)
     if not photos:
         st.warning(ReconstructOrphans.no_photos_in_folder)
         st.stop()
 
-    client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
+    client = get_anthropic_client()
     try:
         with st.status(ReconstructOrphans.status_header, expanded=True) as status:
             # Frequent label updates keep the browser websocket fed during the long

@@ -48,7 +48,6 @@ surface that to the admin.
 from datetime import datetime, timezone
 
 import natsort
-import s3fs
 import streamlit as st
 
 from text_content import Reconstruction
@@ -63,6 +62,16 @@ from utilities import (
     load_book_dict,
     load_character_dict,
     databot_entered_by,
+    get_s3_filesystem,
+)
+# Pure S3 path constants/helpers shared with the cleanup CLI (#129): keep ONE
+# definition so the app and scripts/data_cleanup.py classify book folders /
+# page images identically.
+from s3_constants import (
+    S3_BUCKET,
+    NON_BOOK_S3_PREFIXES,
+    is_page_image,
+    count_folder_pages,
 )
 from image_processing import exif_transpose_bytes
 from data_structures import Book, Page, Character, Alias, Author, Illustrator, Publisher
@@ -72,38 +81,6 @@ from data_structures import Book, Page, Character, Alias, Author, Illustrator, P
 # it is imported here as a PEP 420 namespace package (importing the module does
 # not run its page body, which is guarded by ``if __name__ == "__main__"``).
 from pages.uploader import extract_page_info, _process_page
-
-#: S3 bucket holding book page images (first path segment, app-wide).
-S3_BUCKET = "sawimages"
-
-#: Immediate child prefixes under the bucket that are NOT book folders and so must
-#: never be reported as orphans (mirrors scripts/data_cleanup.NON_BOOK_S3_PREFIXES:
-#: the transient direct-upload area uploads/{flow}/{session}/).
-NON_BOOK_S3_PREFIXES = ("uploads",)
-
-
-def build_s3_filesystem():
-    """Build an authenticated s3fs filesystem from the AWS secrets.
-
-    Same configuration as the rest of the app (``pages/uploader.py`` /
-    ``pages/add_book_photos.py``).
-    """
-    return s3fs.S3FileSystem(
-        anon=False,
-        key=st.secrets["AWS_ACCESS_KEY_ID"],
-        secret=st.secrets["AWS_SECRET_ACCESS_KEY"],
-    )
-
-
-def _is_page_image(path):
-    """True for ``page_N.jpg`` originals; False for ``page_N_cropped.jpg`` and
-    anything else. Page images are the canonical originals; ``_cropped`` variants
-    are derived and so are ignored when listing / counting a book's pages."""
-    name = path.rsplit("/", 1)[-1].lower()
-    if not name.startswith("page_") or not name.endswith(".jpg"):
-        return False
-    middle = name[len("page_"):-len(".jpg")]
-    return middle.isdigit()
 
 
 def _expected_book_folders():
@@ -122,17 +99,6 @@ def _expected_book_folders():
     return expected
 
 
-def count_folder_pages(fs, folder):
-    """Number of ``page_N.jpg`` (non-cropped) objects under ``sawimages/{folder}``."""
-    prefix = f"{S3_BUCKET}/{folder}"
-    try:
-        if not fs.exists(prefix):
-            return 0
-        return sum(1 for path in fs.find(prefix) if _is_page_image(path))
-    except FileNotFoundError:
-        return 0
-
-
 def list_orphan_folders(fs=None):
     """Return orphaned ``sawimages/`` folders as ``(folder, page_count)`` tuples.
 
@@ -140,7 +106,7 @@ def list_orphan_folders(fs=None):
     photos but matches no existing Firestore book (its doc was deleted/lost). The
     transient ``uploads/`` area is excluded. Sorted by folder name.
     """
-    fs = fs or build_s3_filesystem()
+    fs = fs or get_s3_filesystem()
     expected = _expected_book_folders()
     orphans = []
     for entry in fs.ls(S3_BUCKET, detail=True):
@@ -166,7 +132,7 @@ def fetch_folder_photos(fs, folder):
     """
     prefix = f"{S3_BUCKET}/{folder}"
     entries = fs.ls(prefix, detail=False, refresh=True)
-    keys = natsort.natsorted([e for e in entries if _is_page_image(e)])
+    keys = natsort.natsorted([e for e in entries if is_page_image(e)])
     photos = []
     for key in keys:
         with fs.open(key, "rb") as handle:
@@ -408,7 +374,7 @@ def reconstruct_book_from_photos(pages, client, *, fs=None, source_folder=None,
     if not pages:
         raise ValueError(Reconstruction.error_no_photos)
 
-    fs = fs or build_s3_filesystem()
+    fs = fs or get_s3_filesystem()
 
     _report(progress, Reconstruction.extracting_metadata)
     metadata = extract_photo_first_metadata(pages, client)
@@ -423,6 +389,20 @@ def reconstruct_book_from_photos(pages, client, *, fs=None, source_folder=None,
         collection="books", doc_id=book.document_id
     ):
         raise ValueError(Reconstruction.error_book_exists.format(title=title))
+
+    # Guard against silently overwriting a DIFFERENT orphan folder (#128). When the
+    # AI-extracted title differs from the source folder and the destination folder
+    # ``sawimages/{title}/`` already holds page photos (belonging to some other
+    # orphan, since no book doc claims this title), writing our pages would clobber
+    # them. Stop and surface it to the admin rather than overwrite.
+    if source_folder and title != source_folder:
+        existing_pages = count_folder_pages(fs, title)
+        if existing_pages > 0:
+            raise ValueError(
+                Reconstruction.error_folder_collision.format(
+                    title=title, count=existing_pages, source_folder=source_folder
+                )
+            )
 
     isbn = metadata.get("isbn")
     if isbn:

@@ -21,7 +21,6 @@ across the three methods.
 """
 
 import anthropic
-import s3fs
 import streamlit as st
 from streamlit_option_menu import option_menu
 from st_keyup import st_keyup
@@ -33,6 +32,8 @@ from utilities import (
     navigate_to,
     fuzzy_match_name,
     extract_books_from_photos,
+    get_s3_filesystem,
+    get_anthropic_client,
 )
 from data_structures import Collection
 from photo_upload import (
@@ -50,15 +51,6 @@ page_layout(current_page="./pages/collection_picker.py")
 # Running selection: {book title: book DocumentReference}. Persisted across reruns
 # and accumulated across the three picker methods.
 builder = st.session_state.setdefault("collection_builder", {})
-
-
-def _filesystem():
-    """Authenticated s3fs filesystem from the AWS secrets (shared app config)."""
-    return s3fs.S3FileSystem(
-        anon=False,
-        key=st.secrets["AWS_ACCESS_KEY_ID"],
-        secret=st.secrets["AWS_SECRET_ACCESS_KEY"],
-    )
 
 
 def _book_id_to_title():
@@ -340,13 +332,13 @@ def method_photo():
         disabled=not ai_available,
         key="collection_photo_extract_button",
     ):
-        fs = _filesystem()
+        fs = get_s3_filesystem()
         pages = fetch_uploaded_photos(fs, "collection", session_id)
         if not pages:
             st.warning(CollectionPicker.photo_no_photos_uploaded)
         else:
             images = [data for _, data in pages]
-            client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
+            client = get_anthropic_client()
             extracted = None
             try:
                 with st.spinner(CollectionPicker.photo_extracting):

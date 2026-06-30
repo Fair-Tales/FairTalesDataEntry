@@ -1,10 +1,11 @@
 import json
 from datetime import datetime
-import anthropic
 import streamlit as st
 from streamlit_option_menu import option_menu
 from text_content import Alerts, Instructions, AIPrompts, BookForm, BookEditHome
-from utilities import check_authentication_status, page_layout, confirm_submit, check_authentication_status
+from utilities import (
+    check_authentication_status, page_layout, confirm_submit, get_anthropic_client,
+)
 
 check_authentication_status()
 
@@ -45,7 +46,8 @@ def manage_characters():
 
 
 def suggest_themes():
-    if 'ANTHROPIC_API_KEY' not in st.secrets:
+    client = get_anthropic_client()
+    if client is None:
         st.warning(BookEditHome.no_api_key)
         return
 
@@ -72,7 +74,6 @@ def suggest_themes():
 
     with st.spinner(BookEditHome.analysing_spinner):
         try:
-            client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
             response = client.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=512,

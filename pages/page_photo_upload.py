@@ -36,7 +36,7 @@ def go_to_phone():
     img = qr.make_image(fill_color="black", back_color="white")
     temp = BytesIO()
     img.save(temp)
-    st.image(temp.getvalue())
+    st.image(temp.getvalue(), width="stretch")
     st.write(PhotoUpload.link_line % (req.url, req.url))
 
     st.write(PhotoUpload.finished_instruction)
