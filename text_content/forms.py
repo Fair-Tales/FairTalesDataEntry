@@ -999,6 +999,11 @@ class Validation:
     select_book_label = "Books:"
     open_review_button = "Open for review"
     submitted_only_toggle = "Show only books submitted for validation"
+    # Scope control (#131): validators see ALL books by default, with the option to
+    # narrow to just the books they themselves entered.
+    scope_label = "Show"
+    scope_all = "All books"
+    scope_mine = "Just mine"
 
     # --- Review surface ---
     review_header = "Reviewing: {title}"

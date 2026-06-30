@@ -85,6 +85,20 @@ def _guarded_index(options, value, default=0):
     return options.index(value) if value in options else default
 
 
+def _entered_by_name(entered_by):
+    """The owner username for a book's ``entered_by``, handling BOTH shapes.
+
+    ``entered_by`` may be a ``users``-collection ``DocumentReference`` (the normal
+    case) OR a plain username string (legacy/single-DB records, see #131 / the
+    ``databot`` owner). Returns the username string (the ref's ``.id``) or ``None``
+    when unset, so callers can compare/display owners uniformly."""
+    if not entered_by:
+        return None
+    if isinstance(entered_by, str):
+        return entered_by
+    return getattr(entered_by, 'id', None) or str(entered_by)
+
+
 # ---------------------------------------------------------------------------
 # Awaiting-validation list (Part A)
 # ---------------------------------------------------------------------------
@@ -99,6 +113,16 @@ def render_list():
         key="validation_submitted_only_toggle",
     )
 
+    # Scope control (#131): default to ALL books (cross-user review is the point of
+    # this team+admin page), with an option to narrow to just the validator's own
+    # entries.
+    scope = st.radio(
+        Validation.scope_label,
+        options=(Validation.scope_all, Validation.scope_mine),
+        index=0, horizontal=True,
+        key="validation_scope_radio",
+    )
+
     docs = st.session_state.firestore.get_all_documents_stream(collection="books")
     # Filter in Python (rather than a Firestore query) so missing legacy fields
     # ('validated' / 'entry_status') fall back to a default instead of excluding a
@@ -109,6 +133,17 @@ def render_list():
         if not data.get('validated', False)
         and (not submitted_only or data.get('entry_status') == 'completed')
     ]
+
+    # "Just mine": keep only books the current validator originally entered.
+    # entered_by may be a DocumentReference or a plain string, so normalise both
+    # to the owner username before comparing (databot-owned books fall away here).
+    if scope == Validation.scope_mine:
+        username = st.session_state['username']
+        pending = [
+            data for data in pending
+            if _entered_by_name(data.get('entered_by')) == username
+        ]
+
     pending.sort(key=lambda d: (d.get('title') or '').lower())
 
     if not pending:
@@ -470,13 +505,9 @@ def render_review():
 
     st.header(Validation.review_header.format(title=book.title))
     # Show the validator who originally entered this book. entered_by may be a
-    # plain username string or a user DocumentReference; guard both.
-    entered_by = book.entered_by
-    if entered_by:
-        entered_by_name = (
-            entered_by if isinstance(entered_by, str)
-            else getattr(entered_by, 'id', None) or str(entered_by)
-        )
+    # plain username string or a user DocumentReference; _entered_by_name guards both.
+    entered_by_name = _entered_by_name(book.entered_by)
+    if entered_by_name:
         st.caption(Validation.entered_by_label.format(name=entered_by_name))
     st.write(Validation.review_intro)
 

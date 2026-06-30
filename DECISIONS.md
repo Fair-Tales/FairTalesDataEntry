@@ -176,3 +176,26 @@ Status: `accepted` | `superseded` | `deprecated`.
 **Consequences / follow-up:**
 - **True server-side hard cap (recommended follow-up, NOT done now):** a presigned **PUT** URL cannot cleanly enforce a maximum object size — `Content-Length` would have to be signed, which forces the client to declare an exact byte count up front and breaks the flexible browser PUT. The clean fix is to switch the mint to a **presigned POST** (`generate_presigned_post`) with a `["content-length-range", 0, MAX]` policy condition, which S3 enforces server-side regardless of the client. This is a larger change to both `generate_put_urls` and the uploader JS (multipart form POST instead of raw PUT), so it is deferred as a recommendation, not implemented in #126.
 - **Chris must run (live AWS), before/at launch:** (1) `python scripts/set_uploads_lifecycle.py --execute` (or the CLI/Console equivalent in the script docstring); (2) confirm bucket CORS is scoped to the app origin only for PUT/GET on `uploads/`.
+---
+
+## 009 — Editing scope: own-books-only for all roles + `databot`-owned AI books + Validation all/own toggle (issue #131)
+
+**Status:** accepted (reverses part of #83's "team+admin may edit any book")
+
+**Context:** #83 introduced three roles (archivist / team / admin) and let team members and admins EDIT books entered by anyone (the `is_team_or_above()` edit-all branch in `pages/review_my_books.py`). Chris decided (2026-06-30) that cross-user *editing* on that page is the wrong surface: corrections by another person belong in the dedicated **Validation** workflow (#47, which already records an edit-audit log), while the per-archivist edit page should stay personal. Separately, AI-generated books (#122 reconstruction now, #123 automated pipeline later) have no human "owner" and must not be locked to whichever admin happened to trigger them.
+
+**Decision:**
+- **Edit page (`review_my_books.py`) is OWN-BOOKS-ONLY for ALL roles.** The `is_team_or_above()` edit-all branch is removed. For every role the editable list is the union of two `entered_by` equality queries: the current user's own books **and** books owned by the **`databot` system user**. Own books keep the existing `entry_status == 'started'` filter (submitted books are locked); **databot books are shown regardless of `entry_status`** so anyone can pick up an AI-generated book to finish/correct it. (The databot status choice is flagged to Chris for confirmation.)
+- **`databot` owner:** a reserved system "user" (`utilities.DATABOT_USERNAME = 'databot'`) owns AI-generated books, making them editable by any role. Its `entered_by` value is produced by `utilities.databot_entered_by()`, which **always** returns `username_to_doc_ref('databot')` — a `users`-collection `DocumentReference` (to a possibly-non-existent `users/databot` doc), the SAME representation real books use. This single stable representation is used both to STAMP databot onto reconstructed books and to QUERY databot-owned books; it avoids an existence read and avoids silently switching between a string and a ref (which would split databot books into two non-matching owner values). Plain-string `entered_by` remains tolerated for legacy records.
+- **AI-creation flows stamp databot:** `book_reconstruction.reconstruct_book_from_photos` overrides `book.entered_by = databot_entered_by()` right after `register()`. #123's automated pipeline must do the same (noted in code).
+- **Validation (`validation.py`) gains an All/Just-mine scope control** (`st.radio`, key `validation_scope_radio`, default **All books**). The page is already gated to team+admin; "Just mine" filters the unvalidated list to books whose `entered_by` resolves to the current username (ref-or-string handled by the new `_entered_by_name` helper). All-books default preserves cross-user review as the team's primary surface.
+
+**Reasons:**
+- Keeps personal editing personal and routes cross-user corrections through the audited Validation workflow, where every change is logged as training data (#47).
+- A dedicated databot owner cleanly expresses "AI book, anyone may edit" without a per-role special case in the query, and reuses the normal `entered_by` ownership mechanism.
+- Defaulting Validation to "All" matches the team's job (review everyone's submissions) while still letting a validator focus on their own entries.
+
+**Consequences / follow-up:**
+- `ReviewBooks.all_header` / `all_select_label` (the #83 edit-all variants) are now unused; left in place for now.
+- **Confirm with Chris:** databot books appear on the edit page even when `entry_status == 'completed'` (already in the validation queue) — intentional so they can be picked up, but unlike own-book behaviour (started-only).
+- A real `users/databot` document is not required; create one only if a databot login/identity is ever needed. #123 must stamp `entered_by = databot_entered_by()` on its books.

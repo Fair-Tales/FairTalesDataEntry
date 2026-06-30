@@ -62,6 +62,7 @@ from utilities import (
     load_publisher_dict,
     load_book_dict,
     load_character_dict,
+    databot_entered_by,
 )
 from image_processing import exif_transpose_bytes
 from data_structures import Book, Page, Character, Alias, Author, Illustrator, Publisher
@@ -431,6 +432,12 @@ def reconstruct_book_from_photos(pages, client, *, fs=None, source_folder=None,
     # Initial full save (sets entered_by + datetime_created). Subsequent field
     # assignments below write through to Firestore individually.
     book.register()
+    # AI-generated books are OWNED BY the ``databot`` system user (#131), not the
+    # admin who happened to trigger reconstruction, so ANY role can pick them up to
+    # edit (see pages/review_my_books.py). register() set entered_by to the current
+    # user; override it to databot (write-through, since the book is now registered).
+    # NOTE: #123's automated upload->validation pipeline MUST set this too.
+    book.entered_by = databot_entered_by()
     st.session_state.setdefault("book_dict", {})[title] = book.get_ref()
     load_book_dict.clear()
     st.session_state["current_book"] = book
