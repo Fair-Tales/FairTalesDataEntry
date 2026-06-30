@@ -27,7 +27,6 @@ the user to fill in later via the normal Edit-my-books flow.
 """
 
 import s3fs
-import natsort
 import streamlit as st
 import anthropic
 
@@ -43,6 +42,28 @@ from utilities import (
     fuzzy_match_name,
     load_book_dict,
 )
+from photo_upload import (
+    get_upload_session_id,
+    generate_put_urls,
+    build_uploader_html,
+    fetch_uploaded_photos,
+    cleanup_prefix,
+    reset_upload_session,
+)
+
+# Direct-to-S3 upload flow key (#118): namespaces the batch's temp prefix
+# (uploads/batch/{session_id}/) so it never collides with the other migrated
+# surfaces (single / pages / collection) within one browser session.
+UPLOAD_FLOW_KEY = "batch"
+
+
+def _filesystem():
+    """Authenticated s3fs filesystem from the AWS secrets (shared app config)."""
+    return s3fs.S3FileSystem(
+        anon=False,
+        key=st.secrets['AWS_ACCESS_KEY_ID'],
+        secret=st.secrets['AWS_SECRET_ACCESS_KEY'],
+    )
 
 check_authentication_status()
 page_layout(current_page="./pages/add_books_batch.py")
@@ -52,9 +73,11 @@ _BATCH_STATE_KEYS = ('batch_step', 'batch_method', 'batch_detected', 'batch_resu
 
 
 def _reset_batch_state():
-    """Drop all batch-flow session state (large photo payloads included)."""
+    """Drop all batch-flow session state (large photo payloads included) and the
+    direct-to-S3 upload session so a new batch mints a fresh temp prefix."""
     for key in _BATCH_STATE_KEYS:
         st.session_state.pop(key, None)
+    reset_upload_session(UPLOAD_FLOW_KEY)
 
 
 def _doc_id(title):
@@ -226,29 +249,41 @@ def _render_upload(client, ai_available):
     if not ai_available:
         st.warning(BatchBookEntry.no_api_key)
 
-    uploaded_files = st.file_uploader(
-        BatchBookEntry.upload_label,
-        accept_multiple_files=True,
-        key="add_books_batch_uploader",
-    )
+    # Direct browser-to-S3 upload (#118): replaces st.file_uploader so the whole
+    # batch PUTs straight from the device to S3 at full resolution, bypassing the
+    # websocket that drops on mobile. Mint a stable temp prefix
+    # (uploads/batch/{session_id}/) + presigned PUT URLs; on "Detect books" we
+    # list the prefix to pull the photos (in page order) into memory and split.
+    st.write(BatchBookEntry.direct_upload_instructions)
+    session_id = get_upload_session_id(UPLOAD_FLOW_KEY)
+    put_urls = generate_put_urls(UPLOAD_FLOW_KEY, session_id)
+    st.iframe(build_uploader_html(put_urls), height=460)
 
     detect = st.button(BatchBookEntry.detect_button, key="add_books_batch_detect_button")
     if st.button(BatchBookEntry.cancel_button, key="add_books_batch_cancel_upload_button"):
+        # Remove any photos already uploaded so they don't orphan in S3.
+        cleanup_prefix(_filesystem(), UPLOAD_FLOW_KEY, session_id)
         _reset_batch_state()
         st.switch_page("./pages/user_home.py")
 
     if detect:
-        if not uploaded_files:
-            st.warning(BatchBookEntry.no_photos)
-            return
-        file_dict = {file.name: file for file in uploaded_files}
-        sorted_names = natsort.natsorted(list(file_dict.keys()), reverse=False)
-        pages = [(name, file_dict[name].getvalue()) for name in sorted_names]
+        fs = _filesystem()
         with st.spinner(BatchBookEntry.detecting):
+            # Pull the uploaded batch (in page order: page_1..page_N as the browser
+            # PUT them) into memory, then split it into per-book groups.
+            pages = fetch_uploaded_photos(fs, UPLOAD_FLOW_KEY, session_id)
+            if not pages:
+                st.warning(BatchBookEntry.no_photos)
+                return
             method, detected = _detect_books(pages, client)
         if not detected:
             st.warning(BatchBookEntry.no_books_detected)
             return
+        # The batch is now in memory (batch_detected) and each book's pages are
+        # re-saved to sawimages/{title}/ at create time, so the transient upload
+        # buffer is no longer needed — drop the temp prefix and the session id.
+        cleanup_prefix(fs, UPLOAD_FLOW_KEY, session_id)
+        reset_upload_session(UPLOAD_FLOW_KEY)
         st.session_state['batch_method'] = method
         st.session_state['batch_detected'] = detected
         st.session_state['batch_step'] = 'review'
@@ -306,11 +341,7 @@ def _render_review(client):
         st.rerun()
 
     if confirm:
-        fs = s3fs.S3FileSystem(
-            anon=False,
-            key=st.secrets['AWS_ACCESS_KEY_ID'],
-            secret=st.secrets['AWS_SECRET_ACCESS_KEY'],
-        )
+        fs = _filesystem()
         results = _create_books(detected, fs, client)
         st.session_state['batch_results'] = results
         st.session_state['batch_step'] = 'done'

@@ -70,7 +70,8 @@ VALIDATION_SELECT_BOOK = "validation_select_book"
 VALIDATION_OPEN_REVIEW_BUTTON = "validation_open_review_button"
 
 # pages/add_books_batch.py (#84) — reached via the "Batch Upload" user-home item.
-BATCH_UPLOADER = "add_books_batch_uploader"
+# The file_uploader was replaced by the direct-to-S3 iframe uploader (#118), which
+# has no widget key — assert on the "Detect books" button instead.
 BATCH_DETECT_BUTTON = "add_books_batch_detect_button"
 
 # --------------------------------------------------------------------------- #
@@ -105,7 +106,10 @@ COLLECTION_MENU_PHOTO = "From photos"
 COLLECTION_SEARCH_HEADER = "Search our database and tick the books you want"
 COLLECTION_PREDEFINED_HEADER = "Browse predefined collections"
 COLLECTION_PHOTO_HEADER = "Upload photos of your books"
-COLLECTION_PHOTO_UPLOADER = "collection_photo_uploader"  # file_uploader key
+# The file_uploader was replaced by the direct-to-S3 iframe uploader (#118), which
+# carries no Streamlit widget key. Assert the photo method rendered via its
+# always-present "Read books from photo(s)" button instead.
+COLLECTION_PHOTO_EXTRACT_BUTTON = "collection_photo_extract_button"
 
 # validation.py (Validation.*)
 VALIDATION_LIST_HEADER = "Books to validate"
