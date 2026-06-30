@@ -156,3 +156,23 @@ Status: `accepted` | `superseded` | `deprecated`.
 - **HARD PREREQUISITE (AWS, Chris):** the `sawimages` bucket needs a CORS policy allowing `PUT`/`GET` from the app origin, or the browser PUT is blocked (the `image/jpeg` PUT is non-simple, so the browser sends a CORS preflight). The Streamlit `components.html` iframe carries `allow-same-origin`, so requests use the **app origin** (the Streamlit/HF app URL), not `null`. CORS JSON is in the PR summary.
 - **Untestable here:** mobile and live-S3 behaviour cannot be exercised in CI — this needs real-device + live-S3 testing on the deploy, with CORS applied first.
 - **Phase-1 scope:** per-item *remove* in the uploader is deferred (true remove needs an S3 delete); the UI supports *adding* more photos. Batch upload (#84) and the QR/phone flow (#81) are the remaining follow-ups.
+
+---
+
+## 008 — Harden the direct-S3 presigned uploads (issue #126)
+
+**Status:** accepted (code landed; the AWS lifecycle + CORS steps are **Chris-run on the live bucket**)
+
+**Context:** `photo_upload.generate_put_urls` presigns only `Bucket`+`Key`; `Content-Length` and `Content-Type` are intentionally **unsigned** (so the browser can PUT jpeg/png/heic without header-matching). Consequence: an *authenticated* user could PUT arbitrarily large objects under `uploads/` (cost/DoS), and abandoned/closed-tab uploads accumulate because **both cleanup tools exclude `uploads/`**. Scoped to `uploads/` only.
+
+**Decision (defence-in-depth, no regression to the working PUT uploader):**
+- **Client-side size guard (50 MB, Chris-approved):** new constant `photo_upload.MAX_UPLOAD_BYTES = 50 * 1024 * 1024`, injected into the uploader JS (`__MAX_BYTES__`). Before PUTting each file the JS checks `file.size > MAX_BYTES`; an oversize file is **skipped** (it does not consume a presigned-URL slot) and a clear per-file error row is shown in the existing progress UI — the rest of the batch still uploads. The message is `BookPhotoEntry.upload_too_large` (text_content). This catches accidental huge files; it is **not** a security boundary (client JS is bypassable).
+- **S3 lifecycle expiry for `uploads/` (7 days):** new standalone script `scripts/set_uploads_lifecycle.py` puts a bucket lifecycle rule (`ID=expire-uploads-prefix`, `Filter.Prefix=uploads/`, `Expiration.Days=7`). It is **dry-run by default** (prints the rule), `--execute` applies it, and it **merges** into any existing lifecycle config (keyed on the rule id) so unrelated rules are preserved. The script docstring carries the equivalent AWS CLI and Console steps. **Not run here** (no live creds in the worktree); Chris applies it.
+- **CORS scope (deploy checklist):** confirm the `sawimages` bucket CORS policy allows the **app origin only** (not `*`) for `PUT`/`GET` on `uploads/`. Coupled with DECISIONS-007's CORS prerequisite — this just narrows the allowed origin before launch.
+
+**Reasons:**
+- The PUT uploader currently works well on real mobile devices; rewriting it risks regressing the hard-won mobile-reliability fix (DECISIONS-007). The 50 MB JS guard + lifecycle expiry + tightened CORS remove the practical accidental-abuse and cost-creep surface without touching the transfer path.
+
+**Consequences / follow-up:**
+- **True server-side hard cap (recommended follow-up, NOT done now):** a presigned **PUT** URL cannot cleanly enforce a maximum object size — `Content-Length` would have to be signed, which forces the client to declare an exact byte count up front and breaks the flexible browser PUT. The clean fix is to switch the mint to a **presigned POST** (`generate_presigned_post`) with a `["content-length-range", 0, MAX]` policy condition, which S3 enforces server-side regardless of the client. This is a larger change to both `generate_put_urls` and the uploader JS (multipart form POST instead of raw PUT), so it is deferred as a recommendation, not implemented in #126.
+- **Chris must run (live AWS), before/at launch:** (1) `python scripts/set_uploads_lifecycle.py --execute` (or the CLI/Console equivalent in the script docstring); (2) confirm bucket CORS is scoped to the app origin only for PUT/GET on `uploads/`.

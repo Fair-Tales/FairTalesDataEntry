@@ -219,6 +219,9 @@ class BookPhotoEntry:
     upload_progress = "Uploaded {done} of {total} photo(s)."
     upload_failed_count = "({failed} failed — please tap Select book photos to retry.)"
     upload_max_reached = "Maximum number of photos reached."
+    # Shown per-file when a selected photo exceeds the client-side size cap; the
+    # oversize file is skipped (not uploaded) and the rest of the batch proceeds.
+    upload_too_large = "{name} is too large ({size} MB). The maximum is {max} MB — it was skipped."
     read_button = "Read the book"
     no_photos_uploaded = (
         "We couldn't find any uploaded photos yet. Please select your book photos "
