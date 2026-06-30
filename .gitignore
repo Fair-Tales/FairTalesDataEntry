@@ -3,6 +3,10 @@ databases/
 secrets/
 planning/*.docx
 
+# Data-cleanup tool output (scripts/data_cleanup.py, #120): generated audit
+# reports + deletion logs, may reference real titles/ids — never commit.
+cleanup_reports/
+
 # Claude Code
 .claude/
 
