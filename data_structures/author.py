@@ -1,5 +1,4 @@
 import streamlit as st
-import anthropic
 from text_content import AuthorForm
 from .base_structure import DataStructureBase, Field
 from datetime import date
@@ -43,7 +42,7 @@ class Author(DataStructureBase):
         return self.name.lower().replace(" ", "_")
 
     def to_form(self):
-        from utilities import lookup_person_details
+        from utilities import lookup_person_details, get_anthropic_client
 
         st.header(AuthorForm.header)
 
@@ -118,7 +117,7 @@ class Author(DataStructureBase):
 
         if lookup_clicked:
             if self.forename.strip() or self.surname.strip():
-                ai_client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
+                ai_client = get_anthropic_client()
                 with st.spinner(AuthorForm.lookup_spinner):
                     suggestion = lookup_person_details(self.name.strip(), 'author', ai_client)
                 if suggestion:

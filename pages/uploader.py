@@ -1,8 +1,4 @@
-import base64
-import json
-import s3fs
 import streamlit as st
-import anthropic
 from data_structures import Page
 from image_processing import (
     correct_book_page, check_crop_quality, get_rotation_angle, rotate_image,
@@ -10,7 +6,8 @@ from image_processing import (
 )
 from text_content import Instructions, AIPrompts, BookPhotoEntry, Uploader
 from utilities import (
-    page_layout, check_authentication_status, extract_isbn, lookup_isbn
+    page_layout, check_authentication_status, extract_isbn, lookup_isbn,
+    get_s3_filesystem, get_anthropic_client, vision_json,
 )
 from photo_upload import (
     get_upload_session_id,
@@ -27,40 +24,25 @@ UPLOAD_FLOW_KEY = "pages"
 
 
 def extract_page_info(image_bytes, client):
-    """Return (text, is_story_page, page_type) by sending image bytes to Claude Sonnet."""
-    try:
-        image_data = base64.standard_b64encode(image_bytes).decode('utf-8')
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1024,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/jpeg",
-                            "data": image_data
-                        }
-                    },
-                    {"type": "text", "text": AIPrompts.page_extraction}
-                ]
-            }]
-        )
-        raw = response.content[0].text.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        result = json.loads(raw)
-        return (
-            result.get("text", "").strip(),
-            bool(result.get("is_story_page", False)),
-            result.get("page_type", ""),
-        )
-    except Exception:
+    """Return (text, is_story_page, page_type) by sending image bytes to Claude Sonnet.
+
+    Uses the shared ``vision_json`` helper (#129). Note the image is sent at full
+    resolution (``downscale=False``) — this is the corrected page image whose text
+    we are OCR-ing, so we do not shrink it. A reply that cannot be parsed as JSON
+    yields the empty result, but Anthropic API errors now PROPAGATE to the caller
+    (and are logged) instead of being silently swallowed as a blank, non-story
+    page (#127).
+    """
+    data, _raw = vision_json(
+        client, [image_bytes], AIPrompts.page_extraction, downscale=False,
+    )
+    if not isinstance(data, dict):
         return "", False, ""
+    return (
+        data.get("text", "").strip(),
+        bool(data.get("is_story_page", False)),
+        data.get("page_type", ""),
+    )
 
 
 def _make_reporter(status, page_number, total, prefix=""):
@@ -179,9 +161,8 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
         status.update(label=Uploader.photos_saved)
 
         # Phase 2 — image correction + text extraction per page
-        if 'ANTHROPIC_API_KEY' in st.secrets:
-            ai_client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
-
+        ai_client = get_anthropic_client()
+        if ai_client is not None:
             for i, raw_bytes in enumerate(raw_bytes_list):
                 page_number = i + 1
                 report = _make_reporter(status, page_number, total)
@@ -239,11 +220,7 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
 
 def upload_widget(on_submit='enter_text'):
 
-    fs = s3fs.S3FileSystem(
-        anon=False,
-        key=st.secrets['AWS_ACCESS_KEY_ID'],
-        secret=st.secrets['AWS_SECRET_ACCESS_KEY']
-    )
+    fs = get_s3_filesystem()
 
     def upload_page_photos():
         # Photos captured in the photo-first flow (#59) are reused here so the

@@ -59,23 +59,34 @@ import sys
 from dataclasses import dataclass, field
 from typing import Iterable, Iterator, Optional
 
+# Make the repo root importable so the shared pure S3 helpers (``s3_constants``)
+# resolve whether this runs as a standalone CLI (``python scripts/data_cleanup.py``,
+# where ``sys.path[0]`` is ``scripts/``) or under pytest. ``s3_constants`` has NO
+# Streamlit dependency, so it is safe to import in this non-Streamlit tool (#129).
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from s3_constants import (  # noqa: E402
+    S3_BUCKET,
+    NON_BOOK_S3_PREFIXES,
+    is_page_image,
+    book_folder_name,
+)
+
 # ---------------------------------------------------------------------------
 # Configuration (module-level so it is easy to tune / extend).
 # ---------------------------------------------------------------------------
 
-#: S3 bucket holding book page images (first path segment, app-wide).
-DEFAULT_BUCKET = "sawimages"
+#: S3 bucket holding book page images (first path segment, app-wide). Shared with
+#: the live app via ``s3_constants`` so the CLI and app agree on the bucket name.
+DEFAULT_BUCKET = S3_BUCKET
 
 #: Default path to the Streamlit secrets file.
 DEFAULT_SECRETS = ".streamlit/secrets.toml"
 
 #: Collections that are explicitly OUT OF SCOPE - never audited, never deleted.
 PROTECTED_COLLECTIONS = ("users", "edit_log", "collections")
-
-#: Immediate child prefixes under the bucket that are NOT book folders and so
-#: must never be reported as "orphaned" (e.g. the transient direct-upload area
-#: ``uploads/{flow}/{session}/`` written by photo_upload.py / uploader.py).
-NON_BOOK_S3_PREFIXES = ("uploads",)
 
 #: A book is flagged as "too few images" when its page-image count is at most
 #: this threshold (0, 1 or 2 -> likely an incomplete or test entry).
@@ -200,31 +211,6 @@ def image_count_reason(count: int, *, threshold: int = TOO_FEW_IMAGES_THRESHOLD)
         noun = "image" if count == 1 else "images"
         return f"only {count} page {noun} in S3 (<= {threshold})"
     return None
-
-
-_PAGE_IMAGE_RE = re.compile(r"^page_\d+\.jpg$", re.IGNORECASE)
-
-
-def is_page_image(filename: str) -> bool:
-    """True for ``page_N.jpg``; False for ``page_N_cropped.jpg`` and anything else.
-
-    Page images are the canonical originals; ``_cropped`` variants are derived
-    and so are ignored when counting a book's pages.
-    """
-    return bool(_PAGE_IMAGE_RE.match(os.path.basename(filename)))
-
-
-def book_folder_name(title: str, photos_url: str = "") -> str:
-    """The S3 folder *name* (segment under the bucket) for a book.
-
-    The app writes pages to ``sawimages/{title}`` (see uploader.py), storing
-    that path in ``photos_url``. Prefer the stored ``photos_url`` basename; fall
-    back to the raw title.
-    """
-    source = photos_url.strip() if photos_url else ""
-    if not source:
-        source = title or ""
-    return source.rstrip("/").split("/")[-1]
 
 
 # ---------------------------------------------------------------------------

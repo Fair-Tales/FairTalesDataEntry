@@ -1184,6 +1184,12 @@ class Reconstruction:
         "A book titled '{title}' already exists in the database, so it was not "
         "recreated. Open it in the existing tools instead of reconstructing it."
     )
+    error_folder_collision = (
+        "The destination photo folder 'sawimages/{title}/' already holds "
+        "{count} page photo(s) from a different folder ('{source_folder}'), so "
+        "reconstruction was stopped rather than overwriting them. Rename the "
+        "source folder or remove the conflicting folder, then try again."
+    )
 
 
 class ReconstructOrphans:

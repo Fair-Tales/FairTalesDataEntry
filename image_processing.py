@@ -8,13 +8,15 @@ Stage 2 (check_crop_quality): Claude Haiku 4.5 verifies the result looks like
 a proper book page before it is committed to S3.
 """
 
-import base64
 import io
+import logging
 import re
 
 import cv2
 import numpy as np
 from PIL import Image, ImageOps, UnidentifiedImageError
+
+logger = logging.getLogger(__name__)
 
 # Register HEIC/HEIF decoding so PIL can read iPhone (and Android HEIF) photos.
 # iPhones default to HEIC, which Claude's vision API cannot read directly; decoding
@@ -249,34 +251,26 @@ def get_rotation_angle(image_bytes, client):
     Returns an integer angle in degrees, or 0 if no rotation is needed,
     the model is uncertain, or the API call fails.
     """
-    image_data = base64.standard_b64encode(downscale_for_vision(image_bytes)).decode('utf-8')
+    import anthropic
+    from utilities import vision_text
+
     try:
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=10,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/jpeg",
-                            "data": image_data,
-                        },
-                    },
-                    {"type": "text", "text": AIPrompts.rotation_angle},
-                ],
-            }]
+        raw = vision_text(
+            client, [image_bytes], AIPrompts.rotation_angle,
+            model="claude-sonnet-4-6", max_tokens=10,
         )
-        raw = response.content[0].text.strip()
-        match = re.search(r'-?\d+', raw)
-        if not match:
-            return 0
-        angle = int(match.group())
-        return 0 if abs(angle) < 5 else angle
-    except Exception:
+    except anthropic.AnthropicError as exc:
+        # Narrowed from a broad ``except`` (#127): a transient API failure means
+        # "assume no rotation", but is logged rather than silently swallowed.
+        logger.warning("get_rotation_angle: vision call failed: %s", exc)
         return 0
+    if not raw:
+        return 0
+    match = re.search(r'-?\d+', raw)
+    if not match:
+        return 0
+    angle = int(match.group())
+    return 0 if abs(angle) < 5 else angle
 
 
 def rotate_image(image_bytes, angle_degrees):
@@ -298,26 +292,19 @@ def check_crop_quality(image_bytes, client):
     Defaults to True on API errors so a successful OpenCV result is not
     discarded due to a transient network failure.
     """
-    image_data = base64.standard_b64encode(downscale_for_vision(image_bytes)).decode('utf-8')
+    import anthropic
+    from utilities import vision_text
+
     try:
-        response = client.messages.create(
-            model="claude-haiku-4-5",
-            max_tokens=5,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/jpeg",
-                            "data": image_data,
-                        },
-                    },
-                    {"type": "text", "text": AIPrompts.crop_quality_check},
-                ],
-            }],
+        raw = vision_text(
+            client, [image_bytes], AIPrompts.crop_quality_check,
+            model="claude-haiku-4-5", max_tokens=5,
         )
-        return response.content[0].text.strip().lower().startswith("yes")
-    except Exception:
-        return True  # network/API error: trust OpenCV's geometric result
+    except anthropic.AnthropicError as exc:
+        # Narrowed from a broad ``except`` (#127): a network/API error means we
+        # trust OpenCV's geometric result, but it is logged not swallowed.
+        logger.warning("check_crop_quality: vision call failed; trusting OpenCV: %s", exc)
+        return True
+    if raw is None:
+        return True  # no text block: trust OpenCV's geometric result (unchanged)
+    return raw.lower().startswith("yes")

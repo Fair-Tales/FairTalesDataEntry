@@ -26,7 +26,6 @@ records (no interactive "create new" sub-forms); unmatched creators are left for
 the user to fill in later via the normal Edit-my-books flow.
 """
 
-import s3fs
 import streamlit as st
 import anthropic
 
@@ -41,6 +40,8 @@ from utilities import (
     extract_photo_first_metadata,
     fuzzy_match_name,
     load_book_dict,
+    get_s3_filesystem,
+    get_anthropic_client,
 )
 from photo_upload import (
     get_upload_session_id,
@@ -55,15 +56,6 @@ from photo_upload import (
 # (uploads/batch/{session_id}/) so it never collides with the other migrated
 # surfaces (single / pages / collection) within one browser session.
 UPLOAD_FLOW_KEY = "batch"
-
-
-def _filesystem():
-    """Authenticated s3fs filesystem from the AWS secrets (shared app config)."""
-    return s3fs.S3FileSystem(
-        anon=False,
-        key=st.secrets['AWS_ACCESS_KEY_ID'],
-        secret=st.secrets['AWS_SECRET_ACCESS_KEY'],
-    )
 
 check_authentication_status()
 page_layout(current_page="./pages/add_books_batch.py")
@@ -230,7 +222,7 @@ def _create_books(detected, fs, ai_client):
             book.register()
             # Register into the session lookup so Page.book string resolution
             # works, then invalidate the shared cache for other/new sessions.
-            st.session_state['book_dict'][book.title] = book.get_ref()
+            st.session_state.setdefault('book_dict', {})[book.title] = book.get_ref()
             _process_group_pages(book, entry['pages'], fs, ai_client, status)
             results.append({
                 'title': book.title,
@@ -262,12 +254,12 @@ def _render_upload(client, ai_available):
     detect = st.button(BatchBookEntry.detect_button, key="add_books_batch_detect_button")
     if st.button(BatchBookEntry.cancel_button, key="add_books_batch_cancel_upload_button"):
         # Remove any photos already uploaded so they don't orphan in S3.
-        cleanup_prefix(_filesystem(), UPLOAD_FLOW_KEY, session_id)
+        cleanup_prefix(get_s3_filesystem(), UPLOAD_FLOW_KEY, session_id)
         _reset_batch_state()
         st.switch_page("./pages/user_home.py")
 
     if detect:
-        fs = _filesystem()
+        fs = get_s3_filesystem()
         with st.spinner(BatchBookEntry.detecting):
             # Pull the uploaded batch (in page order: page_1..page_N as the browser
             # PUT them) into memory, then split it into per-book groups.
@@ -341,7 +333,7 @@ def _render_review(client):
         st.rerun()
 
     if confirm:
-        fs = _filesystem()
+        fs = get_s3_filesystem()
         results = _create_books(detected, fs, client)
         st.session_state['batch_results'] = results
         st.session_state['batch_step'] = 'done'
@@ -383,11 +375,8 @@ def _render_done():
 
 st.header(BatchBookEntry.header)
 
-_ai_available = 'ANTHROPIC_API_KEY' in st.secrets
-_client = (
-    anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
-    if _ai_available else None
-)
+_client = get_anthropic_client()
+_ai_available = _client is not None
 
 _step = st.session_state.get('batch_step', 'upload')
 if _step == 'review':
