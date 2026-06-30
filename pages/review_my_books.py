@@ -1,40 +1,49 @@
 import streamlit as st
 import pandas as pd
-from utilities import page_layout, check_authentication_status, is_team_or_above
+from utilities import page_layout, check_authentication_status, databot_entered_by
 from text_content import Instructions, Alerts, ReviewBooks
 from data_structures import Book
 
 check_authentication_status()
 page_layout()
 
-# Archivists may only edit books they uploaded themselves (entered_by == them).
-# Team members and admins may also edit books uploaded by others (#83), so they
-# load every book rather than just their own.
-if is_team_or_above():
-    docs = st.session_state.firestore.get_all_documents_stream(collection="books")
-    my_books = pd.DataFrame([doc.to_dict() for doc in docs])
-    header = ReviewBooks.all_header
-    select_label = ReviewBooks.all_select_label
+# Editing is OWN-BOOKS-ONLY for ALL roles (#131, reversing part of #83): every
+# user — archivist, team member or admin — may edit only the books they entered
+# themselves, PLUS books owned by the special ``databot`` system user (the owner
+# of AI-generated books). databot books are deliberately editable by anyone so an
+# AI-reconstructed book can be picked up and finished/corrected by whoever is free.
+firestore = st.session_state.firestore
+user_ref = firestore.username_to_doc_ref(st.session_state['username'])
+databot_ref = databot_entered_by()
+
+# Own books: only those still in progress can be edited; submitted ('completed')
+# books are locked after submission.
+own_books = firestore.get_by_field(collection="books", field="entered_by", match=user_ref)
+if len(own_books):
+    own_books = own_books.loc[own_books.entry_status == 'started']
+
+# databot (AI-generated) books: shown REGARDLESS of entry_status so anyone can
+# pick one up. STATUS CHOICE — flagged for Chris to confirm: databot books are
+# offered on the edit page even when entry_status == 'completed' (i.e. already in
+# the validation queue), unlike a user's own books which are limited to 'started'.
+databot_books = firestore.get_by_field(collection="books", field="entered_by", match=databot_ref)
+
+# Combine, guarding empties (an empty get_by_field DataFrame has no columns, so it
+# cannot be filtered/concatenated meaningfully). drop_duplicates on title is
+# defensive — a book has a single owner, so the two sets never actually overlap.
+frames = [df for df in (own_books, databot_books) if len(df)]
+if frames:
+    my_books = pd.concat(frames, ignore_index=True).drop_duplicates(subset="title")
 else:
-    user_ref = st.session_state.firestore.username_to_doc_ref(st.session_state['username'])
-    my_books = st.session_state.firestore.get_by_field(
-        collection="books",
-        field="entered_by",
-        match=user_ref
-    )
-    header = ReviewBooks.header
-    select_label = ReviewBooks.select_label
+    my_books = pd.DataFrame()
 
 if len(my_books) == 0:
     st.warning(Alerts.no_user_books)
 else:
-    # Only books still in progress can be edited; submitted ('completed') books
-    # are locked after submission.
-    my_books = my_books.loc[my_books.entry_status == 'started']
-    st.header(header)
+    st.header(ReviewBooks.header)
     st.write(Instructions.review_my_books)
     selected_title = st.selectbox(
-        label=select_label,
+        label=ReviewBooks.select_label,
         options=my_books.title,
         key="review_books_select"
     )

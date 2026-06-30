@@ -150,6 +150,14 @@ ROLE_TEAM = 'team'
 ROLE_ADMIN = 'admin'
 VALID_ROLES = (ROLE_ARCHIVIST, ROLE_TEAM, ROLE_ADMIN)
 
+#: Reserved system "user" that OWNS AI-generated books (#131). A book whose
+#: ``entered_by`` is databot is editable by ANY role — AI-reconstructed books
+#: are not locked to the single person who triggered their creation, so whoever
+#: is free can pick one up to finish/correct. Not a real login account; it is a
+#: stable owner identity that AI-creation flows stamp onto the books they produce
+#: (book_reconstruction now; #123's automated pipeline later).
+DATABOT_USERNAME = 'databot'
+
 
 def resolve_role(user_dict):
     """Resolve a user's effective role from their raw user dict (back-compat).
@@ -198,6 +206,33 @@ def is_team_or_above():
     the validation page (the validation workflow itself is #47).
     """
     return st.session_state.get('role', ROLE_ARCHIVIST) in (ROLE_TEAM, ROLE_ADMIN)
+
+
+def databot_entered_by():
+    """The ``entered_by`` value identifying the databot system user (#131).
+
+    Returns the SAME representation real books use for ``entered_by`` — a
+    ``users``-collection ``DocumentReference`` (here pointing at
+    ``users/databot``) — so databot is treated exactly like a normal owner by
+    Firestore equality queries and by ref-path comparisons (e.g. validation's
+    ``_current_ref_name`` / the "entered by" caption).
+
+    Representation choice: we ALWAYS return ``username_to_doc_ref(DATABOT_USERNAME)``
+    rather than conditionally falling back to the plain string ``"databot"`` when
+    no ``users/databot`` document exists. ``username_to_doc_ref`` only builds a
+    reference (it does not require the document to exist), and Firestore reference
+    equality is path-based, so a reference to a not-yet-created ``users/databot``
+    doc still matches consistently. This keeps a single, stable representation
+    (a doc ref, matching real books) used both when STAMPING databot onto a book
+    (book_reconstruction) and when QUERYING databot-owned books (review_my_books),
+    avoids an extra existence read on every call, and — crucially — does not
+    silently switch representation (string vs ref) if a databot user doc is later
+    created, which would split databot books into two non-matching owner values.
+    The codebase still tolerates a plain-string ``entered_by`` (see
+    ``pages/validation.py``) for legacy/single-DB records, so nothing breaks if a
+    string ``"databot"`` is ever encountered.
+    """
+    return st.session_state['firestore'].username_to_doc_ref(DATABOT_USERNAME)
 
 
 def authenticate_user(username, password):
