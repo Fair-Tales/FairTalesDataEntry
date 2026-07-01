@@ -34,6 +34,7 @@ from photo_upload import (
     build_uploader_html,
     fetch_uploaded_photos,
     cleanup_prefix,
+    reset_upload_session,
 )
 
 check_authentication_status()
@@ -43,6 +44,24 @@ page_layout(current_page="./pages/add_book_photos.py")
 # (uploads/single/{session_id}/) so it never collides with the other migrated
 # upload surfaces (pages / batch / collection) within one browser session.
 UPLOAD_FLOW_KEY = "single"
+
+
+def _cleanup_uploads():
+    """Drop this session's temp ``uploads/single/{session_id}/`` buffer + session
+    id once we are leaving this page (#124).
+
+    Called on the paths that navigate away with the uploaded photos already safely
+    held in memory under ``photo_first_pages`` — extraction success, "enter
+    manually", and cancel. The downstream reuse pipeline
+    (``uploader.upload_widget``) writes those in-memory photos to
+    ``sawimages/{title}/`` and never re-reads this S3 buffer, so it is dead weight
+    once we leave and would otherwise orphan. Deliberately NOT called on the
+    read/retry paths (a failed extraction re-lists this prefix on the next "Read
+    the book" click). Scoped strictly to THIS session's prefix; ``cleanup_prefix``
+    swallows/logs any S3 failure.
+    """
+    cleanup_prefix(get_s3_filesystem(), UPLOAD_FLOW_KEY, session_id)
+    reset_upload_session(UPLOAD_FLOW_KEY)
 
 
 def _match_person(extracted_name, lookup_dict_key, extracted_session_key, current_key):
@@ -182,6 +201,10 @@ if read_clicked:
                 st.session_state.pop('photo_extract_empty', None)
                 _apply_extracted_metadata(metadata)
                 st.success(BookPhotoEntry.extract_success)
+                # Photos are safely in photo_first_pages (memory) and the reuse
+                # pipeline writes them to sawimages/ from there, never re-reading
+                # this S3 buffer — so clear it now we are leaving the page (#124).
+                _cleanup_uploads()
                 navigate_to("./pages/add_book.py")
             else:
                 # Nothing usable parsed. Keep the raw response + a diagnostic and
@@ -218,12 +241,16 @@ if st.session_state.get('photo_extract_empty'):
             'photo_extract_empty', 'photo_extract_diag',
         ):
             st.session_state.pop(_key, None)
+        # Photos stay in photo_first_pages (memory) for the reuse pipeline, so the
+        # S3 buffer is no longer needed — clear it as we leave the page (#124).
+        _cleanup_uploads()
         navigate_to("./pages/add_book.py")
 
 cancel_button = st.button(BookPhotoEntry.cancel_text, key="add_book_photos_cancel_button")
 if cancel_button:
-    # Remove any photos already uploaded to the temp prefix so they don't orphan.
-    cleanup_prefix(get_s3_filesystem(), UPLOAD_FLOW_KEY, session_id)
+    # Remove any photos already uploaded to the temp prefix so they don't orphan,
+    # and drop the session id so the next entry mints a fresh prefix.
+    _cleanup_uploads()
     for _key in ('photo_first_pages', 'photo_extract_empty', 'photo_extract_diag'):
         st.session_state.pop(_key, None)
     st.switch_page("./pages/user_home.py")
