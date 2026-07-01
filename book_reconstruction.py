@@ -56,6 +56,7 @@ from utilities import (
     detect_book_characters,
     fuzzy_match_name,
     split_name,
+    lookup_person_details,
     load_author_dict,
     load_illustrator_dict,
     load_publisher_dict,
@@ -149,11 +150,37 @@ def _report(progress, message):
         progress(message)
 
 
-def _resolve_or_create_person(extracted_name, person_cls, dict_key, cache_clear):
+def _auto_lookup_person(person, role, client, book_title):
+    """Best-effort birth-year/gender enrichment for a freshly-created author or
+    illustrator (#113).
+
+    Mirrors the manual "Look up birth year and gender" button so pipeline-created
+    people aren't left blank. ``lookup_person_details`` swallows and logs its own
+    API/parse failures (returning ``None``), so a lookup miss simply leaves the
+    fields at their defaults and never aborts the reconstruction. Writes through
+    to Firestore via the ``Field`` descriptors, exactly as the form would.
+    """
+    suggestion = lookup_person_details(
+        person.name.strip(), role, client, book_title=book_title
+    )
+    if not suggestion:
+        return
+    if suggestion.get("birth_year"):
+        person.birth_year = suggestion["birth_year"]
+    if suggestion.get("gender"):
+        person.gender = suggestion["gender"]
+
+
+def _resolve_or_create_person(extracted_name, person_cls, dict_key, cache_clear,
+                              *, client=None, book_title=None, role=None):
     """Fuzzy-match ``extracted_name`` to an existing author/illustrator, else create
     and register a new record. Returns the matched/created lookup-dict NAME key
     (the value the ``Book`` ref-field setter resolves via the session dict), or
     ``None`` when no usable name was extracted.
+
+    When a NEW person is registered and a ``client`` is supplied, best-effort
+    auto-runs the birth-year/gender lookup (#113) so the automated photo-first
+    pipeline populates these without a manual click.
     """
     if not extracted_name or not extracted_name.strip():
         return None
@@ -175,6 +202,10 @@ def _resolve_or_create_person(extracted_name, person_cls, dict_key, cache_clear)
         collection=person.belongs_to_collection, doc_id=person.document_id
     ):
         person.register()
+        # Auto-populate birth year + gender for the newly-created person (#113).
+        # NOTE: #123's automated upload->validation pipeline MUST do this too.
+        if client is not None and role is not None:
+            _auto_lookup_person(person, role, client, book_title)
     person_ref = person.get_ref()
     st.session_state[dict_key][person.name] = person_ref
     cache_clear()
@@ -203,17 +234,24 @@ def _resolve_or_create_publisher(extracted_name):
     return publisher.name
 
 
-def _apply_metadata_to_book(book, metadata):
+def _apply_metadata_to_book(book, metadata, client=None):
     """Set year / author / illustrator / publisher on an unregistered book from
-    extracted metadata, creating new person/publisher records as needed."""
+    extracted metadata, creating new person/publisher records as needed.
+
+    ``client`` (when supplied) lets newly-created authors/illustrators have their
+    birth year + gender auto-looked-up, with the book title as disambiguating
+    context (#113)."""
     year = metadata.get("published_year")
     if isinstance(year, int):
         book.published = year
 
+    book_title = getattr(book, "title", None)
+
     authors = metadata.get("authors") or []
     if authors:
         author_name = _resolve_or_create_person(
-            authors[0], Author, "author_dict", load_author_dict.clear
+            authors[0], Author, "author_dict", load_author_dict.clear,
+            client=client, book_title=book_title, role="author",
         )
         if author_name is not None:
             book.author = author_name
@@ -221,7 +259,8 @@ def _apply_metadata_to_book(book, metadata):
     illustrators = metadata.get("illustrators") or []
     if illustrators:
         illustrator_name = _resolve_or_create_person(
-            illustrators[0], Illustrator, "illustrator_dict", load_illustrator_dict.clear
+            illustrators[0], Illustrator, "illustrator_dict", load_illustrator_dict.clear,
+            client=client, book_title=book_title, role="illustrator",
         )
         if illustrator_name is not None:
             book.illustrator = illustrator_name
@@ -427,7 +466,7 @@ def reconstruct_book_from_photos(pages, client, *, fs=None, source_folder=None,
     isbn = metadata.get("isbn")
     if isbn:
         book.comment = f"ISBN: {isbn}"
-    _apply_metadata_to_book(book, metadata)
+    _apply_metadata_to_book(book, metadata, client)
 
     # Initial full save (sets entered_by + datetime_created). Subsequent field
     # assignments below write through to Firestore individually.
