@@ -210,11 +210,33 @@ def clear_entity_form_state(prefix):
         st.session_state.pop(key, None)
 
 
+# Belt-and-braces hide of Streamlit's *default* multipage navigation (#116).
+#
+# The app suppresses the auto page list with ``st.navigation(pages,
+# position="hidden")`` in Home.py, but on a cold load / reconnect the frontend
+# can momentarily render the default ``pages/``-directory nav (the full list of
+# would-be-hidden internal pages) into the ``stSidebarNav`` container before the
+# server's "hidden" config lands — the intermittent flash reported on the login
+# screen (#116). This static CSS is part of the served page markup, so the
+# container is forced hidden as soon as the stylesheet is parsed, regardless of
+# render order. Our intended sidebar links use ``st.sidebar.page_link(...)``,
+# which render into the sidebar *user-content* area (NOT ``stSidebarNav``), so
+# this never hides the real navigation.
+_HIDE_DEFAULT_NAV_CSS = """
+    <style>
+    [data-testid="stSidebarNav"] { display: none !important; }
+    </style>
+"""
+
+
 def page_layout(current_page=None):
     st.set_page_config(
         initial_sidebar_state="collapsed",
         layout="wide"
     )
+    # Force-hide the default multipage nav to defeat the intermittent flash (#116)
+    # before any sidebar content is rendered.
+    st.markdown(_HIDE_DEFAULT_NAV_CSS, unsafe_allow_html=True)
     if current_page:
         st.session_state['_current_page'] = current_page
     st.sidebar.page_link("pages/login.py", label="Login")
