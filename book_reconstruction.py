@@ -74,13 +74,16 @@ from s3_constants import (
     count_folder_pages,
 )
 from image_processing import exif_transpose_bytes
-from data_structures import Book, Page, Character, Alias, Author, Illustrator, Publisher
+from data_structures import (
+    Book, Page, Character, Alias, Author, Illustrator, Publisher,
+    ExtractionErrorLog,
+)
 
 # Reuse the per-page orientation-correct/crop/OCR helpers that drive the manual
 # upload pipeline rather than reimplementing them. ``pages`` has no __init__.py;
 # it is imported here as a PEP 420 namespace package (importing the module does
 # not run its page body, which is guarded by ``if __name__ == "__main__"``).
-from pages.uploader import extract_page_info, _process_page
+from pages.uploader import extract_page_info, _process_page, PageExtractionError
 
 
 def _expected_book_folders():
@@ -234,11 +237,15 @@ def _process_pages(book, pages, client, fs, progress):
     """Orientation-correct, crop, OCR and store each page; create Page records.
 
     Mirrors ``pages.uploader._process_photo_batch`` but flow-agnostic (no
-    ``st.status``). Returns the ordered ``{page_number: Page}`` dict.
+    ``st.status``). Returns ``(page_objs, failed_pages)`` where ``page_objs`` is the
+    ordered ``{page_number: Page}`` dict and ``failed_pages`` is the list of page
+    numbers whose AI text-extraction failed (#132) — kept as blanks in the
+    sequence for later manual entry.
     """
     total = len(pages)
     photos_url = f"{S3_BUCKET}/{book.title}"
     page_objs = {}
+    failed_pages = []
 
     # Phase 1 — write the orientation-normalised originals to the canonical folder.
     corrected = []
@@ -265,13 +272,25 @@ def _process_pages(book, pages, client, fs, progress):
         page = Page(page_number=page_number, book=book_ref)
         page.register()
 
-        text, is_story, _page_type = extract_page_info(bytes_for_extraction, client)
-        if text:
-            page.text = text
-        page.contains_story = is_story
+        try:
+            text, is_story, _page_type = extract_page_info(
+                bytes_for_extraction, client,
+                book=book, page_number=page_number,
+                page_name=f"page_{page_number}.jpg",
+                flow=ExtractionErrorLog.FLOW_RECONSTRUCTION,
+            )
+        except PageExtractionError:
+            # Detail already logged to extraction_errors; keep the blank page in
+            # the sequence and record it for the caller to surface (#132). A single
+            # failed page no longer aborts the whole reconstruction.
+            failed_pages.append(page_number)
+        else:
+            if text:
+                page.text = text
+            page.contains_story = is_story
         page_objs[page_number] = page
 
-    return page_objs
+    return page_objs, failed_pages
 
 
 def _detect_and_create_characters(book, page_objs, client, progress):
@@ -364,7 +383,8 @@ def reconstruct_book_from_photos(pages, client, *, fs=None, source_folder=None,
          'aliases_created': int,
          'source_folder': str | None,  # the orphan folder, if supplied
          'photos_folder': str,         # canonical sawimages/{title} folder name
-         'moved': bool}                # True when title != source_folder
+         'moved': bool,                # True when title != source_folder
+         'extraction_failures': list}  # page numbers the AI couldn't read (#132)
 
     Raises:
         ValueError: when no usable title could be derived, or a book with the
@@ -422,7 +442,7 @@ def reconstruct_book_from_photos(pages, client, *, fs=None, source_folder=None,
     load_book_dict.clear()
     st.session_state["current_book"] = book
 
-    page_objs = _process_pages(book, pages, client, fs, progress)
+    page_objs, extraction_failures = _process_pages(book, pages, client, fs, progress)
 
     characters_created, aliases_created = _detect_and_create_characters(
         book, page_objs, client, progress
@@ -444,4 +464,6 @@ def reconstruct_book_from_photos(pages, client, *, fs=None, source_folder=None,
         "source_folder": source_folder,
         "photos_folder": photos_folder,
         "moved": bool(source_folder) and source_folder != photos_folder,
+        # Page numbers the AI could not read (#132); kept as blanks for manual entry.
+        "extraction_failures": extraction_failures,
     }

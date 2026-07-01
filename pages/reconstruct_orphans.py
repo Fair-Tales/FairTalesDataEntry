@@ -22,7 +22,7 @@ from utilities import (
     get_s3_filesystem,
     get_anthropic_client,
 )
-from text_content import ReconstructOrphans
+from text_content import ReconstructOrphans, PhotoUpload
 from book_reconstruction import (
     list_orphan_folders,
     fetch_folder_photos,
@@ -66,6 +66,14 @@ if result_flash:
                 source_folder=result_flash["source_folder"],
             )
         )
+    # Pages the AI couldn't read (#132): keep the message simple (count + page
+    # numbers); the raw errors are in the extraction_errors debug log.
+    failed = result_flash.get("extraction_failures") or []
+    if failed:
+        st.warning(PhotoUpload.extraction_partial_fail.format(
+            failed=len(failed), total=result_flash["page_count"],
+            pages=", ".join(str(p) for p in failed),
+        ))
     st.page_link("pages/validation.py", label=ReconstructOrphans.validation_link_label)
     st.divider()
 
@@ -142,6 +150,7 @@ if st.button(
             "moved": result["moved"],
             "photos_folder": result["photos_folder"],
             "source_folder": result["source_folder"],
+            "extraction_failures": result["extraction_failures"],
         }
         st.session_state.pop("_orphan_folders", None)
         st.rerun()

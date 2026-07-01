@@ -7,4 +7,5 @@ from data_structures.character import Character
 from data_structures.alias import Alias
 from data_structures.user import User
 from data_structures.edit_log import EditLog
+from data_structures.extraction_error_log import ExtractionErrorLog
 from data_structures.collection import Collection

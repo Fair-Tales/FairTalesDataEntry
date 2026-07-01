@@ -39,7 +39,7 @@ Safety
 ------
 * Audit is read-only.
 * Delete is dry-run unless ``--execute`` AND a typed ``DELETE`` confirmation.
-* ``users``, ``edit_log`` and ``collections`` are never touched.
+* ``users``, ``edit_log``, ``extraction_errors`` and ``collections`` are never touched.
 * Exceptions are narrow and surfaced, never silently swallowed.
 * Idempotent / re-runnable: deleting already-absent data is a no-op.
 
@@ -86,7 +86,7 @@ DEFAULT_BUCKET = S3_BUCKET
 DEFAULT_SECRETS = ".streamlit/secrets.toml"
 
 #: Collections that are explicitly OUT OF SCOPE - never audited, never deleted.
-PROTECTED_COLLECTIONS = ("users", "edit_log", "collections")
+PROTECTED_COLLECTIONS = ("users", "edit_log", "extraction_errors", "collections")
 
 #: A book is flagged as "too few images" when its page-image count is at most
 #: this threshold (0, 1 or 2 -> likely an incomplete or test entry).

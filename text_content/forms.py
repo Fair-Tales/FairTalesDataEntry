@@ -883,6 +883,21 @@ class PhotoUpload:
     continue_to_text_button = "Continue to enter text"
     replace_button = "Replace / re-upload photos"
 
+    # AI page-extraction failures (#132). Shown after processing so the user knows
+    # which pages the AI couldn't read and therefore need entering by hand. The raw
+    # API error is NEVER shown here — full details go to the extraction_errors debug
+    # log for Chris to review later. Used by the single-book and reconstruction
+    # flows (which know the exact page numbers); the batch flow, whose page numbers
+    # reset per book, uses the aggregate ``_batch`` variant.
+    extraction_partial_fail = (
+        "{failed} of {total} page(s) couldn't be read automatically — "
+        "you'll need to enter those manually. Affected page(s): {pages}."
+    )
+    extraction_partial_fail_batch = (
+        "{count} page(s) across the uploaded books couldn't be read "
+        "automatically — you'll need to enter those manually."
+    )
+
 
 class ReviewBooks:
     """Strings for the review-my-books page (pages/review_my_books.py)."""
