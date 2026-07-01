@@ -16,6 +16,7 @@ from photo_upload import (
     build_uploader_html,
     fetch_uploaded_photos,
     cleanup_prefix,
+    reset_upload_session,
 )
 
 # Direct-to-S3 upload flow key (#118) for the shared page-photo / QR-phone upload
@@ -298,6 +299,23 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
     st.session_state['_upload_pipeline_done'] = True
 
 
+def _cleanup_upload_buffer(fs, flow_key):
+    """Delete this session's temp ``uploads/{flow_key}/{session_id}/`` buffer once
+    its photos have been written into ``sawimages/{title}/``, and drop the session
+    id so a new entry mints a fresh prefix (#124).
+
+    Scoped strictly to THIS browser session's ``flow_key`` (the session id is read
+    from ``st.session_state``), so it can never clear another user's or another
+    session's prefix. A no-op when no session id is present. ``cleanup_prefix``
+    swallows/logs any S3 failure, so this never breaks the just-completed entry.
+    """
+    session_id = st.session_state.get(f"upload_session_{flow_key}")
+    if not session_id:
+        return
+    cleanup_prefix(fs, flow_key, session_id)
+    reset_upload_session(flow_key)
+
+
 def upload_widget(on_submit='enter_text'):
 
     fs = get_s3_filesystem()
@@ -315,6 +333,11 @@ def upload_widget(on_submit='enter_text'):
                 sort_file_names = [name for name, _ in stashed]
                 raw_bytes_list = [data for _, data in stashed]
                 _process_photo_batch(raw_bytes_list, sort_file_names, fs)
+                # Pages are now in sawimages/{title}/. The photo-first reuse path
+                # was fed from the "single" flow's temp buffer (uploaded in
+                # add_book_photos.py), so clear it now rather than waiting on the
+                # "Continue" click below (which the user may never reach) (#124).
+                _cleanup_upload_buffer(fs, "single")
         else:
             # Direct browser-to-S3 upload (#114/#118): replaces st.file_uploader,
             # which drops the Streamlit websocket on mobile while the native photo
@@ -342,6 +365,12 @@ def upload_widget(on_submit='enter_text'):
                 sort_file_names = [name for name, _ in pages]
                 raw_bytes_list = [data for _, data in pages]
                 _process_photo_batch(raw_bytes_list, sort_file_names, fs)
+                # Pages are now in sawimages/{title}/, so the direct page-upload
+                # temp buffer (uploads/pages/{session_id}/) is no longer needed —
+                # clear it here rather than waiting on the "Continue" click below
+                # (which the user may abandon), which is what left prefixes to pile
+                # up (#124).
+                _cleanup_upload_buffer(fs, UPLOAD_FLOW_KEY)
 
         st.write(Uploader.upload_complete)
         submit = st.button(Uploader.continue_button, key="uploader_continue_button")
@@ -350,16 +379,9 @@ def upload_widget(on_submit='enter_text'):
             st.session_state.pop('_upload_pipeline_done', None)
             st.session_state.pop('book_pages_dict', None)
             st.session_state.pop('photo_first_pages', None)
-            # The photos have now been processed into sawimages/{title}/, so the
-            # direct-upload temp prefixes (uploads/{flow}/{session_id}/, #114/#118)
-            # are no longer needed. Delete whichever fed this widget — the
-            # photo-first reuse path uses the "single" flow, the direct page-upload
-            # path uses "pages" — and drop the session ids so a new entry mints
-            # fresh ones.
-            for flow_key in (UPLOAD_FLOW_KEY, "single"):
-                session_id = st.session_state.pop(f"upload_session_{flow_key}", None)
-                if session_id:
-                    cleanup_prefix(fs, flow_key, session_id)
+            # The temp upload buffers were already cleared right after the photos
+            # were written to sawimages/{title}/ (see the _cleanup_upload_buffer
+            # calls above), so nothing to clean here — just leave the flow.
             if on_submit == 'enter_text':
                 st.switch_page("./pages/enter_text.py")
             else:

@@ -24,6 +24,7 @@ app origin, or the browser PUT is blocked. See the issue/PR summary for the JSON
 """
 
 import json
+import logging
 import re
 import time
 
@@ -31,8 +32,11 @@ import boto3
 import natsort
 import streamlit as st
 from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
 
 from text_content import BookPhotoEntry
+
+logger = logging.getLogger(__name__)
 
 # First path segment used everywhere else in the codebase for s3fs writes
 # (e.g. ``sawimages/{title}/page_N.jpg``) is the bucket name.
@@ -195,14 +199,25 @@ def fetch_uploaded_photos(fs, flow_key, session_id):
 def cleanup_prefix(fs, flow_key, session_id):
     """Delete the temporary ``uploads/{flow_key}/{session_id}/`` prefix from S3.
 
-    Safe to call when nothing was uploaded (a missing prefix is ignored).
+    Scoped strictly to the ONE ``flow_key``/``session_id`` prefix passed in, so it
+    can never touch another user's or another session's upload buffer (#124).
+
+    Safe to call when nothing was uploaded (a missing prefix is ignored). A
+    transient S3 / permission failure is logged and swallowed rather than raised:
+    cleanup runs on the success path of a flow that has ALREADY relocated the
+    photos into ``sawimages/``, so a cleanup error must never break the user's
+    completed entry. The #126 ``uploads/`` lifecycle rule (7-day expiry) is the
+    backstop for anything a failed cleanup leaves behind.
     """
     prefix = f"{S3_BUCKET}/{upload_prefix(flow_key, session_id)}"
     try:
         if fs.exists(prefix):
             fs.rm(prefix, recursive=True)
     except FileNotFoundError:
+        # Nothing was uploaded, or the prefix is already gone — nothing to do.
         pass
+    except (OSError, BotoCoreError, ClientError) as exc:
+        logger.warning("cleanup_prefix failed for %s: %s", prefix, exc)
 
 
 # The component markup/JS lives here as a template; only the *strings* shown to
