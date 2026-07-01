@@ -509,38 +509,105 @@ def extract_isbn(text):
     return None
 
 
-def lookup_person_details(name, role, client):
+_PERSON_GENDER_OPTIONS = ("Woman", "Man", "Non-binary", "Other", "Unknown")
+
+
+def _parse_person_details(response):
+    """Extract a validated ``{'birth_year', 'gender'}`` dict from a lookup
+    response, robustly (#113).
+
+    A web-search reply may narrate before emitting the JSON, so this walks the
+    text blocks (preferring the final one), strips any markdown fence and, when
+    the whole block still isn't valid JSON, falls back to extracting the first
+    ``{...}`` object. Returns ``None`` when no JSON payload can be recovered.
+    """
+    texts = [
+        block.text for block in response.content
+        if getattr(block, "type", None) == "text" and getattr(block, "text", None)
+    ]
+    if not texts:
+        return None
+
+    data = None
+    # Try the final text block first (the model's answer usually comes last),
+    # then the whole reply joined, so a stray leading narration can't hide the
+    # JSON.
+    for candidate in (texts[-1], "\n".join(texts)):
+        candidate = strip_json_fence(candidate.strip())
+        try:
+            data = json.loads(candidate)
+        except (json.JSONDecodeError, ValueError):
+            match = re.search(r"\{.*?\}", candidate, re.DOTALL)
+            if match:
+                try:
+                    data = json.loads(match.group())
+                except (json.JSONDecodeError, ValueError):
+                    data = None
+        if isinstance(data, dict):
+            break
+    if not isinstance(data, dict):
+        return None
+
+    birth_year = data.get("birth_year")
+    try:
+        birth_year = int(birth_year) if birth_year is not None else None
+    except (ValueError, TypeError):
+        birth_year = None
+    # Discard an implausible year rather than store a confident wrong guess (#113).
+    if birth_year is not None and not (1000 <= birth_year <= datetime.now(timezone.utc).year):
+        birth_year = None
+
+    gender = data.get("gender", "Unknown")
+    if gender not in _PERSON_GENDER_OPTIONS:
+        gender = "Unknown"
+
+    return {"birth_year": birth_year, "gender": gender}
+
+
+def lookup_person_details(name, role, client, book_title=None):
     """Use Claude + web search to suggest birth year and gender for a named person.
 
+    When known, ``book_title`` is passed to the model as disambiguating context
+    ("<role> of the children's book '<title>'") so common names resolve to the
+    right person (#113).
+
     Returns a dict with 'birth_year' (int or None) and 'gender' (str from
-    AuthorForm/IllustratorForm.gender_options), or None on any failure.
+    AuthorForm/IllustratorForm.gender_options), or None on any failure. A clean
+    "no reliable info found" result is returned as
+    ``{'birth_year': None, 'gender': 'Unknown'}`` rather than a confident wrong
+    guess.
     """
     from text_content import AIPrompts
+
+    context = ""
+    if book_title and book_title.strip():
+        context = AIPrompts.person_lookup_book_context.format(title=book_title.strip())
+    prompt = AIPrompts.person_lookup.format(name=name, role=role, context=context)
+
+    tools = [{"type": "web_search_20260209", "name": "web_search"}]
     try:
+        messages = [{"role": "user", "content": prompt}]
         response = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=512,
-            tools=[{"type": "web_search_20260209", "name": "web_search"}],
-            messages=[{
-                "role": "user",
-                "content": AIPrompts.person_lookup.format(name=name, role=role)
-            }]
+            max_tokens=1024,
+            tools=tools,
+            messages=messages,
         )
-        text_block = None
-        for block in response.content:
-            if hasattr(block, 'type') and block.type == "text":
-                text_block = block.text
-        if text_block is None:
-            return None
-        result = json.loads(strip_json_fence(text_block))
-        birth_year = result.get("birth_year")
-        if birth_year is not None:
-            birth_year = int(birth_year)
-        gender = result.get("gender", "Unknown")
-        valid_genders = ["Woman", "Man", "Non-binary", "Other", "Unknown"]
-        if gender not in valid_genders:
-            gender = "Unknown"
-        return {"birth_year": birth_year, "gender": gender}
+        # The server-side web-search loop can stop with ``pause_turn`` before it
+        # has produced the final answer; re-send so it resumes rather than
+        # returning an empty/partial reply (#113).
+        continuations = 0
+        while getattr(response, "stop_reason", None) == "pause_turn" and continuations < 3:
+            messages.append({"role": "assistant", "content": response.content})
+            response = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=1024,
+                tools=tools,
+                messages=messages,
+            )
+            continuations += 1
+
+        return _parse_person_details(response)
     except (anthropic.AnthropicError, json.JSONDecodeError,
             ValueError, TypeError) as exc:
         # Narrowed from a broad ``except`` (#127): API failures and malformed /

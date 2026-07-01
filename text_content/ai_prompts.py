@@ -43,15 +43,32 @@ Respond with valid JSON only:
 Book text:
 """
 
+    # Disambiguating clause appended to ``person_lookup`` when the book title is
+    # known (#113) — helps resolve common names to the right person.
+    person_lookup_book_context = ' known for the children\'s book "{title}"'
+
     person_lookup = (
-        "You are helping a children's book archivist. Using web search, look up "
-        "biographical information about {name}, a children's book {role}.\n\n"
-        "Find:\n"
-        "1. Birth year (4-digit integer, or null if not found or uncertain)\n"
-        "2. Gender identity, using exactly one of: "
-        '"Woman", "Man", "Non-binary", "Other", or "Unknown"\n\n'
-        "Respond with valid JSON only — no other text:\n"
-        '{{"birth_year": <integer or null>, "gender": "<string>"}}'
+        "You are a meticulous children's book archivist. Use web search to "
+        "establish the birth year and gender of {name}, a children's book "
+        "{role}{context}.\n\n"
+        "Treat the two facts independently — the birth year is usually easier "
+        "to verify than gender, so report it even when gender stays uncertain:\n\n"
+        "1. BIRTH YEAR — the 4-digit year this person was born. If you cannot "
+        "find an exact year but the sources establish an approximate decade or "
+        "active/publishing period, give your single best-estimate year rather "
+        "than null. Use null ONLY when you have no reliable basis for any "
+        "estimate.\n"
+        "2. GENDER — this person's gender identity, using EXACTLY one of: "
+        '"Woman", "Man", "Non-binary", "Other", or "Unknown". Use "Unknown" '
+        "whenever the sources do not make it clear — do not guess.\n\n"
+        "Do not fabricate details. If web search turns up nothing about this "
+        "specific person, return null for the birth year and \"Unknown\" for "
+        "the gender — never invent a value or borrow details from a different "
+        "person who merely shares the name.\n\n"
+        "Respond with ONE line of valid JSON and nothing else — no commentary, "
+        "no markdown code fence:\n"
+        '{{"birth_year": <4-digit integer or null>, "gender": "<one of the '
+        'five values above>"}}'
     )
 
     # --- Character + alias detection (issue #52) ---------------------------

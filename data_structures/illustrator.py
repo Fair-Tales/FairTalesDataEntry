@@ -118,8 +118,15 @@ class Illustrator(DataStructureBase):
         if lookup_clicked:
             if self.forename.strip() or self.surname.strip():
                 ai_client = get_anthropic_client()
+                # Pass the current book title (when one is in progress) as
+                # disambiguating context for common names (#113).
+                _current_book = st.session_state.get('current_book')
+                _book_title = getattr(_current_book, 'title', None)
                 with st.spinner(IllustratorForm.lookup_spinner):
-                    suggestion = lookup_person_details(self.name.strip(), 'illustrator', ai_client)
+                    suggestion = lookup_person_details(
+                        self.name.strip(), 'illustrator', ai_client,
+                        book_title=_book_title,
+                    )
                 if suggestion:
                     st.session_state['_illustrator_lookup_suggestion'] = suggestion
                 else:
