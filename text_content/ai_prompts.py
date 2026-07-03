@@ -1,16 +1,32 @@
 class AIPrompts:
 
     rotation_angle = (
-        "By how many degrees clockwise should this image be rotated so that "
-        "the book page text reads horizontally? "
-        "Reply with a single integer between -180 and 180. "
-        "Reply with 0 if the text is already horizontal or there is no clear text."
+        "This is a photo of a single book page. It may have been captured "
+        "rotated sideways, or completely upside down.\n"
+        "By how many degrees CLOCKWISE must the whole image be rotated so that "
+        "the text reads the right way up — upright and left-to-right, as you "
+        "would hold the book to read it (NOT upside down and NOT sideways)?\n"
+        "Look carefully at the shapes of the letters to judge which way is up. "
+        "Upside-down text still lies along horizontal lines, so 'the lines look "
+        "horizontal' is NOT enough — the individual letters must be the right "
+        "way up.\n"
+        "Answer with EXACTLY one of these four numbers and nothing else:\n"
+        "0   = already upright, no rotation needed\n"
+        "90  = rotate a quarter turn clockwise\n"
+        "180 = upside down; rotate a half turn\n"
+        "270 = rotate a quarter turn anticlockwise (i.e. three-quarters "
+        "clockwise)\n"
+        "If there is no legible text, answer 0."
     )
 
     crop_quality_check = (
-        "Does this image show a properly cropped book page — "
-        "text roughly horizontal, the page filling most of the frame, "
-        "and no significant content cut off? "
+        "Does this image show a properly cropped book page that is the RIGHT "
+        "WAY UP? Answer 'yes' only if ALL of these hold: the text is upright "
+        "and reads left-to-right the normal way (NOT upside down and NOT "
+        "sideways); the page fills most of the frame; and no significant "
+        "content is cut off. Remember that upside-down text still lies along "
+        "horizontal lines, so check that the letters themselves are the right "
+        "way up, not merely that the lines are horizontal. "
         "Answer only: yes or no."
     )
 
