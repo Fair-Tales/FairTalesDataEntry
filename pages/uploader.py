@@ -323,7 +323,7 @@ def _cleanup_upload_buffer(fs, flow_key):
     reset_upload_session(flow_key)
 
 
-def upload_widget(on_submit='enter_text'):
+def upload_widget(on_submit='enter_text', auto_forward=False):
 
     fs = get_s3_filesystem()
 
@@ -345,6 +345,18 @@ def upload_widget(on_submit='enter_text'):
                 # add_book_photos.py), so clear it now rather than waiting on the
                 # "Continue" click below (which the user may never reach) (#124).
                 _cleanup_upload_buffer(fs, "single")
+
+            # Photo-first flow (#151): the pages are now processed, written to
+            # sawimages/{title}/ and registered as Page docs, so go STRAIGHT to
+            # text entry instead of making the user click through another
+            # "add photos" page. Mirrors the cleanup the manual "Continue" does
+            # below. switch_page halts this run, so nothing after it executes.
+            if auto_forward and on_submit == 'enter_text':
+                st.session_state.pop('_upload_pipeline_done', None)
+                st.session_state.pop('book_pages_dict', None)
+                st.session_state.pop('photo_first_pages', None)
+                st.session_state['current_page_number'] = 1
+                st.switch_page("./pages/enter_text.py")
         else:
             # Direct browser-to-S3 upload (#114/#118): replaces st.file_uploader,
             # which drops the Streamlit websocket on mobile while the native photo
