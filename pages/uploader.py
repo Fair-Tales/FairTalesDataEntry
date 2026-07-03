@@ -279,6 +279,13 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
                 page.register()
             status.update(label=Uploader.processing_complete, state="complete")
 
+    # If OCR was skipped wholesale because no API key is configured, tell the user
+    # explicitly rather than silently registering blank pages (#153) — the batch
+    # and reconstruction flows already warn on a missing key, so the single-book
+    # flow must too, otherwise text recognition "just doesn't work" with no message.
+    if ai_client is None:
+        st.warning(PhotoUpload.no_api_key)
+
     # Tell the user (once) which pages the AI could not read, so they know where
     # to focus manual entry (#132). The raw errors are never shown — they are in
     # the extraction_errors debug log. Rendered outside the st.status block so it
