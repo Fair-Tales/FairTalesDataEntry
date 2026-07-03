@@ -1,7 +1,6 @@
 import streamlit as st
 from text_content import AuthorForm
 from .base_structure import DataStructureBase, Field
-from datetime import date
 
 
 class Author(DataStructureBase):
@@ -10,7 +9,6 @@ class Author(DataStructureBase):
         'is_registered': False,
         'forename': "",
         'surname': "",
-        'birth_year': None,
         'gender': "",
         'entered_by': None,
         'datetime_created': -1,
@@ -24,7 +22,6 @@ class Author(DataStructureBase):
     form_fields = {
         'forename': 'First name(s)',
         'surname': 'Surname',
-        'birth_year': 'Birth year',
         'gender': 'Gender'
     }
 
@@ -60,11 +57,10 @@ class Author(DataStructureBase):
             key=f"author_form_surname_{key_suffix}"
         ).strip()
 
-        # Apply any suggestion stored by a previous "Look up" click
+        # Apply any suggestion stored by a previous "Look up" click. The lookup
+        # is gender-only now that author date of birth has been dropped (#149).
         _suggestion = st.session_state.pop('_author_lookup_suggestion', None)
         if _suggestion:
-            if _suggestion.get('birth_year'):
-                self.birth_year = _suggestion['birth_year']
             if _suggestion.get('gender'):
                 self.gender = _suggestion['gender']
         # Feedback from a previous "Look up" click that didn't produce a result.
@@ -72,26 +68,6 @@ class Author(DataStructureBase):
             st.warning(AuthorForm.lookup_failed)
         if st.session_state.pop('_author_lookup_no_name', None):
             st.warning(AuthorForm.lookup_no_name)
-
-        year_options = [-1, -2] + [y for y in range(1900, (date.today().year + 1))]
-        if self.birth_year and self.birth_year in year_options:
-            year_index = year_options.index(self.birth_year)
-        else:
-            year_index = 0
-
-        year_given = st.selectbox(
-            AuthorForm.birth_year_label,
-            options=year_options,
-            index=year_index,
-            placeholder=AuthorForm.birth_year_placeholder,
-            format_func=lambda x: AuthorForm.birth_year_unknown if x == -1 else (AuthorForm.birth_year_earlier if x == -2 else str(x)),
-            key=f"author_form_birth_year_{key_suffix}"
-        )
-
-        if year_given > 0:
-            self.birth_year = year_given
-        else:
-            self.birth_year = None
 
         st.write(AuthorForm.gender_prompt)
         gender_index = 0

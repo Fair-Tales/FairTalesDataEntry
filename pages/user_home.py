@@ -103,11 +103,11 @@ def author_search():
                 author_ref = st.session_state['author_dict'][full_name]
                 author_data = author_ref.get().to_dict()
 
-                birth_year = author_data.get('birth_year')
-                birth_year_str = str(birth_year) if birth_year and birth_year > 0 else UserHome.unknown
+                # Author date of birth was dropped (#149); the expander now shows
+                # name + gender only.
                 gender = author_data.get('gender') or UserHome.not_recorded
 
-                with st.expander(UserHome.author_expander.format(name=full_name, birth_year=birth_year_str, gender=gender)):
+                with st.expander(UserHome.author_expander.format(name=full_name, gender=gender)):
                     books_df = st.session_state.firestore.get_by_field(
                         collection='books',
                         field='author',
