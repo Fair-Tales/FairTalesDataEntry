@@ -1,0 +1,1300 @@
+#!/usr/bin/env python3
+"""Standalone pilot-corpus import CLI for FairTalesDataEntry (issue #73).
+
+Imports the ``fair-tales-methods`` PILOT study corpus (~200 primary-school
+picture books) into the production storage stack — **Firestore** for the
+structured records/text and **S3** (``sawimages``) for the page images — in
+exactly the same document shape the Streamlit app writes today.
+
+Sources (a sibling checkout of ``fair-tales-methods``)
+------------------------------------------------------
+* ``Book-List-Final-NONA.xlsx`` (Sheet1) — one row per book: title, author,
+  author gender (M/F), year of first publication, starting/ending story page,
+  and protagonist/secondary-character summary columns.
+* ``character_database.db`` (SQLite) — ``characters`` (name/gender/human/
+  is_protagonist per book), ``protagonists`` and ``aliases``.
+* ``text_pdfs/*.pdf`` — the scanned book pages (one PDF per book).
+* ``data/book_dataframe.json`` — Title -> full book text (text fallback only).
+
+Design & safety
+---------------
+This script runs **outside Streamlit**, so it deliberately does NOT import the
+Streamlit-coupled ``data_structures`` package. It loads ``.streamlit/secrets.toml``
+directly and builds its own ``firestore.Client`` (project ``sawdataentry``),
+``s3fs.S3FileSystem`` and ``anthropic.Anthropic`` clients, mirroring the app's
+``FirestoreWrapper`` / uploader / ``utilities`` config, exactly like
+``scripts/data_cleanup.py``. The Firestore document schema for every entity
+(Book/Author/Illustrator/Publisher/Page/Character/Alias) is **replicated** here
+by studying the corresponding ``data_structures/*.py`` classes — it is NOT
+imported.
+
+**DRY-RUN BY DEFAULT.** With no ``--execute`` flag the tool writes NOTHING to
+Firestore or S3: it prints a per-book plan plus corpus totals, every
+title-match gap / discrepancy, and a small sample of the AI illustrator/
+publisher lookup and per-page text extraction, then exits. ``--execute``
+performs the real import (idempotent — books already present in Firestore are
+skipped). The live run must be performed by a maintainer where the real secrets
+exist; it cannot connect from an isolated git worktree.
+
+Usage
+-----
+    # Dry run (default — writes nothing):
+    python scripts/import_pilot_data.py \
+        --methods-dir ../fair-tales-methods
+
+    # Real import (writes to Firestore + S3 — run only intentionally):
+    python scripts/import_pilot_data.py \
+        --methods-dir ../fair-tales-methods --execute
+
+Mapping decisions (see scripts/PILOT_IMPORT.md for the full rationale)
+----------------------------------------------------------------------
+* Author gender:    M -> "Man",  F -> "Woman",  anything else -> "Unknown"
+                    (AuthorForm.gender_options).
+* Character gender: F -> "Female",  M -> "Male",  NGS -> "Non-specific"
+                    (CharacterForm.gender_options; there is no "Non-binary"
+                    option for characters, so unknowns fall back to
+                    "Non-specific").
+* Character human:  "H" -> True, "NH" -> False (whitespace stripped). The DB
+                    also holds two stray values ("NO", "NGS") which are flagged
+                    and default to the Character.human default (True).
+* Character plural: no plural/singular indicator exists in the sheet or DB, so
+                    ``plural`` is always False and flagged in the report.
+* ethnicity/disability: not present in the pilot data -> "Not specified"
+                    (the first CharacterForm option).
+"""
+
+from __future__ import annotations
+
+import argparse
+import io
+import json
+import os
+import re
+import sqlite3
+import sys
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Optional
+
+# ---------------------------------------------------------------------------
+# Configuration.
+# ---------------------------------------------------------------------------
+
+#: S3 bucket holding book page images (matches the app / s3_constants.S3_BUCKET).
+S3_BUCKET = "sawimages"
+
+#: Firestore project id (matches the app's FirestoreWrapper / data_cleanup.py).
+FIRESTORE_PROJECT = "sawdataentry"
+
+#: Default path to the Streamlit secrets file (loaded directly, no Streamlit).
+DEFAULT_SECRETS = ".streamlit/secrets.toml"
+
+#: The user recorded as the author of every imported record.
+ENTERED_BY = "pilot_import"
+
+#: Claude model used for the illustrator/publisher/year web lookup. Defaults to
+#: the most capable widely-released model for best accuracy (the corpus is
+#: small, so cost is bounded and accuracy is prioritised per #73). Overridable
+#: via --lookup-model.
+DEFAULT_LOOKUP_MODEL = "claude-opus-4-8"
+
+#: Claude model used for per-page OCR when a PDF page has no extractable text
+#: layer. Overridable via --ocr-model.
+DEFAULT_OCR_MODEL = "claude-opus-4-8"
+
+#: Longest-edge pixel cap when rendering a PDF page to JPEG for S3.
+DEFAULT_MAX_EDGE = 2000
+
+#: JPEG quality for rendered page images.
+DEFAULT_JPEG_QUALITY = 85
+
+#: A PDF page whose extracted text-layer has at least this many non-whitespace
+#: characters is treated as having a usable text layer; shorter/blank pages fall
+#: back to AI OCR on --execute.
+TEXT_LAYER_MIN_CHARS = 20
+
+#: The character-gender options the app offers (text_content.CharacterForm).
+#: Replicated here rather than imported (Streamlit-coupled). Kept in sync
+#: manually; the mapper below only emits values from this list.
+CHARACTER_GENDER_OPTIONS = ["Female", "Male", "Non-specific", "Transgender"]
+
+#: The author-gender options the app offers (text_content.AuthorForm).
+AUTHOR_GENDER_OPTIONS = ["Woman", "Man", "Non-binary", "Other", "Unknown"]
+
+#: Default ethnicity / disability (first CharacterForm option); the pilot data
+#: carries neither field.
+DEFAULT_ETHNICITY = "Not specified"
+DEFAULT_DISABILITY = "Not specified"
+
+
+# ---------------------------------------------------------------------------
+# Pure helpers (no I/O, unit-testable).
+# ---------------------------------------------------------------------------
+
+def normalise_title(title: object) -> str:
+    """Normalise a book title for cross-source matching.
+
+    Lower-cases, expands ``&`` to ``and``, unifies curly quotes, strips all
+    non-alphanumeric runs to single spaces and trims. This collapses the
+    Excel trailing-space / punctuation / case differences against the SQLite
+    ``book`` values and the PDF filenames so the same book matches across all
+    three sources.
+    """
+    if title is None:
+        return ""
+    text = str(title).strip().lower()
+    text = text.replace("&", " and ")
+    text = re.sub(r"[‘’“”]", "'", text)
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def book_document_id(title: str) -> str:
+    """Book.document_id — ``title.lower().replace(" ", "_")`` (see book.py)."""
+    return title.lower().replace(" ", "_")
+
+
+def person_document_id(name: str) -> str:
+    """Author/Illustrator/Publisher document_id — ``name.lower().replace(" ", "_")``."""
+    return name.lower().replace(" ", "_")
+
+
+def character_document_id(book_id: str, name: str) -> str:
+    """Character.document_id — ``{book_id}_{name}`` (see character.py)."""
+    return f"{book_id}_{name.replace(' ', '_').lower()}"
+
+
+def alias_document_id(book_id: str, alias_name: str) -> str:
+    """Alias.document_id — ``{book_id}_{alias}`` (see alias.py)."""
+    return f"{book_id}_{alias_name.replace(' ', '_').lower()}"
+
+
+def page_document_id(book_id: str, page_number: int) -> str:
+    """Page.document_id — ``{book_id}_{page_number}`` (see page.py)."""
+    return f"{book_id}_{page_number}"
+
+
+def s3_page_path(title: str, page_number: int) -> str:
+    """S3 object path for a page image — ``sawimages/{title}/page_N.jpg``.
+
+    Mirrors pages/uploader.py, which sets ``photos_url = f"sawimages/{title}"``
+    (the raw title, not the underscored document id) and writes each page to
+    ``f"{photos_url}/page_{n}.jpg"``.
+    """
+    return f"{S3_BUCKET}/{title}/page_{page_number}.jpg"
+
+
+def book_photos_url(title: str) -> str:
+    """The ``photos_url`` the app stores for a book — ``sawimages/{title}``."""
+    return f"{S3_BUCKET}/{title}"
+
+
+def split_name(full_name: str) -> tuple[str, str]:
+    """Split a full author name into (forename, surname).
+
+    Last whitespace token is the surname; everything before it is the forename.
+    Multi-author strings (e.g. "Michael Rosen and Helen Oxenbury") are kept
+    whole with the final word as the surname — best effort; such rows are
+    flagged in the report.
+    """
+    parts = str(full_name).strip().split()
+    if not parts:
+        return "", ""
+    if len(parts) == 1:
+        return parts[0], ""
+    return " ".join(parts[:-1]), parts[-1]
+
+
+def map_author_gender(value: object) -> str:
+    """Map the sheet's author-gender code to an AuthorForm option.
+
+    ``M`` -> "Man", ``F`` -> "Woman", anything else (blank, "M/F" multi-author,
+    unknown) -> "Unknown".
+    """
+    code = str(value or "").strip().upper()
+    if code == "M":
+        return "Man"
+    if code == "F":
+        return "Woman"
+    return "Unknown"
+
+
+def map_character_gender(value: object) -> str:
+    """Map the DB character-gender code to a CharacterForm option.
+
+    ``F`` -> "Female", ``M`` -> "Male", ``NGS`` -> "Non-specific". Any other
+    value (the app has no "Non-binary" character option) falls back to
+    "Non-specific".
+    """
+    code = str(value or "").strip().upper()
+    if code == "F":
+        return "Female"
+    if code == "M":
+        return "Male"
+    # NGS ("no gender specified") and anything unexpected -> the indeterminate
+    # option the app offers.
+    return "Non-specific"
+
+
+def map_human(value: object) -> tuple[bool, bool]:
+    """Map the DB ``human`` code to (is_human, recognised).
+
+    Whitespace is stripped first. ``H`` -> (True, True); ``NH`` -> (False, True).
+    Any other value (the DB holds two strays, "NO" and "NGS") returns
+    (True, False) — the Character.human default — with ``recognised=False`` so
+    the caller can flag it.
+    """
+    code = str(value or "").strip().upper()
+    if code == "H":
+        return True, True
+    if code == "NH":
+        return False, True
+    return True, False
+
+
+def parse_year(value: object) -> Optional[int]:
+    """Parse a 4-digit publication year in the app's accepted range (1900..).
+
+    Returns None when absent or out of range. The Book form only offers years
+    1900..current, so out-of-range values are treated as missing.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    match = re.search(r"(\d{4})", text)
+    if not match:
+        return None
+    year = int(match.group(1))
+    if 1900 <= year <= datetime.now().year:
+        return year
+    return None
+
+
+def parse_page_range(start: object, end: object) -> Optional[tuple[int, int]]:
+    """Return (start, end) 1-based story page range, or None if unusable."""
+    def _as_int(v: object) -> Optional[int]:
+        if v is None:
+            return None
+        try:
+            return int(float(str(v).strip()))
+        except (TypeError, ValueError):
+            return None
+
+    s, e = _as_int(start), _as_int(end)
+    if s is None or e is None:
+        return None
+    if s < 1 or e < s:
+        return None
+    return s, e
+
+
+def is_story_page(page_number: int, page_range: Optional[tuple[int, int]]) -> bool:
+    """True if the page counts as a story page.
+
+    When a story range is present, pages inside ``[start, end]`` are story
+    pages; when no range is known, every page is treated as a story page.
+    """
+    if page_range is None:
+        return True
+    start, end = page_range
+    return start <= page_number <= end
+
+
+# ---------------------------------------------------------------------------
+# Firestore-reference placeholder (keeps document builders pure / testable).
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Ref:
+    """A pending Firestore reference to ``collection/doc_id``.
+
+    Document builders emit these instead of real ``DocumentReference`` objects
+    so they stay pure and testable without google-cloud installed. The live
+    backend resolves each ``Ref`` to a real reference at write time; the
+    dry-run backend renders it as ``collection/doc_id``.
+    """
+
+    collection: str
+    doc_id: str
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.collection}/{self.doc_id}"
+
+
+# ---------------------------------------------------------------------------
+# Document builders — replicate each data_structures/*.py Firestore schema.
+# ---------------------------------------------------------------------------
+
+def build_author_doc(forename: str, surname: str, gender: str, now: datetime) -> dict:
+    """Build an ``authors`` document (mirrors data_structures/author.py)."""
+    return {
+        "is_registered": True,
+        "forename": forename,
+        "surname": surname,
+        "gender": gender,
+        "entered_by": ENTERED_BY,
+        "datetime_created": now,
+        "last_updated": now,
+    }
+
+
+def build_named_doc(name: str, now: datetime) -> dict:
+    """Build an ``illustrators`` / ``publishers`` single-name document."""
+    return {
+        "is_registered": True,
+        "name": name,
+        "entered_by": ENTERED_BY,
+        "datetime_created": now,
+        "last_updated": now,
+    }
+
+
+def build_book_doc(
+    *,
+    title: str,
+    author_ref: Optional[Ref],
+    illustrator_ref: Optional[Ref],
+    publisher_ref: Optional[Ref],
+    published: Optional[int],
+    page_range: Optional[tuple[int, int]],
+    page_count: int,
+    character_refs: list,
+    now: datetime,
+) -> dict:
+    """Build a ``books`` document (mirrors data_structures/book.py Book.fields).
+
+    Theme flags are intentionally omitted (all default to False on read via the
+    app's backward-compatibility fallback) because the pilot data has no theme
+    information — see PILOT_IMPORT.md.
+    """
+    start, end = (page_range or (-1, -1))
+    return {
+        "is_registered": True,
+        "title": title,
+        "author": author_ref,
+        "character_count": len(character_refs),
+        "page_count": page_count,
+        "word_count": -1,
+        "sentence_count": -1,
+        "datetime_created": now,
+        "entered_by": ENTERED_BY,
+        "entry_status": "complete",
+        "first_content_page": start,
+        "last_content_page": end,
+        "illustrator": illustrator_ref,
+        "publisher": publisher_ref,
+        "last_updated": now,
+        "published": published if published is not None else -1,
+        "validated": True,
+        "validated_by": ENTERED_BY,
+        "photos_uploaded": True,
+        "photos_url": book_photos_url(title),
+        "comment": "",
+        "datetime_submitted": now,
+        "characters": list(character_refs),
+    }
+
+
+def build_page_doc(
+    *, book_ref: Ref, page_number: int, contains_story: bool, text: str, now: datetime
+) -> dict:
+    """Build a ``pages`` document (mirrors data_structures/page.py)."""
+    return {
+        "is_registered": True,
+        "book": book_ref,
+        "page_number": page_number,
+        "contains_story": contains_story,
+        "text": text,
+        "datetime_created": now,
+        "entered_by": ENTERED_BY,
+        "last_updated": now,
+    }
+
+
+def build_character_doc(
+    *,
+    book_ref: Ref,
+    name: str,
+    gender: str,
+    protagonist: bool,
+    human: bool,
+    now: datetime,
+) -> dict:
+    """Build a ``characters`` document (mirrors data_structures/character.py)."""
+    return {
+        "is_registered": True,
+        "book": book_ref,
+        "name": name,
+        "gender": gender,
+        "ethnicity": DEFAULT_ETHNICITY,
+        "disability": DEFAULT_DISABILITY,
+        "protagonist": protagonist,
+        "human": human,
+        "plural": False,  # no plural/singular indicator in the pilot sources
+        "datetime_created": now,
+        "last_updated": now,
+        "entered_by": ENTERED_BY,
+    }
+
+
+def build_alias_doc(
+    *, character_ref: Ref, book_ref: Ref, name: str, now: datetime
+) -> dict:
+    """Build an ``aliases`` document (mirrors data_structures/alias.py)."""
+    return {
+        "is_registered": True,
+        "character": character_ref,
+        "book": book_ref,
+        "name": name,
+        "datetime_created": now,
+        "last_updated": now,
+        "entered_by": ENTERED_BY,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Source loading.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ExcelBook:
+    title: str
+    norm: str
+    author: str
+    author_gender_code: str
+    published: Optional[int]
+    page_range: Optional[tuple[int, int]]
+    row_number: int
+
+
+def load_excel_books(path: str) -> list:
+    """Load Sheet1 of the book-list workbook (openpyxl, data_only)."""
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    ws = wb["Sheet1"] if "Sheet1" in wb.sheetnames else wb.active
+    header = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    idx = {name: i for i, name in enumerate(header)}
+
+    title_i = idx.get("Title")
+    # The author column has a trailing space ("Author ") in the source.
+    author_i = idx.get("Author ", idx.get("Author"))
+    gender_i = idx.get("Author Gender")
+    start_i = idx.get("Starting Page")
+    end_i = idx.get("Ending Page")
+    year_i = idx.get("Year of First Publication")
+
+    books: list = []
+    for row_number, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        title = row[title_i] if title_i is not None else None
+        if not title or not str(title).strip():
+            continue
+        title = str(title).strip()
+        books.append(
+            ExcelBook(
+                title=title,
+                norm=normalise_title(title),
+                author=str(row[author_i]).strip() if author_i is not None and row[author_i] else "",
+                author_gender_code=str(row[gender_i]).strip() if gender_i is not None and row[gender_i] else "",
+                published=parse_year(row[year_i]) if year_i is not None else None,
+                page_range=parse_page_range(
+                    row[start_i] if start_i is not None else None,
+                    row[end_i] if end_i is not None else None,
+                ),
+                row_number=row_number,
+            )
+        )
+    wb.close()
+    return books
+
+
+@dataclass
+class DbData:
+    characters_by_book: dict  # norm title -> [character rows]
+    aliases_by_book: dict     # norm title -> [alias rows]
+    index_to_character: dict  # char index -> (norm book, name)
+    human_anomalies: list     # rows with unrecognised human code
+
+
+def load_db(path: str) -> DbData:
+    """Load characters + aliases from the SQLite character database."""
+    con = sqlite3.connect(path)
+    con.row_factory = sqlite3.Row
+    characters_by_book: dict = defaultdict(list)
+    index_to_character: dict = {}
+    human_anomalies: list = []
+    for r in con.execute("SELECT * FROM characters"):
+        book_norm = normalise_title(r["book"])
+        name = str(r["name"]).strip()
+        row = {
+            "index": r["index"],
+            "book_norm": book_norm,
+            "book_raw": r["book"],
+            "name": name,
+            "gender": r["gender"],
+            "human": r["human"],
+            "is_protagonist": r["is_protagonist"],
+        }
+        characters_by_book[book_norm].append(row)
+        index_to_character[r["index"]] = (book_norm, name)
+        _human, recognised = map_human(r["human"])
+        if not recognised:
+            human_anomalies.append(row)
+
+    aliases_by_book: dict = defaultdict(list)
+    for r in con.execute("SELECT * FROM aliases"):
+        book_norm = normalise_title(r["book"])
+        aliases_by_book[book_norm].append(
+            {
+                "index": r["index"],
+                "alias": str(r["alias"]).strip(),
+                "character": str(r["character"]).strip(),
+                "character_id": r["character_id"],
+                "book_norm": book_norm,
+                "book_raw": r["book"],
+            }
+        )
+    con.close()
+    return DbData(
+        characters_by_book=dict(characters_by_book),
+        aliases_by_book=dict(aliases_by_book),
+        index_to_character=index_to_character,
+        human_anomalies=human_anomalies,
+    )
+
+
+def load_pdfs(pdf_dir: str) -> tuple:
+    """Return ({norm title: pdf path}, [duplicate groups]).
+
+    ``.doc.pdf`` duplicates (e.g. ``Sing A Song Of Bottoms.doc.pdf``) collapse
+    to the same normalised key; the plain ``.pdf`` wins and the duplicate is
+    reported.
+    """
+    mapping: dict = {}
+    groups: dict = defaultdict(list)
+    if not os.path.isdir(pdf_dir):
+        return mapping, []
+    for entry in sorted(os.listdir(pdf_dir)):
+        if not entry.lower().endswith(".pdf"):
+            continue
+        base = entry[:-4]
+        base = re.sub(r"\.doc$", "", base)  # collapse "X.doc.pdf" -> "X"
+        norm = normalise_title(base)
+        groups[norm].append(entry)
+        full = os.path.join(pdf_dir, entry)
+        # Prefer the non-".doc" filename when both exist.
+        if norm not in mapping or not entry.lower().endswith(".doc.pdf"):
+            mapping[norm] = full
+    dups = [(norm, files) for norm, files in groups.items() if len(files) > 1]
+    return mapping, dups
+
+
+def load_json_text(path: str) -> dict:
+    """Return {norm title: full book text} from book_dataframe.json (fallback)."""
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    titles = data.get("Title", {})
+    texts = data.get("Text", {})
+    out: dict = {}
+    for key, title in titles.items():
+        out[normalise_title(title)] = texts.get(key, "")
+    return out
+
+
+# ---------------------------------------------------------------------------
+# PDF processing (rendering via pypdfium2, text layer via pypdf).
+# ---------------------------------------------------------------------------
+
+def analyse_pdf(path: str) -> dict:
+    """Return {page_count, text_layer_pages, image_only_pages, page_texts}.
+
+    Uses pypdf's text-layer extraction only (no rendering) so it is cheap
+    enough to run in the dry-run report. ``page_texts`` is a list of the
+    extracted per-page text (may be blank for image-only pages).
+    """
+    from pypdf import PdfReader
+    from pypdf.errors import PdfReadError
+
+    reader = PdfReader(path)
+    page_texts: list = []
+    text_layer = 0
+    for page in reader.pages:
+        try:
+            text = (page.extract_text() or "").strip()
+        except (PdfReadError, KeyError, ValueError, TypeError):
+            # pypdf raises assorted parse errors on malformed content streams;
+            # treat an unreadable page's text layer as empty (it will OCR).
+            text = ""
+        page_texts.append(text)
+        if len(text) >= TEXT_LAYER_MIN_CHARS:
+            text_layer += 1
+    return {
+        "page_count": len(page_texts),
+        "text_layer_pages": text_layer,
+        "image_only_pages": len(page_texts) - text_layer,
+        "page_texts": page_texts,
+    }
+
+
+def render_page_jpeg(pdf_doc, page_index: int, max_edge: int, quality: int) -> bytes:
+    """Render one PDF page to JPEG bytes at ``max_edge`` longest edge (pypdfium2)."""
+    page = pdf_doc[page_index]
+    width, height = page.get_size()  # points
+    scale = max_edge / max(width, height) if max(width, height) else 1.0
+    bitmap = page.render(scale=scale)
+    pil = bitmap.to_pil().convert("RGB")
+    buf = io.BytesIO()
+    pil.save(buf, format="JPEG", quality=quality)
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# AI helpers (Anthropic) — best effort, degrade gracefully.
+# ---------------------------------------------------------------------------
+
+def _extract_json_object(text: str) -> Optional[dict]:
+    """Pull the first JSON object out of a model reply, or None."""
+    if not text:
+        return None
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    candidate = fenced.group(1) if fenced else None
+    if candidate is None:
+        brace = re.search(r"\{.*\}", text, re.DOTALL)
+        candidate = brace.group(0) if brace else None
+    if candidate is None:
+        return None
+    try:
+        parsed = json.loads(candidate)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        return None
+
+
+def ai_lookup_book_metadata(client, title: str, author: str, model: str) -> dict:
+    """Look up illustrator / publisher / year for a book via Claude + web search.
+
+    Returns ``{"illustrator": str, "publisher": str, "year": Optional[int]}``,
+    using "Unknown" for anything not confidently found. Any failure degrades to
+    all-"Unknown" rather than raising — this is best-effort enrichment.
+    """
+    prompt = (
+        "You are cataloguing a children's picture book. Using web search, "
+        "identify the illustrator and publisher of this specific book, and its "
+        "year of first publication if you can confirm it.\n\n"
+        f"Title: {title}\n"
+        f"Author: {author or 'unknown'}\n\n"
+        "Reply with ONLY a JSON object of the form "
+        '{"illustrator": "...", "publisher": "...", "year": 1999}. '
+        'Use the string "Unknown" for any field you cannot confirm, and use '
+        'null for year if unknown. Do not guess.'
+    )
+    tools = [{"type": "web_search_20260209", "name": "web_search"}]
+    try:
+        messages = [{"role": "user", "content": prompt}]
+        response = client.messages.create(
+            model=model, max_tokens=1024, tools=tools, messages=messages
+        )
+        continuations = 0
+        while getattr(response, "stop_reason", None) == "pause_turn" and continuations < 3:
+            messages.append({"role": "assistant", "content": response.content})
+            response = client.messages.create(
+                model=model, max_tokens=1024, tools=tools, messages=messages
+            )
+            continuations += 1
+        text = "".join(
+            block.text for block in response.content if getattr(block, "type", None) == "text"
+        )
+        data = _extract_json_object(text) or {}
+    except Exception as exc:  # noqa: BLE001 - network/parse; degrade to Unknown, but surface why
+        print(f"    [ai-lookup] failed for {title!r}: {type(exc).__name__}: {exc}", file=sys.stderr)
+        data = {}
+
+    illustrator = str(data.get("illustrator") or "Unknown").strip() or "Unknown"
+    publisher = str(data.get("publisher") or "Unknown").strip() or "Unknown"
+    year = parse_year(data.get("year"))
+    return {"illustrator": illustrator, "publisher": publisher, "year": year}
+
+
+def ai_ocr_page(client, jpeg_bytes: bytes, model: str) -> str:
+    """OCR a rendered page image with Claude vision. Returns extracted text.
+
+    Degrades to "" on any failure (logged) rather than raising.
+    """
+    import base64
+
+    b64 = base64.standard_b64encode(jpeg_bytes).decode("utf-8")
+    prompt = (
+        "Transcribe the story text visible on this children's book page exactly "
+        "as written. Return only the transcribed text, with no commentary. If "
+        "there is no story text on the page, return an empty string."
+    )
+    try:
+        response = client.messages.create(
+            model=model,
+            max_tokens=2048,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/jpeg",
+                                "data": b64,
+                            },
+                        },
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
+        )
+        return "".join(
+            block.text for block in response.content if getattr(block, "type", None) == "text"
+        ).strip()
+    except Exception as exc:  # noqa: BLE001 - network/parse; degrade to blank, but surface why
+        print(f"    [ai-ocr] failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Backends.
+# ---------------------------------------------------------------------------
+
+class Backend:
+    """Interface for the two run modes (dry-run vs live)."""
+
+    def document_exists(self, collection: str, doc_id: str) -> bool:
+        raise NotImplementedError
+
+    def resolve_ref(self, ref: Optional[Ref]):
+        raise NotImplementedError
+
+    def write_document(self, collection: str, doc_id: str, data: dict) -> None:
+        raise NotImplementedError
+
+    def s3_put(self, path: str, data: bytes) -> None:
+        raise NotImplementedError
+
+
+class DryRunBackend(Backend):
+    """Writes nothing. ``document_exists`` reports absent so the plan is full."""
+
+    def document_exists(self, collection: str, doc_id: str) -> bool:
+        return False
+
+    def resolve_ref(self, ref: Optional[Ref]):
+        return ref  # rendered as "collection/id" by str()
+
+    def write_document(self, collection: str, doc_id: str, data: dict) -> None:  # noqa: D401
+        return None
+
+    def s3_put(self, path: str, data: bytes) -> None:  # noqa: D401
+        return None
+
+
+class LiveBackend(Backend):
+    """Real Firestore + S3 writes (mirrors data_cleanup.py's LiveBackend)."""
+
+    def __init__(self, secrets: dict):
+        import json as _json
+
+        from google.cloud import firestore
+        from google.oauth2 import service_account
+        import s3fs
+
+        firestore_key = secrets.get("firestore_key")
+        if not firestore_key:
+            raise KeyError("secrets is missing required 'firestore_key'")
+        key_info = _json.loads(firestore_key) if isinstance(firestore_key, str) else firestore_key
+        creds = service_account.Credentials.from_service_account_info(key_info)
+        self._db = firestore.Client(credentials=creds, project=FIRESTORE_PROJECT)
+
+        for required in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+            if required not in secrets:
+                raise KeyError(f"secrets is missing required '{required}'")
+        self._fs = s3fs.S3FileSystem(
+            anon=False,
+            key=secrets["AWS_ACCESS_KEY_ID"],
+            secret=secrets["AWS_SECRET_ACCESS_KEY"],
+        )
+
+    def document_exists(self, collection: str, doc_id: str) -> bool:
+        return self._db.collection(collection).document(doc_id).get().exists
+
+    def resolve_ref(self, ref: Optional[Ref]):
+        if ref is None:
+            return None
+        return self._db.collection(ref.collection).document(ref.doc_id)
+
+    def write_document(self, collection: str, doc_id: str, data: dict) -> None:
+        # Convert any pending Refs (scalar or in a list) to real references.
+        resolved = {}
+        for key, value in data.items():
+            if isinstance(value, Ref):
+                resolved[key] = self.resolve_ref(value)
+            elif isinstance(value, list):
+                resolved[key] = [
+                    self.resolve_ref(v) if isinstance(v, Ref) else v for v in value
+                ]
+            else:
+                resolved[key] = value
+        self._db.collection(collection).document(doc_id).set(resolved, merge=True)
+
+    def s3_put(self, path: str, data: bytes) -> None:
+        with self._fs.open(path, "wb") as fh:
+            fh.write(data)
+
+
+# ---------------------------------------------------------------------------
+# Secrets loading (mirrors scripts/data_cleanup.py).
+# ---------------------------------------------------------------------------
+
+def load_secrets(path: str) -> dict:
+    """Load ``.streamlit/secrets.toml`` directly (no Streamlit dependency)."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"secrets file not found: {path} (run from the project root, or pass "
+            "--secrets). This tool must run where the real secrets exist."
+        )
+    try:
+        import tomllib  # type: ignore
+
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except ModuleNotFoundError:
+        pass
+    try:
+        import tomli  # type: ignore
+
+        with open(path, "rb") as f:
+            return tomli.load(f)
+    except ModuleNotFoundError:
+        pass
+    import toml  # type: ignore
+
+    with open(path, "r", encoding="utf-8") as f:
+        return toml.load(f)
+
+
+# ---------------------------------------------------------------------------
+# Planning + execution.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Totals:
+    books: int = 0
+    books_skipped: int = 0
+    authors: set = field(default_factory=set)
+    illustrators: set = field(default_factory=set)
+    publishers: set = field(default_factory=set)
+    pages: int = 0
+    story_pages: int = 0
+    images: int = 0
+    characters: int = 0
+    aliases: int = 0
+    pages_text_layer: int = 0
+    pages_needing_ocr: int = 0
+
+
+def plan_and_run(args) -> int:
+    """Load sources, match, print the plan, and (with --execute) import."""
+    methods = args.methods_dir
+    excel_path = args.excel or os.path.join(methods, "Book-List-Final-NONA.xlsx")
+    db_path = args.db or os.path.join(methods, "character_database.db")
+    pdf_dir = args.pdf_dir or os.path.join(methods, "text_pdfs")
+    json_path = args.json or os.path.join(methods, "data", "book_dataframe.json")
+
+    for label, p in [("excel", excel_path), ("db", db_path)]:
+        if not os.path.exists(p):
+            print(f"ERROR: {label} not found: {p}", file=sys.stderr)
+            return 2
+    if not os.path.isdir(pdf_dir):
+        # Not fatal: books without a matching PDF simply get no page images or
+        # per-page text (this is also how individual missing-PDF books are
+        # handled). Warn so the operator knows images won't be imported.
+        print(f"WARNING: pdf dir not found ({pdf_dir}); no page images/pages "
+              f"will be imported.", file=sys.stderr)
+
+    print("=" * 78)
+    print(f"PILOT IMPORT — {'EXECUTE (LIVE WRITES)' if args.execute else 'DRY RUN (no writes)'}")
+    print("=" * 78)
+    print(f"  excel : {excel_path}")
+    print(f"  db    : {db_path}")
+    print(f"  pdfs  : {pdf_dir}")
+    print(f"  json  : {json_path}")
+    print()
+
+    excel_books = load_excel_books(excel_path)
+    db = load_db(db_path)
+    pdf_map, pdf_dups = load_pdfs(pdf_dir)
+    json_text = load_json_text(json_path)
+
+    excel_norms = {b.norm for b in excel_books}
+    db_norms = set(db.characters_by_book)
+    pdf_norms = set(pdf_map)
+
+    # --- Coverage / discrepancy report ------------------------------------
+    print("SOURCE COVERAGE")
+    print(f"  excel books (unique titles) : {len(excel_norms)}")
+    print(f"  db books (with characters)  : {len(db_norms)}")
+    print(f"  pdf files (unique titles)   : {len(pdf_norms)}")
+    print(f"  json text entries           : {len(json_text)}")
+    print()
+
+    missing_pdf = sorted(b.title for b in excel_books if b.norm not in pdf_norms)
+    missing_db = sorted(b.title for b in excel_books if b.norm not in db_norms)
+    pdf_not_in_excel = sorted(pdf_map[n] for n in pdf_norms - excel_norms)
+    db_not_in_excel = sorted(n for n in db_norms - excel_norms)
+    pdf_not_in_db = sorted(pdf_map[n] for n in pdf_norms - db_norms)
+
+    print("GAPS / DISCREPANCIES")
+    print(f"  excel titles with NO pdf ({len(missing_pdf)}):")
+    for t in missing_pdf:
+        print(f"      - {t}")
+    print(f"  excel titles with NO db characters ({len(missing_db)}):")
+    for t in missing_db:
+        print(f"      - {t}")
+    print(f"  pdf files with NO excel row ({len(pdf_not_in_excel)}):")
+    for t in pdf_not_in_excel:
+        print(f"      - {os.path.basename(t)}")
+    print(f"  db books with NO excel row ({len(db_not_in_excel)}):")
+    for t in db_not_in_excel:
+        print(f"      - {t}")
+    print(f"  pdf files with NO db characters ({len(pdf_not_in_db)}):")
+    for t in pdf_not_in_db:
+        print(f"      - {os.path.basename(t)}")
+    print(f"  duplicate pdf filename groups ({len(pdf_dups)}):")
+    for norm, files in pdf_dups:
+        print(f"      - {files}")
+    print(f"  db 'human' anomalies (not H/NH) ({len(db.human_anomalies)}):")
+    for row in db.human_anomalies:
+        print(f"      - book={row['book_raw']!r} name={row['name']!r} human={row['human']!r}")
+    multi_author = [
+        b for b in excel_books
+        if " and " in f" {b.author.lower()} " or "/" in b.author_gender_code
+    ]
+    print(f"  multi-author / ambiguous author-gender rows ({len(multi_author)}):")
+    for b in multi_author:
+        print(f"      - {b.title!r} author={b.author!r} gender_code={b.author_gender_code!r}")
+    print(
+        "  NOTE: character 'plural' has no source in the sheet or DB -> "
+        "defaulted to False for every character."
+    )
+    print()
+
+    # --- Backend + AI client ---------------------------------------------
+    backend: Backend
+    ai_client = None
+    if args.execute:
+        secrets = load_secrets(args.secrets)
+        backend = LiveBackend(secrets)
+        if "ANTHROPIC_API_KEY" in secrets:
+            import anthropic
+
+            ai_client = anthropic.Anthropic(api_key=secrets["ANTHROPIC_API_KEY"])
+        else:
+            print("WARNING: no ANTHROPIC_API_KEY in secrets; illustrator/publisher "
+                  "lookup and OCR fallback will use 'Unknown'/blank.", file=sys.stderr)
+    else:
+        backend = DryRunBackend()
+        # In dry-run we optionally build a client only to demonstrate a sample
+        # lookup, using secrets if they happen to be present.
+        if args.sample_ai and os.path.exists(args.secrets):
+            try:
+                secrets = load_secrets(args.secrets)
+                if "ANTHROPIC_API_KEY" in secrets:
+                    import anthropic
+
+                    ai_client = anthropic.Anthropic(api_key=secrets["ANTHROPIC_API_KEY"])
+            except Exception as exc:  # noqa: BLE001 - sample only; never fatal in dry-run
+                print(f"  (sample AI unavailable: {type(exc).__name__}: {exc})")
+
+    now = datetime.now(timezone.utc)
+    totals = Totals()
+
+    matched = [
+        b for b in excel_books
+        if b.norm in pdf_norms or b.norm in db_norms or b.norm in excel_norms
+    ]
+    if args.limit:
+        matched = matched[: args.limit]
+
+    sample_ai_budget = args.sample_ai if not args.execute else 10 ** 9
+    sample_ai_done = 0
+
+    for book in matched:
+        book_id = book_document_id(book.title)
+        if backend.document_exists("books", book_id):
+            totals.books_skipped += 1
+            print(f"SKIP (exists): {book.title}  [{book_id}]")
+            continue
+
+        db_chars = db.characters_by_book.get(book.norm, [])
+        db_aliases = db.aliases_by_book.get(book.norm, [])
+        pdf_path = pdf_map.get(book.norm)
+
+        # AI illustrator/publisher/year lookup (best effort). In dry-run only a
+        # small sample is actually called; the rest are planned as 'Unknown'.
+        do_lookup = ai_client is not None and (args.execute or sample_ai_done < sample_ai_budget)
+        if do_lookup:
+            meta = ai_lookup_book_metadata(ai_client, book.title, book.author, args.lookup_model)
+            if not args.execute:
+                sample_ai_done += 1
+        else:
+            meta = {"illustrator": "Unknown", "publisher": "Unknown", "year": None}
+
+        published = book.published if book.published is not None else meta["year"]
+        illustrator_name = meta["illustrator"]
+        publisher_name = meta["publisher"]
+
+        book_ref = Ref("books", book_id)
+
+        # Author.
+        author_ref = None
+        if book.author:
+            forename, surname = split_name(book.author)
+            author_id = person_document_id(book.author)
+            author_ref = Ref("authors", author_id)
+            totals.authors.add(author_id)
+            backend.write_document(
+                "authors",
+                author_id,
+                build_author_doc(forename, surname, map_author_gender(book.author_gender_code), now),
+            )
+
+        # Illustrator.
+        illustrator_ref = None
+        if illustrator_name and illustrator_name != "Unknown":
+            ill_id = person_document_id(illustrator_name)
+            illustrator_ref = Ref("illustrators", ill_id)
+            totals.illustrators.add(ill_id)
+            backend.write_document("illustrators", ill_id, build_named_doc(illustrator_name, now))
+
+        # Publisher.
+        publisher_ref = None
+        if publisher_name and publisher_name != "Unknown":
+            pub_id = person_document_id(publisher_name)
+            publisher_ref = Ref("publishers", pub_id)
+            totals.publishers.add(pub_id)
+            backend.write_document("publishers", pub_id, build_named_doc(publisher_name, now))
+
+        # Characters.
+        character_refs: list = []
+        char_index_to_docid: dict = {}
+        seen_char_ids: set = set()
+        char_plans: list = []
+        for row in db_chars:
+            char_id = character_document_id(book_id, row["name"])
+            if char_id in seen_char_ids:
+                continue
+            seen_char_ids.add(char_id)
+            human, _ = map_human(row["human"])
+            gender = map_character_gender(row["gender"])
+            backend.write_document(
+                "characters",
+                char_id,
+                build_character_doc(
+                    book_ref=book_ref,
+                    name=row["name"],
+                    gender=gender,
+                    protagonist=bool(row["is_protagonist"]),
+                    human=human,
+                    now=now,
+                ),
+            )
+            character_refs.append(Ref("characters", char_id))
+            char_index_to_docid[row["index"]] = char_id
+            totals.characters += 1
+            char_plans.append(
+                f"{row['name']} (g={gender}, human={human}, protag={bool(row['is_protagonist'])})"
+            )
+
+        # Aliases (link to the character resolved via character_id).
+        alias_plans: list = []
+        for arow in db_aliases:
+            target_docid = char_index_to_docid.get(arow["character_id"])
+            if target_docid is None:
+                alias_plans.append(
+                    f"{arow['alias']!r} -> UNRESOLVED character_id={arow['character_id']}"
+                )
+                continue
+            alias_id = alias_document_id(book_id, arow["alias"])
+            backend.write_document(
+                "aliases",
+                alias_id,
+                build_alias_doc(
+                    character_ref=Ref("characters", target_docid),
+                    book_ref=book_ref,
+                    name=arow["alias"],
+                    now=now,
+                ),
+            )
+            totals.aliases += 1
+            alias_plans.append(f"{arow['alias']!r} -> {arow['character']!r}")
+
+        # Pages (render every physical PDF page; text for story pages).
+        page_count = 0
+        story_page_count = 0
+        pdf_analysis = None
+        sample_page_text = None
+        if pdf_path:
+            pdf_analysis = analyse_pdf(pdf_path)
+            page_count = pdf_analysis["page_count"]
+            page_texts = pdf_analysis["page_texts"]
+            totals.pages_text_layer += pdf_analysis["text_layer_pages"]
+
+            if args.execute:
+                import pypdfium2 as pdfium
+
+                pdf_doc = pdfium.PdfDocument(pdf_path)
+                try:
+                    for i in range(page_count):
+                        page_number = i + 1
+                        in_story = is_story_page(page_number, book.page_range)
+                        jpeg = render_page_jpeg(pdf_doc, i, args.max_edge, args.jpeg_quality)
+                        backend.s3_put(s3_page_path(book.title, page_number), jpeg)
+                        totals.images += 1
+
+                        text = ""
+                        if in_story:
+                            layer = page_texts[i] if i < len(page_texts) else ""
+                            if len(layer) >= TEXT_LAYER_MIN_CHARS:
+                                text = layer
+                            elif ai_client is not None:
+                                text = ai_ocr_page(ai_client, jpeg, args.ocr_model)
+                                totals.pages_needing_ocr += 1
+                            story_page_count += 1
+                        backend.write_document(
+                            "pages",
+                            page_document_id(book_id, page_number),
+                            build_page_doc(
+                                book_ref=book_ref,
+                                page_number=page_number,
+                                contains_story=in_story,
+                                text=text,
+                                now=now,
+                            ),
+                        )
+                        totals.pages += 1
+                finally:
+                    pdf_doc.close()
+            else:
+                # Dry-run accounting: count planned pages / story pages / OCR
+                # needs without rendering or writing.
+                for i in range(page_count):
+                    if is_story_page(i + 1, book.page_range):
+                        story_page_count += 1
+                        layer = page_texts[i] if i < len(page_texts) else ""
+                        if len(layer) < TEXT_LAYER_MIN_CHARS:
+                            totals.pages_needing_ocr += 1
+                totals.pages += page_count
+                totals.images += page_count
+                for i, txt in enumerate(page_texts):
+                    if is_story_page(i + 1, book.page_range) and txt:
+                        sample_page_text = (i + 1, txt[:120])
+                        break
+
+        totals.story_pages += story_page_count
+        totals.books += 1
+
+        # --- Per-book plan line ------------------------------------------
+        print(f"BOOK: {book.title}  [{book_id}]")
+        print(f"    author      : {book.author or '(none)'} "
+              f"-> gender {map_author_gender(book.author_gender_code)}")
+        print(f"    illustrator : {illustrator_name}{'  (AI)' if do_lookup else ''}")
+        print(f"    publisher   : {publisher_name}{'  (AI)' if do_lookup else ''}")
+        print(f"    published   : {published if published is not None else '(unknown)'}")
+        print(f"    page range  : {book.page_range or '(all pages)'}")
+        print(f"    pdf         : {os.path.basename(pdf_path) if pdf_path else 'NONE (no images/pages)'}")
+        if pdf_analysis:
+            print(f"    pages       : {page_count} total, {story_page_count} story, "
+                  f"text-layer {pdf_analysis['text_layer_pages']} / "
+                  f"image-only {pdf_analysis['image_only_pages']}")
+        print(f"    characters  : {len(character_refs)}")
+        for line in char_plans:
+            print(f"        - {line}")
+        print(f"    aliases     : {len(alias_plans)}")
+        for line in alias_plans:
+            print(f"        - {line}")
+        if sample_page_text and not args.execute:
+            print(f"    sample text : page {sample_page_text[0]}: {sample_page_text[1]!r}")
+        print()
+
+    # --- Corpus totals ----------------------------------------------------
+    print("=" * 78)
+    print("TOTALS")
+    print("=" * 78)
+    print(f"  books to import   : {totals.books}")
+    print(f"  books skipped     : {totals.books_skipped} (already in Firestore)")
+    print(f"  authors           : {len(totals.authors)}")
+    print(f"  illustrators      : {len(totals.illustrators)}")
+    print(f"  publishers        : {len(totals.publishers)}")
+    print(f"  pages             : {totals.pages}  ({totals.story_pages} story)")
+    print(f"  page images (S3)  : {totals.images}")
+    print(f"  characters        : {totals.characters}")
+    print(f"  aliases           : {totals.aliases}")
+    print(f"  story pages w/ text layer   : {totals.pages_text_layer}")
+    print(f"  story pages needing AI OCR  : {totals.pages_needing_ocr}")
+    print()
+    if not args.execute:
+        print("DRY RUN complete — nothing was written to Firestore or S3.")
+        print("Re-run with --execute (where the real secrets exist) to import.")
+    else:
+        print("EXECUTE complete — records written to Firestore + S3.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# CLI.
+# ---------------------------------------------------------------------------
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description="Import the fair-tales-methods pilot corpus into Firestore + S3 (dry-run by default).",
+    )
+    p.add_argument(
+        "--methods-dir",
+        default="../fair-tales-methods",
+        help="Path to the fair-tales-methods checkout (default: ../fair-tales-methods).",
+    )
+    p.add_argument("--excel", help="Override path to Book-List-Final-NONA.xlsx.")
+    p.add_argument("--db", help="Override path to character_database.db.")
+    p.add_argument("--pdf-dir", help="Override path to the text_pdfs directory.")
+    p.add_argument("--json", help="Override path to data/book_dataframe.json.")
+    p.add_argument(
+        "--secrets",
+        default=DEFAULT_SECRETS,
+        help=f"Path to .streamlit/secrets.toml (default: {DEFAULT_SECRETS}).",
+    )
+    p.add_argument(
+        "--execute",
+        action="store_true",
+        help="Perform the real import (writes to Firestore + S3). Omit for a dry run.",
+    )
+    p.add_argument(
+        "--limit", type=int, default=0, help="Only process the first N matched books (0 = all)."
+    )
+    p.add_argument(
+        "--sample-ai",
+        type=int,
+        default=1,
+        help="In a dry run, run this many real AI illustrator/publisher lookups as a sample (default 1; 0 disables).",
+    )
+    p.add_argument("--lookup-model", default=DEFAULT_LOOKUP_MODEL, help="Claude model for the book-metadata web lookup.")
+    p.add_argument("--ocr-model", default=DEFAULT_OCR_MODEL, help="Claude model for per-page OCR fallback.")
+    p.add_argument("--max-edge", type=int, default=DEFAULT_MAX_EDGE, help="Longest-edge px when rendering page JPEGs.")
+    p.add_argument("--jpeg-quality", type=int, default=DEFAULT_JPEG_QUALITY, help="JPEG quality for page images.")
+    return p
+
+
+def main(argv: Optional[list] = None) -> int:
+    args = build_arg_parser().parse_args(argv)
+    return plan_and_run(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
