@@ -130,10 +130,11 @@ DEFAULT_LOOKUP_MODEL = "claude-opus-4-8"
 #: layer. Overridable via --ocr-model.
 DEFAULT_OCR_MODEL = "claude-opus-4-8"
 
-#: Claude model used for the per-page junk-character clean-up pass. Cleaning is a
-#: mechanical strip-the-garbage task (NOT spelling correction), so it defaults to
-#: a fast, cheap model. Overridable via --clean-model.
-DEFAULT_CLEAN_MODEL = "claude-haiku-4-5"
+#: Claude model used for the per-page clean-up + coherence/context judgement. The
+#: garbage-strip is mechanical, but the makes_sense / fits_context judgement is a
+#: reasoning task, so this defaults to a mid-tier model. Overridable via
+#: --clean-model.
+DEFAULT_CLEAN_MODEL = "claude-sonnet-4-6"
 
 #: Guard for the AI clean-up pass: a cleaned page whose word-overlap similarity
 #: to the original falls below this is treated as a rewrite/hallucination and
@@ -895,40 +896,49 @@ def ai_lookup_book_metadata(client, title: str, author: str, model: str) -> dict
 
 
 def ai_ocr_page(client, jpeg_bytes: bytes, model: str) -> str:
-    """OCR a rendered page image with Claude vision. Returns extracted text.
+    """OCR a rendered page image with Claude vision. Returns the page text.
 
-    Degrades to "" on any failure (logged) rather than raising.
+    Uses a **structured** reply — ``{"has_text": bool, "text": str}`` — so a
+    wordless page is declared explicitly via ``has_text=false`` instead of
+    relying on the model to "return nothing" (which it tends to disobey by
+    narrating "this page is a wordless illustration…", polluting the text). When
+    ``has_text`` is false the transcription is discarded and ``""`` is returned.
+    Degrades to ``""`` on any failure (logged) rather than raising.
     """
     import base64
 
     b64 = base64.standard_b64encode(jpeg_bytes).decode("utf-8")
     prompt = (
         "You are transcribing the text from a single page of a printed "
-        "children's picture book. Transcribe ALL of the book's text that appears "
-        "on this page, exactly as printed.\n\n"
-        "Important guidance:\n"
-        "- This is a children's picture book, so the typography is often "
-        "irregular: decorative, hand-drawn or unusual fonts, widely varying "
-        "sizes, coloured text on busy illustrations, text that curves or sits at "
-        "an angle, words woven into the artwork, speech bubbles, and large "
-        "sound-effect words (e.g. 'SPLASH!', 'WHOOSH', 'Ker-BOOM'). Read all of "
-        "it.\n"
+        "children's picture book.\n\n"
+        "Transcribe ALL of the book's OWN text that appears on this page, exactly "
+        "as printed, with this guidance:\n"
+        "- Picture-book typography is often irregular: decorative, hand-drawn or "
+        "unusual fonts, widely varying sizes, coloured text over busy "
+        "illustrations, text that curves or sits at an angle, speech bubbles, and "
+        "large sound-effect words (e.g. 'SPLASH!', 'WHOOSH', 'Ker-BOOM'). Read "
+        "all of it.\n"
         "- The page or its text may be rotated or skewed; read it in its correct "
-        "reading orientation.\n"
+        "upright reading orientation.\n"
         "- Transcribe the exact wording, spelling, capitalisation and punctuation "
         "as printed. Children's books deliberately use invented words, made-up "
-        "names, onomatopoeia and non-standard spelling — preserve these verbatim "
-        "and do NOT correct or standardise them.\n"
-        "- Preserve the reading order and keep line breaks roughly as they "
-        "appear on the page.\n"
-        "- Transcribe only the book's own text (story, dialogue, captions, "
-        "sound words). Do NOT transcribe page numbers, running heads, or "
-        "publisher / copyright / ISBN / barcode text, and do NOT describe the "
-        "illustrations or add any commentary of your own.\n"
-        "- If the page genuinely has no book text on it (for example a wholly "
-        "wordless illustration), reply with nothing at all — no characters, not "
-        "even quotation marks or a placeholder.\n\n"
-        "Return only the transcribed text."
+        "names, onomatopoeia and non-standard spelling — preserve these verbatim; "
+        "do NOT correct or standardise them.\n"
+        "- Preserve the reading order and keep line breaks roughly as printed.\n"
+        "- Transcribe ONLY the book's narrative text (story, dialogue, captions, "
+        "sound words). Do NOT transcribe page numbers or running heads, publisher "
+        "/ copyright / ISBN / barcode text, or text that is part of the "
+        "illustration artwork (e.g. signposts, shop names, labels).\n\n"
+        "Decide whether the page contains any of the book's own text at all. Many "
+        "picture-book pages are WORDLESS full illustrations — that is normal and "
+        "expected.\n\n"
+        "Respond with ONLY a JSON object, no code fences and no commentary:\n"
+        '{"has_text": true or false, "text": "<the exact transcription, or an '
+        'empty string>"}\n\n'
+        "If the page has no book text (a wordless illustration), set "
+        '"has_text" to false and "text" to "". NEVER put a description, '
+        "explanation or note about the page into the text field — the text field "
+        "must contain only the book's transcribed words and nothing else."
     )
     try:
         response = client.messages.create(
@@ -951,12 +961,25 @@ def ai_ocr_page(client, jpeg_bytes: bytes, model: str) -> str:
                 }
             ],
         )
-        return "".join(
+        raw = "".join(
             block.text for block in response.content if getattr(block, "type", None) == "text"
         ).strip()
     except Exception as exc:  # noqa: BLE001 - network/parse; degrade to blank, but surface why
         print(f"    [ai-ocr] failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return ""
+
+    data = _extract_json_object(raw)
+    if data is None:
+        # Structured reply missing. Rather than risk storing narration, only keep
+        # a plain-text reply if it does not look like a "no text" note.
+        print("    [ai-ocr] non-JSON reply; salvaging cautiously", file=sys.stderr)
+        lowered = raw.lower()
+        if any(p in lowered for p in ("no text", "no book text", "wordless", "no visible text", "appears to be")):
+            return ""
+        return normalise_blank_text(raw)
+    if not data.get("has_text"):
+        return ""
+    return normalise_blank_text(str(data.get("text") or ""))
 
 
 def derive_review(makes_sense: bool, fits_context: bool) -> tuple[bool, str]:
@@ -1019,17 +1042,34 @@ def ai_clean_and_judge(
         "non-standard spelling, invented words and playful sounds, and every real "
         "word MUST be preserved exactly as written. Preserve line breaks and the "
         "reading order. If it is already clean, keep it unchanged.\n\n"
-        "2. Judge makes_sense: does THIS PAGE's cleaned text read as sensible, "
-        "intact text for a page of a children's story (NOT garbled, jumbled, "
-        "out of order, truncated mid-word, or a mix of unrelated fragments)? "
-        "Ordinary short, sparse or playful picture-book text is fine; an empty "
-        "page (a wordless illustration) is NOT by itself garbled, so treat empty "
-        "text as makes_sense=true.\n\n"
-        "3. Judge fits_context: does THIS PAGE follow on sensibly from the "
-        "previous page and lead into the next page (allowing for normal story "
-        "progression and page turns)? If this page is empty but the story still "
-        "flows naturally across it, that fits; if it looks like text is missing "
-        "or scrambled relative to the neighbours, it does not.\n\n"
+        "2. Judge makes_sense (a property of THIS PAGE on its own). This is TRUE "
+        "when the cleaned text reads as genuine, intact language from a "
+        "children's picture-book story: it forms real, readable words and "
+        "phrases that a person could read aloud as part of a story — even if it "
+        "is very short, sparse, rhyming, repetitive, playful, a single line of "
+        "dialogue, or just a big sound-effect word like 'SPLASH!'. It is FALSE "
+        "only when the text is not usable story text: garbled or scrambled "
+        "characters, random disconnected word-fragments, obvious OCR nonsense or "
+        "mojibake, text duplicated or looping on itself, a line cut off "
+        "mid-word, or an editorial description/note ABOUT the page (e.g. 'this "
+        "page is a wordless illustration') rather than the story's own words. An "
+        "EMPTY page (a wordless illustration — very common and completely normal "
+        "in picture books) is not garbled, so treat empty text as "
+        "makes_sense=true.\n\n"
+        "3. Judge fits_context (how THIS PAGE sits between its neighbours). This "
+        "is TRUE when the page belongs naturally in the story at this point: the "
+        "narrative reads continuously from the previous page, through this page, "
+        "into the next page, allowing for the normal way picture books work — "
+        "page turns, scene changes, a new character or setting being introduced, "
+        "and refrains or repeated phrases that recur across pages. It is FALSE "
+        "when this page clearly does not belong here: the text reads as if it "
+        "came from a different book or a different part of the story, it "
+        "introduces characters or events that contradict the surrounding pages, "
+        "it abruptly repeats or duplicates a neighbouring page's wording, or the "
+        "page is EMPTY at a point where the story plainly continues so that text "
+        "appears to be MISSING (an OCR miss). If this page is empty but the "
+        "surrounding pages still flow together sensibly across it (a genuine "
+        "wordless spread), that DOES fit.\n\n"
         "Respond with ONLY a JSON object (no code fences, no commentary):\n"
         '{"cleaned_text": "<this page cleaned>", "makes_sense": true or false, '
         '"fits_context": true or false, "review_note": "<short reason if either '
