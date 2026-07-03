@@ -36,7 +36,7 @@ class Alerts:
     """
 
     no_user_books = """
-        You currently have no books to edit! Please use the `Add a Book` option from the menu to start
+        You currently have no books to edit! Please use the `Add book` option from the menu to start
         entering a book.
     """
 
