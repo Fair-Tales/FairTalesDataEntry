@@ -8,11 +8,12 @@ from utilities import (
     check_authentication_status,
     FirestoreWrapper,
     is_admin,
+    is_team_or_above,
     resolve_role,
     VALID_ROLES,
     ROLE_ADMIN,
 )
-from text_content import FeedbackExport, Admin, ReconstructOrphans
+from text_content import FeedbackExport, Admin
 
 check_authentication_status()
 
@@ -27,9 +28,6 @@ page_layout()
 st.title(Admin.title)
 
 st.page_link("pages/validation.py", label=Admin.validation_link_label)
-st.page_link(
-    "pages/reconstruct_orphans.py", label=ReconstructOrphans.header
-)
 st.divider()
 
 # ---------------------------------------------------------------------------
@@ -275,3 +273,18 @@ if st.button(FeedbackExport.prepare_button, key="admin_prepare_feedback_button")
                 mime="text/csv",
                 key="admin_download_feedback_button"
             )
+
+# ---------------------------------------------------------------------------
+# Reconstruct orphaned books (#141). Moved off the sidebar to the bottom of the
+# Admin page. The link is shown to team members and admins; the target page keeps
+# its own is_team_or_above gating. (This page already requires admin to render,
+# so the guard is always true here, but it documents the intended access tier and
+# stays correct if the page's gating is ever relaxed.)
+if is_team_or_above():
+    st.divider()
+    st.header(Admin.reconstruct_section_header)
+    st.write(Admin.reconstruct_section_description)
+    st.page_link(
+        "pages/reconstruct_orphans.py",
+        label=Admin.reconstruct_link_label,
+    )

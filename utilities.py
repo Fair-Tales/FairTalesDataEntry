@@ -239,28 +239,53 @@ def page_layout(current_page=None):
     st.markdown(_HIDE_DEFAULT_NAV_CSS, unsafe_allow_html=True)
     if current_page:
         st.session_state['_current_page'] = current_page
-    st.sidebar.page_link("pages/login.py", label="Login")
-    st.sidebar.page_link("pages/landing.py", label="Home")
-    st.sidebar.page_link("pages/priority_books.py", label="Books We Need")
-    st.sidebar.page_link("pages/account_settings.py", label="Settings")
-    st.sidebar.page_link("pages/donate.py", label="Donate")
-    st.sidebar.page_link("pages/report_feedback.py", label="Report a Bug / Feature")
+
+    # Sidebar labels live in text_content (Nav); the Ko-fi URL in text_content
+    # (Donate). Imported lazily to match this module's text_content usage and
+    # avoid any import-time coupling.
+    from text_content import Nav, Donate
+
+    if not is_authenticated():
+        # Logged-out sidebar (#137): ONLY Login and Donate — no Home / Books We
+        # Need / Settings / Report. Donate links straight to Ko-fi (external URL,
+        # opens a new tab) so a visitor can donate without an account; it does not
+        # route through the donate.py page (which requires auth).
+        st.sidebar.page_link("pages/login.py", label=Nav.login)
+        st.sidebar.page_link(Donate.url, label=Nav.donate)
+        return
+
+    # Authenticated sidebar. The auth item reads 'Sign out' (not 'Login') and
+    # points at login.py, which renders the sign-out view when authenticated (#138).
+    st.sidebar.page_link("pages/login.py", label=Nav.sign_out)
+    st.sidebar.page_link("pages/landing.py", label=Nav.home)
+    st.sidebar.page_link("pages/priority_books.py", label=Nav.books_we_need)
+    st.sidebar.page_link("pages/account_settings.py", label=Nav.settings)
+    # Donate is a direct external Ko-fi link everywhere (#137); the donate.py page
+    # is retained but no longer linked from the sidebar.
+    st.sidebar.page_link(Donate.url, label=Nav.donate)
+    st.sidebar.page_link("pages/report_feedback.py", label=Nav.report)
     # Team members and admins can reach data validation straight from the sidebar
     # (#47/#83); admin-only tools (the Admin page) stay hidden from team members.
+    # 'Reconstruct orphaned books' has moved off the sidebar to the bottom of the
+    # Admin page (#141).
     role = st.session_state.get('role', 'archivist')
     is_admin_user = st.session_state.get('admin', False) or role == 'admin'
     if is_admin_user or role == 'team':
-        st.sidebar.page_link("pages/validation.py", label="Data validation")
-        st.sidebar.page_link(
-            "pages/reconstruct_orphans.py", label="Reconstruct orphaned books"
-        )
+        st.sidebar.page_link("pages/validation.py", label=Nav.data_validation)
     if is_admin_user:
-        st.sidebar.page_link("pages/admin.py", label="Admin")
+        st.sidebar.page_link("pages/admin.py", label=Nav.admin)
+
+    # Unobtrusive current-user caption (#140) so a user notices a wrong account.
+    # Rendered after the links and before Back so it never disrupts the layout.
+    username = st.session_state.get('username', '')
+    if username:
+        st.sidebar.caption(Nav.signed_in_as.format(username=username))
+
     history = st.session_state.get('_page_history', [])
     # Hide Back during the guided book sub-entry flow (add author/illustrator/
     # publisher): returning to add_book.py would just re-forward here. Use Cancel.
     if history and not st.session_state.get('adding_book_entries', False):
-        if st.sidebar.button("← Back", key="sidebar_back_button"):
+        if st.sidebar.button(Nav.back, key="sidebar_back_button"):
             go_back()
 
 

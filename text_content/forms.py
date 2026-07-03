@@ -780,6 +780,29 @@ class Login:
     accept_checkbox = "Accept"
 
 
+class Nav:
+    """Sidebar navigation labels (utilities.page_layout).
+
+    Kept out of page bodies so the sidebar reads from one place (#137/#138/#140).
+    """
+
+    # Auth toggle: 'Login' when logged out, 'Sign out' when logged in (#138).
+    login = "Login"
+    sign_out = "Sign out"
+    # Logged-out sidebar shows only Login + Donate (#137).
+    donate = "Donate"
+    # Authenticated sidebar links.
+    home = "Home"
+    books_we_need = "Books We Need"
+    settings = "Settings"
+    report = "Report a Bug / Feature"
+    data_validation = "Data validation"
+    admin = "Admin"
+    back = "← Back"
+    # Unobtrusive current-user caption so a wrong account is noticed (#140).
+    signed_in_as = "Signed in as {username}"
+
+
 class BookEditHome:
     """Strings for the book edit/home page (pages/book_edit_home.py)."""
 
@@ -810,6 +833,15 @@ class Admin:
     not_admin = "This page is only accessible to admin users."
     title = "Admin"
     validation_link_label = "→ Go to data validation"
+
+    # Reconstruct-orphans section, moved out of the sidebar to the bottom of this
+    # page (#141). The reconstruct page itself stays team-and-above gated.
+    reconstruct_section_header = "Reconstruct orphaned books"
+    reconstruct_section_description = (
+        "Rebuild a book from a storage folder of page photos that has no matching "
+        "book record. Opens the reconstruction tool (team members and admins)."
+    )
+    reconstruct_link_label = "→ Reconstruct orphaned books"
 
     user_data_header = "User data"
     user_data_description = "Download all available fields for confirmed users (excluding sensitive fields such as password and confirmation token) for analysis."
