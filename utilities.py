@@ -579,13 +579,16 @@ _PERSON_GENDER_OPTIONS = ("Woman", "Man", "Non-binary", "Other", "Unknown")
 
 
 def _parse_person_details(response):
-    """Extract a validated ``{'birth_year', 'gender'}`` dict from a lookup
-    response, robustly (#113).
+    """Extract a validated ``{'gender'}`` dict from a lookup response, robustly
+    (#113/#149).
 
     A web-search reply may narrate before emitting the JSON, so this walks the
     text blocks (preferring the final one), strips any markdown fence and, when
     the whole block still isn't valid JSON, falls back to extracting the first
     ``{...}`` object. Returns ``None`` when no JSON payload can be recovered.
+
+    The lookup is gender-only now that author/illustrator date of birth has
+    been dropped (#149); any ``birth_year`` the model emits is ignored.
     """
     texts = [
         block.text for block in response.content
@@ -614,34 +617,25 @@ def _parse_person_details(response):
     if not isinstance(data, dict):
         return None
 
-    birth_year = data.get("birth_year")
-    try:
-        birth_year = int(birth_year) if birth_year is not None else None
-    except (ValueError, TypeError):
-        birth_year = None
-    # Discard an implausible year rather than store a confident wrong guess (#113).
-    if birth_year is not None and not (1000 <= birth_year <= datetime.now(timezone.utc).year):
-        birth_year = None
-
     gender = data.get("gender", "Unknown")
     if gender not in _PERSON_GENDER_OPTIONS:
         gender = "Unknown"
 
-    return {"birth_year": birth_year, "gender": gender}
+    return {"gender": gender}
 
 
 def lookup_person_details(name, role, client, book_title=None):
-    """Use Claude + web search to suggest birth year and gender for a named person.
+    """Use Claude + web search to suggest the gender of a named person.
 
     When known, ``book_title`` is passed to the model as disambiguating context
     ("<role> of the children's book '<title>'") so common names resolve to the
-    right person (#113).
+    right person (#113). Date of birth is no longer looked up (#149) — the forms
+    only consume gender.
 
-    Returns a dict with 'birth_year' (int or None) and 'gender' (str from
+    Returns a dict with 'gender' (str from
     AuthorForm/IllustratorForm.gender_options), or None on any failure. A clean
-    "no reliable info found" result is returned as
-    ``{'birth_year': None, 'gender': 'Unknown'}`` rather than a confident wrong
-    guess.
+    "no reliable info found" result is returned as ``{'gender': 'Unknown'}``
+    rather than a confident wrong guess.
     """
     from text_content import AIPrompts
 

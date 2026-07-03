@@ -1,7 +1,6 @@
 import streamlit as st
 from text_content import IllustratorForm
 from .base_structure import DataStructureBase, Field
-from datetime import date
 
 
 class Illustrator(DataStructureBase):
@@ -10,7 +9,6 @@ class Illustrator(DataStructureBase):
         'is_registered': False,
         'forename': "",
         'surname': "",
-        'birth_year': None,
         'gender': "",
         'entered_by': None,
         'datetime_created': -1,
@@ -24,7 +22,6 @@ class Illustrator(DataStructureBase):
     form_fields = {
         'forename': 'First name(s)',
         'surname': 'Surname',
-        'birth_year': 'Birth year',
         'gender': 'Gender'
     }
 
@@ -60,11 +57,10 @@ class Illustrator(DataStructureBase):
             key=f"illustrator_form_surname_{key_suffix}"
         ).strip()
 
-        # Apply any suggestion stored by a previous "Look up" click
+        # Apply any suggestion stored by a previous "Look up" click. The lookup
+        # is gender-only now that illustrator date of birth has been dropped (#149).
         _suggestion = st.session_state.pop('_illustrator_lookup_suggestion', None)
         if _suggestion:
-            if _suggestion.get('birth_year'):
-                self.birth_year = _suggestion['birth_year']
             if _suggestion.get('gender'):
                 self.gender = _suggestion['gender']
         # Feedback from a previous "Look up" click that didn't produce a result.
@@ -72,26 +68,6 @@ class Illustrator(DataStructureBase):
             st.warning(IllustratorForm.lookup_failed)
         if st.session_state.pop('_illustrator_lookup_no_name', None):
             st.warning(IllustratorForm.lookup_no_name)
-
-        year_options = [-1, -2] + [y for y in range(1900, (date.today().year + 1))]
-        if self.birth_year and self.birth_year in year_options:
-            year_index = year_options.index(self.birth_year)
-        else:
-            year_index = 0
-
-        year_given = int(st.selectbox(
-            IllustratorForm.birth_year_label,
-            options=year_options,
-            index=year_index,
-            placeholder=IllustratorForm.birth_year_placeholder,
-            format_func=lambda x: IllustratorForm.birth_year_unknown if x == -1 else (IllustratorForm.birth_year_earlier if x == -2 else str(x)),
-            key=f"illustrator_form_birth_year_{key_suffix}"
-        ))
-
-        if year_given > 0:
-            self.birth_year = year_given
-        else:
-            self.birth_year = None
 
         st.write(IllustratorForm.gender_prompt)
         gender_index = 0

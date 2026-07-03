@@ -72,11 +72,12 @@ class AuthorForm:
     header = "Please enter author details."
     gender_options = ["Woman", "Man", "Non-binary", "Other", "Unknown"]
     gender_prompt = """
-        Click "Look up birth year and gender" to auto-fill these fields using web search,
+        Click "Look up gender" to auto-fill the gender using web search,
         or select manually. If it is not clear, please select `Unknown`.
     """
     lookup_help = (
-        "Use AI web search to suggest birth year and gender based on the name entered above."
+        "Use AI web search to suggest the author's gender based on the name entered "
+        "above (and the book title, when known, to identify the right person)."
     )
     author_exists = """
         This author already exists in the database. Please either select them from the
@@ -86,17 +87,13 @@ class AuthorForm:
     # --- to_form() widget labels (data_structures/author.py) ---
     forename_label = "First name"
     surname_label = "Surname"
-    birth_year_label = "What is the author's birth year?"
-    birth_year_placeholder = "Select year of birth"
-    birth_year_unknown = "I don't know"
-    birth_year_earlier = "Earlier year"
     gender_label = "Gender"
     submit_button = "Submit"
-    lookup_button = "Look up birth year and gender"
-    lookup_spinner = "Looking up birth year and gender…"
+    lookup_button = "Look up gender"
+    lookup_spinner = "Looking up gender…"
     lookup_failed = (
-        "Couldn't find reliable birth year / gender details for this name — "
-        "please enter them manually."
+        "Couldn't find a reliable gender for this name — please select it "
+        "manually."
     )
     lookup_no_name = "Please enter a first name or surname before looking up."
     name_required = "Author first name and surname are required."
@@ -106,11 +103,12 @@ class IllustratorForm:
     header = "Please enter illustrator details."
     gender_options = ["Woman", "Man", "Non-binary", "Other", "Unknown"]
     gender_prompt = """
-        Click "Look up birth year and gender" to auto-fill these fields using web search,
+        Click "Look up gender" to auto-fill the gender using web search,
         or select manually. If it is not clear, please select `Unknown`.
     """
     lookup_help = (
-        "Use AI web search to suggest birth year and gender based on the name entered above."
+        "Use AI web search to suggest the illustrator's gender based on the name "
+        "entered above (and the book title, when known, to identify the right person)."
     )
     illustrator_exists = """
         This illustrator already exists in the database. Please either select them from the
@@ -120,17 +118,13 @@ class IllustratorForm:
     # --- to_form() widget labels (data_structures/illustrator.py) ---
     forename_label = "First name"
     surname_label = "Surname"
-    birth_year_label = "What is the illustrator's birth year?"
-    birth_year_placeholder = "Select year of birth"
-    birth_year_unknown = "I don't know"
-    birth_year_earlier = "Earlier year"
     gender_label = "Gender"
     submit_button = "Submit"
-    lookup_button = "Look up birth year and gender"
-    lookup_spinner = "Looking up birth year and gender…"
+    lookup_button = "Look up gender"
+    lookup_spinner = "Looking up gender…"
     lookup_failed = (
-        "Couldn't find reliable birth year / gender details for this name — "
-        "please enter them manually."
+        "Couldn't find a reliable gender for this name — please select it "
+        "manually."
     )
     lookup_no_name = "Please enter a first name or surname before looking up."
     name_required = "Illustrator first name and surname are required."
@@ -139,16 +133,12 @@ class IllustratorForm:
 class PublisherForm:
     header = "Please enter publisher details."
     publisher_exists = """
-        This publisher already exists in the database. Please either select them from the 
+        This publisher already exists in the database. Please either select them from the
         dropdown menu above, or enter a unique name for your new publisher.
     """
 
     # --- to_form() widget labels (data_structures/publisher.py) ---
     name_label = "Name"
-    founding_year_label = "Which year was the publisher founded?"
-    founding_year_placeholder = "Select year of founding"
-    founding_year_unknown = "I don't know"
-    founding_year_earlier = "Earlier year"
     submit_button = "Submit"
     name_required = "Publisher name is required."
     cancel_text = "Cancel entering new publisher."
@@ -982,7 +972,7 @@ class UserHome:
     publisher_label = "**Publisher:** {name}"
     illustrator_label = "**Illustrator:** {name}"
     book_expander = "{title}{year_str}  —  {author}"
-    author_expander = "{name}  —  b. {birth_year}  |  {gender}"
+    author_expander = "{name}  —  {gender}"
     no_books_for_author = "No books found for this author."
     books_label = "**Books:**"
 

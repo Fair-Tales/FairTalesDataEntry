@@ -181,22 +181,21 @@ def _report(progress, message):
 
 
 def _auto_lookup_person(person, role, client, book_title):
-    """Best-effort birth-year/gender enrichment for a freshly-created author or
-    illustrator (#113).
+    """Best-effort gender enrichment for a freshly-created author or
+    illustrator (#113/#149).
 
-    Mirrors the manual "Look up birth year and gender" button so pipeline-created
-    people aren't left blank. ``lookup_person_details`` swallows and logs its own
-    API/parse failures (returning ``None``), so a lookup miss simply leaves the
-    fields at their defaults and never aborts the reconstruction. Writes through
-    to Firestore via the ``Field`` descriptors, exactly as the form would.
+    Mirrors the manual "Look up gender" button so pipeline-created people aren't
+    left blank. Date of birth is no longer looked up (#149).
+    ``lookup_person_details`` swallows and logs its own API/parse failures
+    (returning ``None``), so a lookup miss simply leaves the field at its default
+    and never aborts the reconstruction. Writes through to Firestore via the
+    ``Field`` descriptors, exactly as the form would.
     """
     suggestion = lookup_person_details(
         person.name.strip(), role, client, book_title=book_title
     )
     if not suggestion:
         return
-    if suggestion.get("birth_year"):
-        person.birth_year = suggestion["birth_year"]
     if suggestion.get("gender"):
         person.gender = suggestion["gender"]
 
