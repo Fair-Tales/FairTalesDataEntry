@@ -9,6 +9,7 @@ from text_content import Instructions, AIPrompts, BookPhotoEntry, Uploader, Phot
 from utilities import (
     page_layout, check_authentication_status, extract_isbn, lookup_isbn,
     get_s3_filesystem, get_anthropic_client, vision_json,
+    EXTRACTION_MODEL, EXTRACTION_MAX_EDGE,
 )
 from photo_upload import (
     get_upload_session_id,
@@ -44,14 +45,16 @@ class PageExtractionError(Exception):
 
 def extract_page_info(image_bytes, client, *, book=None, page_number=None,
                       page_name=None, flow=None):
-    """Return (text, is_story_page, page_type) by sending image bytes to Claude Sonnet.
+    """Return (text, is_story_page, page_type) by sending image bytes to the
+    DATA-EXTRACTION model (Claude Sonnet 5, #135).
 
-    Uses the shared ``vision_json`` helper (#129). The corrected page image is
-    downscaled for the vision call (``downscale=True``): Claude downsamples every
-    image to ~1.15 MP server-side anyway, so full resolution gives no OCR benefit
-    and a large full-res page (e.g. a 16 MB hi-res photo) breaches Claude's 10 MB
-    per-image limit and is rejected with a 400 — which previously failed every page
-    of such a book (#132 diagnosis).
+    Uses the shared ``vision_json`` helper (#129) on ``EXTRACTION_MODEL`` with the
+    higher ``EXTRACTION_MAX_EDGE`` (2576px) so dense page text is OCR'd at higher
+    resolution than the ~1568px sweet spot. The corrected page image is still
+    downscaled for the vision call (``downscale=True``) and JPEG re-encoded below
+    Claude's 10 MB per-image limit (#134), so a large full-res page (e.g. a 16 MB
+    hi-res photo) is no longer rejected with a 400 — which previously failed every
+    page of such a book (#132 diagnosis).
 
     On an extraction FAILURE — an Anthropic API error, or a reply that cannot be
     parsed as usable JSON — the full detail (book, page, error type + message,
@@ -84,6 +87,7 @@ def extract_page_info(image_bytes, client, *, book=None, page_number=None,
     try:
         data, raw = vision_json(
             client, [image_bytes], AIPrompts.page_extraction, downscale=True,
+            model=EXTRACTION_MODEL, max_edge=EXTRACTION_MAX_EDGE,
         )
     except anthropic.AnthropicError as exc:
         _log_and_raise(type(exc).__name__, str(exc))

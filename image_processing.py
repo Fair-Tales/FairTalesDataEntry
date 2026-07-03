@@ -64,7 +64,16 @@ def exif_transpose_bytes(image_bytes):
         return image_bytes
 
 
-def downscale_for_vision(image_bytes, max_edge=1568, quality=85):
+#: Claude's hard per-image byte cap for vision requests (#134). The raw multi-MB
+#: phone photos that breached this are always JPEG re-encoded below it by
+#: ``downscale_for_vision``; the cap is enforced explicitly so the higher-res
+#: extraction path (``max_edge=2576``, #135) cannot reintroduce the oversized
+#: rejection on a rare very dense page. A safety margin under the 10MB API limit.
+_VISION_MAX_BYTES = 9 * 1024 * 1024
+
+
+def downscale_for_vision(image_bytes, max_edge=1568, quality=85,
+                         max_bytes=_VISION_MAX_BYTES):
     """Downscale and normalise an image for a Claude vision request.
 
     Phone photos are commonly several megabytes and many megapixels. Sent raw,
@@ -75,10 +84,17 @@ def downscale_for_vision(image_bytes, max_edge=1568, quality=85):
 
     This bakes in any EXIF orientation (matching ``exif_transpose_bytes``),
     converts to RGB, and resizes so the longest edge is at most ``max_edge``
-    (Claude's vision sweet spot — larger images are downsampled server-side
-    anyway, so sending them only wastes payload). The result is re-encoded as
-    JPEG, which also normalises PNG/HEIC inputs to the declared
-    ``image/jpeg`` media type used by the vision callers.
+    (Claude's vision sweet spot at the ~1568px default — larger images are
+    downsampled server-side anyway, so sending them only wastes payload). The
+    result is re-encoded as JPEG, which also normalises PNG/HEIC inputs to the
+    declared ``image/jpeg`` media type used by the vision callers.
+
+    The DATA-EXTRACTION callers pass a higher ``max_edge`` (2576px, #135) for
+    better OCR of dense text. ``max_bytes`` keeps the encoded result under
+    Claude's 10MB per-image cap regardless of ``max_edge`` (#134): if a rare very
+    dense page still exceeds it at the requested ``quality``, JPEG quality is
+    stepped down until it fits (or the floor is reached and the smallest attempt
+    is sent). Pass ``max_bytes=None`` to disable the cap.
 
     Only shrinks: images already within ``max_edge`` are re-encoded without
     upscaling. On an unreadable/truncated image the original bytes are returned
@@ -97,9 +113,20 @@ def downscale_for_vision(image_bytes, max_edge=1568, quality=85):
                 max(1, round(img.height * scale)),
             )
             img = img.resize(new_size, Image.LANCZOS)
-        buf = io.BytesIO()
-        img.save(buf, format='JPEG', quality=quality)
-        return buf.getvalue()
+
+        def _encode(q):
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG', quality=q)
+            return buf.getvalue()
+
+        data = _encode(quality)
+        # Enforce Claude's per-image byte cap (#134): step quality down until the
+        # encoded JPEG fits, so the high-res extraction path stays under the limit.
+        current_quality = quality
+        while max_bytes is not None and len(data) > max_bytes and current_quality > 40:
+            current_quality -= 15
+            data = _encode(current_quality)
+        return data
     except (UnidentifiedImageError, OSError):
         # Undecodable or truncated image: return the original bytes so the
         # caller can still handle/send it rather than crashing here.

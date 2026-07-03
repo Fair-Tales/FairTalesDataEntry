@@ -1243,9 +1243,8 @@ class ReconstructOrphans:
     moved_notice = (
         "The reconstructed book's photos were written to the canonical folder "
         "'{photos_folder}', which differs from the original folder "
-        "'{source_folder}'. The original folder was left untouched — once you have "
-        "validated the book, remove the now-duplicate '{source_folder}' folder with "
-        "the data-cleanup tool."
+        "'{source_folder}'. The now-redundant '{source_folder}' folder was removed "
+        "automatically, so it no longer appears as an orphan."
     )
     error = "Could not reconstruct the book: {error}"
     no_photos_in_folder = (
