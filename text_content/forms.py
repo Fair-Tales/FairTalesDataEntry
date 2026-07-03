@@ -947,6 +947,15 @@ class PhotoUpload:
         "{count} page(s) across the uploaded books couldn't be read "
         "automatically — you'll need to enter those manually."
     )
+    # Shown when no Anthropic API key is configured, so automatic text
+    # recognition (OCR) is skipped entirely and every page is saved blank for
+    # manual entry. Mirrors the batch (BatchBookEntry.no_api_key) and
+    # reconstruction (ReconstructOrphans.no_api_key) notices so the single-book
+    # page-upload flow never silently skips OCR with no message shown (#153).
+    no_api_key = (
+        "Automatic text recognition is unavailable because no AI API key is "
+        "configured — pages have been saved blank for you to enter by hand."
+    )
 
 
 class ReviewBooks:
