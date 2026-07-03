@@ -145,7 +145,7 @@ class PublisherForm:
 class BookPhotoEntry:
     """Strings for the photo-initiated ("photos first") book entry flow (#59)."""
 
-    menu_label = "Add from Photos"
+    menu_label = "Add book"
     header = "Add a book from photos"
     instructions = (
         "Upload photos of the book to get started. We'll read the details and use "

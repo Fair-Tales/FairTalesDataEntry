@@ -1,7 +1,7 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
 from st_keyup import st_keyup
-from text_content import Alerts, Instructions, old_books, BookPhotoEntry, BatchBookEntry, UserHome
+from text_content import Alerts, Instructions, old_books, BookPhotoEntry, UserHome
 from utilities import check_authentication_status, page_layout, navigate_to, clear_page_history, clear_entity_form_state
 from data_structures import Book
 from photo_upload import reset_upload_session
@@ -192,15 +192,14 @@ st.write(Instructions.advise_to_search)
 
 selected_option = option_menu(
     None,
-    [UserHome.menu_search_books, UserHome.menu_search_authors, UserHome.menu_add_book, BookPhotoEntry.menu_label, BatchBookEntry.menu_label, UserHome.menu_edit_books],
+    [UserHome.menu_search_books, UserHome.menu_search_authors, BookPhotoEntry.menu_label, UserHome.menu_edit_books],
     default_index=0,
-    icons=['search', 'search', 'database-add', 'camera', 'images', 'pencil-square'],
+    icons=['search', 'search', 'camera', 'pencil-square'],
     menu_icon="cast", orientation="horizontal",
     key="user_option_menu",
     styles={
-        # The menu now has 6 items and wraps to a second row on narrow phone
-        # screens. Vertical margin gives the wrapped row breathing room so its
-        # icon isn't clipped by the row above; the smaller font reduces wrapping.
+        # The menu has 4 items (Batch Upload and manual Add a Book are temporarily
+        # hidden for the pilot — #157); flex-wrap kept in case of narrow screens.
         "container": {"flex-wrap": "wrap", "padding": "0.25rem 0"},
         "nav-link": {"font-size": "13px", "text-align": "center", "margin": "4px 2px", "--hover-color": "#eee"},
         "nav-link-selected": {"background-color": "green"},
@@ -210,9 +209,7 @@ selected_option = option_menu(
 navigation_dict = {
     UserHome.menu_search_books: book_search,
     UserHome.menu_search_authors: author_search,
-    UserHome.menu_add_book: add_book,
     BookPhotoEntry.menu_label: add_book_from_photos,
-    BatchBookEntry.menu_label: add_books_batch,
     UserHome.menu_edit_books: review_my_books
 }
 
