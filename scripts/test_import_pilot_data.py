@@ -292,6 +292,16 @@ def test_derive_review():
     assert mod.derive_review(True, False) == (True, "normal")
 
 
+def test_derive_review_empty_page_breaking_context_is_high():
+    # #73 S7: an empty page (makes_sense=true) that breaks context is the top
+    # re-extraction candidate -> HIGH, not normal.
+    assert mod.derive_review(True, False, has_text=False) == (True, "high")
+    # A page WITH text that merely doesn't fit stays normal.
+    assert mod.derive_review(True, False, has_text=True) == (True, "normal")
+    # An empty page that DOES fit its context is not flagged.
+    assert mod.derive_review(True, True, has_text=False) == (False, "")
+
+
 # --- page doc carries review_priority ---------------------------------------
 
 def test_build_page_doc_priority_default():
@@ -314,3 +324,165 @@ def test_extract_json_object():
     assert mod._extract_json_object("here it is: {\"x\": 2} thanks") == {"x": 2}
     assert mod._extract_json_object("no json here") is None
     assert mod._extract_json_object("") is None
+    # #73 M6: a literal newline inside a JSON string value must not defeat the
+    # parse (strict=False), so a stray line break is tolerated.
+    assert mod._extract_json_object('{"text": "line one\nline two"}') == \
+        {"text": "line one\nline two"}
+
+
+# --- containment metric (#73 S3) --------------------------------------------
+
+def test_text_containment():
+    # Full reference captured (plus extra) -> 1.0 (not penalised for excess).
+    assert mod.text_containment("the cat sat on the mat", "the cat sat") == 1.0
+    # Half of the reference words captured.
+    assert mod.text_containment("the cat", "the cat sat dog") == 0.5
+    # Disjoint -> 0.0; empty reference -> 1.0 (nothing to capture).
+    assert mod.text_containment("cat", "dog fish") == 0.0
+    assert mod.text_containment("anything", "") == 1.0
+    assert mod.text_containment("", "cat") == 0.0
+    # Asymmetric: containment ignores extra extracted text where Jaccard would
+    # penalise it.
+    long_extract = "the cat sat on the mat and then it ran away quickly"
+    assert mod.text_containment(long_extract, "the cat sat") == 1.0
+    assert mod.text_similarity(long_extract, "the cat sat") < 1.0
+
+
+# --- token-subset clean guard (#73 S4) --------------------------------------
+
+def test_clean_kept_token_subset():
+    # Pure removal of junk tokens is accepted.
+    assert mod.clean_kept("Once upon a time as&ij there", "Once upon a time there") is True
+    # Removing whole words is fine (only-remove rule).
+    assert mod.clean_kept("Boo said the little owl", "Boo said owl") is True
+    # Any ADDED word is rejected.
+    assert mod.clean_kept("Boo said owl", "Boo said the owl") is False
+    # Any ALTERED word (incl. a spelling/case change) is rejected.
+    assert mod.clean_kept("the wonky spelling", "the wonderful spelling") is False
+    assert mod.clean_kept("SPLOSH went the water", "Splosh went the water") is False
+    # Empty / blank clean rejected.
+    assert mod.clean_kept("some text", "") is False
+    assert mod.clean_kept("some text", "   ") is False
+    # Invented/non-standard words preserved verbatim are kept.
+    assert mod.clean_kept("Ker-SPLOOSH!! ~~~", "Ker-SPLOOSH!!") is True
+
+
+# --- boolean parsing (#73 S6) -----------------------------------------------
+
+def test_as_bool():
+    assert mod._as_bool(True) is True
+    assert mod._as_bool(False) is False
+    # The classic bug: bool("false") is True; _as_bool must return False.
+    assert mod._as_bool("false") is False
+    assert mod._as_bool("true") is True
+    assert mod._as_bool("no") is False
+    assert mod._as_bool("yes") is True
+    # Unknown -> default.
+    assert mod._as_bool(None, default=True) is True
+    assert mod._as_bool("maybe", default=False) is False
+
+
+# --- case-insensitive Unknown guard (#73 S1) --------------------------------
+
+def test_is_unknown():
+    for v in ["", "Unknown", "unknown", "UNKNOWN", "n/a", "N/A", "none", "null", None]:
+        assert mod.is_unknown(v) is True
+    for v in ["Walker Books", "Patrick Benson", "Anonymous"]:
+        assert mod.is_unknown(v) is False
+
+
+# --- neighbour context / boundary flag (#73 M4) -----------------------------
+
+def test_neighbour_context():
+    # Real text is returned verbatim.
+    assert mod.neighbour_context("hello", is_previous=True, at_book_edge=False) == "hello"
+    # Empty at a true book edge reads as first/last page.
+    assert "first story page" in mod.neighbour_context("", is_previous=True, at_book_edge=True)
+    assert "last story page" in mod.neighbour_context("", is_previous=False, at_book_edge=True)
+    # Empty at an INTERIOR neighbour reads as wordless/failed, NOT a boundary.
+    interior_prev = mod.neighbour_context("", is_previous=True, at_book_edge=False)
+    interior_next = mod.neighbour_context("", is_previous=False, at_book_edge=False)
+    assert "no text" in interior_prev and "first story page" not in interior_prev
+    assert "no text" in interior_next and "last story page" not in interior_next
+
+
+# --- multi-author gender recovery (#73 S2) ----------------------------------
+
+def test_parse_author_field_single_author_unchanged():
+    p = mod.parse_author_field("Martin Waddell", "M")
+    assert p == mod.AuthorParse("Martin Waddell", "M", "", False, "")
+    assert mod.map_author_gender(p.gender_code) == "Man"
+
+
+def test_parse_author_field_two_authors_recovers_first_gender():
+    p = mod.parse_author_field("Michael Rosen and Helen Oxenbury", "M/F")
+    assert p.author_name == "Michael Rosen"
+    assert p.gender_code == "M"
+    assert p.second_name == "Helen Oxenbury"
+    assert p.needs_review is False
+    assert mod.map_author_gender(p.gender_code) == "Man"
+
+    p2 = mod.parse_author_field("Julia Donaldson and Axel Scheffler", "F/M")
+    assert p2.author_name == "Julia Donaldson"
+    assert mod.map_author_gender(p2.gender_code) == "Woman"
+
+
+def test_parse_author_field_shared_surname_flags_for_manual_entry():
+    # "Janet and Allen Ahlberg" — first part is a bare forename; do NOT import
+    # "Janet" as an author, flag for manual entry instead.
+    p = mod.parse_author_field("Janet and Allen Ahlberg", "F/M")
+    assert p.author_name == ""
+    assert p.needs_review is True
+    assert p.second_name == "Allen Ahlberg"
+    p2 = mod.parse_author_field("Ronda and David Armitage", "F/M")
+    assert p2.author_name == "" and p2.needs_review is True
+
+
+def test_parse_author_field_three_codes_unknown_and_flag():
+    p = mod.parse_author_field("A and B and C", "M/F/M")
+    assert p.needs_review is True
+    assert mod.map_author_gender(p.gender_code) == "Unknown"
+
+
+# --- provenance + empty-book flags (#73 S8/M3) ------------------------------
+
+def test_build_page_doc_provenance_fields():
+    doc = mod.build_page_doc(
+        book_ref=mod.Ref("books", "owl_babies"),
+        page_number=6,
+        contains_story=True,
+        text="Once there were three baby owls",
+        now=_now(),
+        text_source="ocr",
+        clean_status="cleaned",
+        ocr_model="claude-opus-4-8",
+        clean_model="claude-sonnet-4-6",
+    )
+    assert doc["text_source"] == "ocr"
+    assert doc["clean_status"] == "cleaned"
+    assert doc["ocr_model"] == "claude-opus-4-8"
+    assert doc["clean_model"] == "claude-sonnet-4-6"
+
+
+def test_build_book_doc_no_photos_for_empty_book():
+    # #73 M3: a book with no PDF/pages must NOT claim photos exist.
+    doc = mod.build_book_doc(
+        title="Seasons",
+        author_ref=None,
+        illustrator_ref=None,
+        publisher_ref=None,
+        published=None,
+        page_range=None,
+        page_count=0,
+        character_refs=[],
+        now=_now(),
+        photos_uploaded=False,
+        needs_review=True,
+        review_note="no PDF / page images for this book",
+    )
+    assert doc["photos_uploaded"] is False
+    assert doc["photos_url"] == ""
+    assert doc["needs_review"] is True
+    assert doc["review_note"] == "no PDF / page images for this book"
+    # Normal complete books still keep validated=True.
+    assert doc["validated"] is True
