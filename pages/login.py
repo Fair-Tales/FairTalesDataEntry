@@ -30,19 +30,34 @@ def confirm(username, password, remember=False):
         role = get_role(username)
         st.session_state['role'] = role
         st.session_state['admin'] = (role == ROLE_ADMIN)
+        # Route EVERY successful login through the top-of-page authenticated
+        # redirect instead of switching pages here (#139).
+        #
+        # Root cause of the "Confirm needs two clicks" bug: this call site runs
+        # deep inside the form-submit handler, WHILE Home.py is executing this
+        # page via ``st.navigation(...).run()``. Calling ``st.switch_page()`` from
+        # there races with the form-submit rerun: the first click only reruns the
+        # login page (navigation had already committed it for this run) instead of
+        # switching, so a second click was needed. The already-working remember-me
+        # path (#111) avoids this by DEFERRING navigation to the top-of-page
+        # ``if is_authenticated()`` block — a redirect issued before any widget is
+        # rendered navigates cleanly in one interaction. We now use that same
+        # deferral for the non-remember path too.
+        st.session_state['_post_login_redirect'] = True
         # Persist a signed, expiring (7-day) cookie so the session survives a page
         # reload or a server restart (#111). No-op when the box was unticked or no
         # cookie_signing_key secret is configured.
         if remember:
             set_remember_cookie(username)
-            # Defer navigation: the CookieManager only writes the cookie when its
-            # component renders at the END of this run; st.switch_page would abort
-            # the run before that, so the cookie would never persist. Flag the
-            # redirect and let this run finish — the component write triggers a
-            # rerun, and the authenticated branch below then sends the user home.
-            st.session_state['_post_login_redirect'] = True
+            # Do NOT st.rerun() here: the CookieManager only writes the cookie when
+            # its component renders at the END of this run, so a rerun would abort
+            # before the write (#111). The component write itself triggers the
+            # rerun, after which the authenticated branch below redirects home.
             return
-        st.switch_page("./pages/landing.py")
+        # Non-remember path: nothing else will trigger a rerun, so request one
+        # explicitly. On that rerun ``is_authenticated()`` is True at the top of
+        # the page and the authenticated branch switches to the landing page.
+        st.rerun()
     elif result == "not_confirmed":
         # Password was correct but account not yet confirmed.  Store the
         # username so the resend button below the form can use it.

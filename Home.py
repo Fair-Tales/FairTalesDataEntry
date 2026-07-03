@@ -85,6 +85,11 @@ def navigate_pages():
             st.Page("./pages/collection_picker.py"),
             st.Page("./pages/results_dashboard.py"),
             st.Page("./pages/add_books_batch.py"),
+            # Reconstruct orphaned books is no longer a sidebar item (#141); it is
+            # reached from a gated link at the bottom of the Admin page. It must
+            # stay registered here so that st.page_link()/st.switch_page() can
+            # navigate to it — its own team-and-above gating lives on the page.
+            st.Page("./pages/reconstruct_orphans.py"),
         ]
     }
 
@@ -97,9 +102,6 @@ def navigate_pages():
 
     if is_team_or_above:
         pages["Menu"].append(st.Page("./pages/validation.py", title='Data validation'))
-        pages["Menu"].append(
-            st.Page("./pages/reconstruct_orphans.py", title='Reconstruct orphaned books')
-        )
     if is_admin_user:
         pages["Menu"].append(st.Page("./pages/admin.py", title='Admin'))
 
