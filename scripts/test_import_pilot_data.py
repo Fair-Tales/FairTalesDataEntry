@@ -255,6 +255,8 @@ def test_normalise_blank_text():
     assert mod.normalise_blank_text('"..."') == ""
     assert mod.normalise_blank_text("   ") == ""
     assert mod.normalise_blank_text("-- .. ") == ""
+    assert mod.normalise_blank_text("<br>") == ""       # HTML line-break tag
+    assert mod.normalise_blank_text("<br/>\n") == ""
     assert mod.normalise_blank_text("") == ""
     assert mod.normalise_blank_text(None) == ""
     # Any real word is preserved verbatim (including surrounding quotes).
@@ -276,6 +278,31 @@ def test_clean_kept_guards_against_rewrites():
     # An empty/blank "clean" is rejected.
     assert mod.clean_kept(original, "") is False
     assert mod.clean_kept(original, "   ") is False
+
+
+# --- review derivation ------------------------------------------------------
+
+def test_derive_review():
+    # Passes both checks -> not flagged.
+    assert mod.derive_review(True, True) == (False, "")
+    # Fails both -> high priority.
+    assert mod.derive_review(False, False) == (True, "high")
+    # Fails exactly one -> normal priority.
+    assert mod.derive_review(False, True) == (True, "normal")
+    assert mod.derive_review(True, False) == (True, "normal")
+
+
+# --- page doc carries review_priority ---------------------------------------
+
+def test_build_page_doc_priority_default():
+    doc = mod.build_page_doc(
+        book_ref=mod.Ref("books", "owl_babies"),
+        page_number=6,
+        contains_story=True,
+        text="Once there were three baby owls",
+        now=_now(),
+    )
+    assert doc["review_priority"] == ""
 
 
 # --- JSON extraction helper -------------------------------------------------

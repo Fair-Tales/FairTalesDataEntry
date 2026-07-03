@@ -23,11 +23,22 @@ Sources (a sibling checkout of ``fair-tales-language-analysis``)
 
 Per-page text pipeline (issue #73, plan "A")
 --------------------------------------------
-For each story page: take the PDF text layer, or Claude vision OCR when the page
-has none; then run a Claude "junk-strip" clean-up pass that removes extraction/
-OCR garbage (stray character runs, mojibake, control chars) **without** altering
-spelling or unusual/invented words (children's books use non-standard spelling
-deliberately). A divergence guard discards any "clean" that rewrites the text.
+Two passes per book:
+
+* **Pass 1 (extract):** render each page to JPEG (S3) and get its raw text — the
+  PDF text layer where present, otherwise Claude vision OCR (Opus by default, a
+  detailed picture-book-aware prompt) for the image-only minority. Quote/tag/
+  punctuation-only output is normalised to empty (a blank page).
+* **Pass 2 (clean + judge in context):** for each story page, one Claude call
+  (a) strips extraction/OCR garbage **without** altering spelling or unusual/
+  invented words (children's books use non-standard spelling deliberately; a
+  divergence guard discards any "clean" that rewrites the text), and (b) judges
+  the page on two axes given the previous/next page text — does it read as
+  sensible story text (``makes_sense``) and does it fit its neighbours
+  (``fits_context``). A page failing either is flagged ``needs_review``; failing
+  **both** marks it ``review_priority="high"``. Flags are recorded on the page
+  and aggregated onto the book (``review_pages`` / ``high_priority_review``).
+
 Finally, the book's concatenated page text is cross-checked against the validated
 pickle reference as a per-book confidence signal.
 
@@ -373,7 +384,10 @@ def normalise_blank_text(text: object) -> str:
     if not text:
         return ""
     text = str(text)
-    return text if any(ch.isalnum() for ch in text) else ""
+    # Ignore HTML-ish tags (e.g. a model emitting "<br>" for a line break) when
+    # deciding whether any real content remains.
+    without_tags = re.sub(r"<[^>]*>", "", text)
+    return text if any(ch.isalnum() for ch in without_tags) else ""
 
 
 def clean_kept(original: str, cleaned: str) -> bool:
@@ -452,6 +466,7 @@ def build_book_doc(
     now: datetime,
     needs_review: bool = False,
     review_pages: Optional[list] = None,
+    high_priority_review: bool = False,
 ) -> dict:
     """Build a ``books`` document (mirrors data_structures/book.py Book.fields).
 
@@ -459,11 +474,13 @@ def build_book_doc(
     app's backward-compatibility fallback) because the pilot data has no theme
     information — see PILOT_IMPORT.md.
 
-    ``needs_review`` / ``review_pages`` are additive diagnostic fields: True with
-    the list of flagged page numbers when the clean-up pass judged any of this
-    book's pages incoherent (re-extraction / human-reading candidates). The app's
-    ``Book`` model ignores undeclared fields, so this is safe and lets flagged
-    books be found with a single Firestore query.
+    ``needs_review`` / ``review_pages`` / ``high_priority_review`` are additive
+    diagnostic fields: ``needs_review`` is True with the list of flagged page
+    numbers when the clean+judge pass flagged any of this book's pages, and
+    ``high_priority_review`` is True when at least one of those pages failed both
+    the coherence and context-fit checks. The app's ``Book`` model ignores
+    undeclared fields, so this is safe and lets flagged books be found with a
+    single Firestore query.
     """
     start, end = (page_range or (-1, -1))
     return {
@@ -492,6 +509,7 @@ def build_book_doc(
         "characters": list(character_refs),
         "needs_review": needs_review,
         "review_pages": list(review_pages or []),
+        "high_priority_review": high_priority_review,
     }
 
 
@@ -504,14 +522,17 @@ def build_page_doc(
     now: datetime,
     needs_review: bool = False,
     review_note: str = "",
+    review_priority: str = "",
 ) -> dict:
     """Build a ``pages`` document (mirrors data_structures/page.py).
 
-    ``needs_review`` / ``review_note`` are extra diagnostic fields set by the
-    clean-up pass when the page text doesn't read as coherent story text — a
-    candidate for re-extraction or human reading. They are additive: the app's
-    ``Page`` model ignores fields it doesn't declare, so recording them here is
-    safe and makes the flagged pages queryable in Firestore.
+    ``needs_review`` / ``review_priority`` / ``review_note`` are extra diagnostic
+    fields set by the clean+judge pass when the page text doesn't read as coherent
+    story text or doesn't fit its neighbours — a candidate for re-extraction or
+    human reading. ``review_priority`` is ``"high"`` when the page fails both the
+    coherence and context-fit checks. They are additive: the app's ``Page`` model
+    ignores fields it doesn't declare, so recording them here is safe and makes
+    the flagged pages queryable in Firestore.
     """
     return {
         "is_registered": True,
@@ -523,6 +544,7 @@ def build_page_doc(
         "entered_by": ENTERED_BY,
         "last_updated": now,
         "needs_review": needs_review,
+        "review_priority": review_priority,
         "review_note": review_note,
     }
 
@@ -881,11 +903,32 @@ def ai_ocr_page(client, jpeg_bytes: bytes, model: str) -> str:
 
     b64 = base64.standard_b64encode(jpeg_bytes).decode("utf-8")
     prompt = (
-        "Transcribe the story text visible on this children's book page exactly "
-        "as written. Return only the transcribed text, with no commentary and no "
-        "surrounding quotation marks. If there is no story text on the page (for "
-        "example a wordless illustration), reply with nothing at all — no "
-        "characters, not even quotation marks."
+        "You are transcribing the text from a single page of a printed "
+        "children's picture book. Transcribe ALL of the book's text that appears "
+        "on this page, exactly as printed.\n\n"
+        "Important guidance:\n"
+        "- This is a children's picture book, so the typography is often "
+        "irregular: decorative, hand-drawn or unusual fonts, widely varying "
+        "sizes, coloured text on busy illustrations, text that curves or sits at "
+        "an angle, words woven into the artwork, speech bubbles, and large "
+        "sound-effect words (e.g. 'SPLASH!', 'WHOOSH', 'Ker-BOOM'). Read all of "
+        "it.\n"
+        "- The page or its text may be rotated or skewed; read it in its correct "
+        "reading orientation.\n"
+        "- Transcribe the exact wording, spelling, capitalisation and punctuation "
+        "as printed. Children's books deliberately use invented words, made-up "
+        "names, onomatopoeia and non-standard spelling — preserve these verbatim "
+        "and do NOT correct or standardise them.\n"
+        "- Preserve the reading order and keep line breaks roughly as they "
+        "appear on the page.\n"
+        "- Transcribe only the book's own text (story, dialogue, captions, "
+        "sound words). Do NOT transcribe page numbers, running heads, or "
+        "publisher / copyright / ISBN / barcode text, and do NOT describe the "
+        "illustrations or add any commentary of your own.\n"
+        "- If the page genuinely has no book text on it (for example a wholly "
+        "wordless illustration), reply with nothing at all — no characters, not "
+        "even quotation marks or a placeholder.\n\n"
+        "Return only the transcribed text."
     )
     try:
         response = client.messages.create(
@@ -916,51 +959,84 @@ def ai_ocr_page(client, jpeg_bytes: bytes, model: str) -> str:
         return ""
 
 
-def ai_clean_text(client, text: str, model: str) -> tuple[str, str, bool, str]:
-    """Clean junk from page text AND flag incoherent text, in one call.
+def derive_review(makes_sense: bool, fits_context: bool) -> tuple[bool, str]:
+    """Turn the two judge booleans into ``(needs_review, priority)``.
 
-    A single Claude call does two jobs:
+    A page is flagged for review if it fails either check. Priority is **high**
+    only when it fails BOTH — i.e. the text neither reads as sensible story text
+    on its own NOR fits the pages either side of it (the strongest signal that
+    the extraction is wrong / text is missing). Failing just one check is
+    ``normal`` priority. Passing both is not flagged.
+    """
+    if makes_sense and fits_context:
+        return False, ""
+    if not makes_sense and not fits_context:
+        return True, "high"
+    return True, "normal"
+
+
+def ai_clean_and_judge(
+    client, text: str, prev_text: str, next_text: str, model: str
+) -> tuple[str, str, bool, str, str]:
+    """Clean junk from page text AND judge it in context, in one call.
+
+    One Claude call does three jobs for a single story page:
 
     1. **Clean** — remove only extraction/OCR noise (stray garbage runs like
        ``as&ij-``, control characters, mojibake, broken/duplicated fragments)
        while keeping every real word verbatim. It explicitly does NOT correct
        spelling, grammar or unusual/invented words, because children's books
        deliberately use non-standard spelling, made-up words and playful sounds.
-    2. **Judge** — decide whether the cleaned page reads as coherent story text,
-       flagging pages that look garbled, out of order, truncated or nonsensical
-       as candidates for re-extraction or human reading.
+    2. **Judge coherence** — does the cleaned page read as sensible story text on
+       its own (not garbled / jumbled / truncated / a mix of fragments)?
+    3. **Judge context fit** — given the text of the previous and next pages, does
+       this page follow on sensibly between them?
 
-    Returns ``(result_text, status, needs_review, review_note)`` where ``status``
-    is one of ``"cleaned"`` (a kept change was applied), ``"unchanged"`` (already
-    clean), ``"rejected"`` (the model's output diverged too far and was discarded
-    by the ``clean_kept`` guard — the original is kept) or ``"failed"`` (API/parse
-    error — the original is kept). The review flag/note are reported independently
-    of ``status``.
+    ``prev_text`` / ``next_text`` are the adjacent story pages' text (either may
+    be empty at a book boundary). Returns
+    ``(result_text, status, needs_review, priority, review_note)`` where
+    ``status`` is ``"cleaned"`` / ``"unchanged"`` / ``"rejected"`` / ``"failed"``
+    (as before), ``needs_review`` and ``priority`` (``""`` / ``"normal"`` /
+    ``"high"``) come from :func:`derive_review`. A page that fails both the
+    coherence and the context-fit checks is high-priority for human review. Any
+    failure degrades to ``(text, "failed", False, "", "")``.
     """
-    if not text or not text.strip():
-        return text, "unchanged", False, ""
+    context_block = (
+        "PREVIOUS PAGE TEXT (for context only, do not clean or return it):\n"
+        f"{prev_text or '(none — first story page)'}\n\n"
+        "NEXT PAGE TEXT (for context only, do not clean or return it):\n"
+        f"{next_text or '(none — last story page)'}\n\n"
+    )
     prompt = (
-        "The text below was extracted (via a PDF text layer or OCR) from a single "
-        "page of a children's picture book. Do TWO things.\n\n"
-        "1. CLEAN it. Remove ONLY junk: stray garbage character sequences (for "
-        "example 'as&ij-'), OCR noise, control characters, mojibake, and broken "
-        "or duplicated fragments. Do NOT correct spelling, grammar, punctuation "
-        "or capitalisation, and do NOT change unusual, made-up or oddly spelled "
-        "words — children's books deliberately use non-standard spelling, "
-        "invented words and playful sounds, and every real word MUST be preserved "
-        "exactly as written. Preserve line breaks and the original reading order. "
-        "If the text is already clean, keep it unchanged.\n\n"
-        "2. JUDGE it. Decide whether the cleaned text reads as coherent, sensible "
-        "text for a page of a children's story. Set needs_review to true if it "
-        "looks garbled, jumbled/out of order, truncated mid-sentence, a mix of "
-        "unrelated fragments, or otherwise does not make sense as story text — "
-        "these are candidates for re-extraction or human reading. Ordinary short "
-        "or playful picture-book text is NOT a reason to flag. When flagging, give "
-        "a brief reason in review_note; otherwise leave review_note empty.\n\n"
+        "The text below (THIS PAGE) was extracted (via a PDF text layer or OCR) "
+        "from a single page of a children's picture book. You are given the "
+        "previous and next pages' text only as context. Do THREE things.\n\n"
+        "1. CLEAN this page's text. Remove ONLY junk: stray garbage character "
+        "sequences (for example 'as&ij-'), OCR noise, control characters, "
+        "mojibake, and broken or duplicated fragments. Do NOT correct spelling, "
+        "grammar, punctuation or capitalisation, and do NOT change unusual, "
+        "made-up or oddly spelled words — children's books deliberately use "
+        "non-standard spelling, invented words and playful sounds, and every real "
+        "word MUST be preserved exactly as written. Preserve line breaks and the "
+        "reading order. If it is already clean, keep it unchanged.\n\n"
+        "2. Judge makes_sense: does THIS PAGE's cleaned text read as sensible, "
+        "intact text for a page of a children's story (NOT garbled, jumbled, "
+        "out of order, truncated mid-word, or a mix of unrelated fragments)? "
+        "Ordinary short, sparse or playful picture-book text is fine; an empty "
+        "page (a wordless illustration) is NOT by itself garbled, so treat empty "
+        "text as makes_sense=true.\n\n"
+        "3. Judge fits_context: does THIS PAGE follow on sensibly from the "
+        "previous page and lead into the next page (allowing for normal story "
+        "progression and page turns)? If this page is empty but the story still "
+        "flows naturally across it, that fits; if it looks like text is missing "
+        "or scrambled relative to the neighbours, it does not.\n\n"
         "Respond with ONLY a JSON object (no code fences, no commentary):\n"
-        '{"cleaned_text": "<the cleaned text>", "needs_review": true or false, '
-        '"review_note": "<short reason, or empty>"}\n\n'
-        "TEXT:\n" + text
+        '{"cleaned_text": "<this page cleaned>", "makes_sense": true or false, '
+        '"fits_context": true or false, "review_note": "<short reason if either '
+        'is false, else empty>"}\n\n'
+        + context_block
+        + "THIS PAGE TEXT:\n"
+        + (text or "(this page has no extracted text)")
     )
     try:
         response = client.messages.create(
@@ -973,23 +1049,25 @@ def ai_clean_text(client, text: str, model: str) -> tuple[str, str, bool, str]:
         ).strip()
     except Exception as exc:  # noqa: BLE001 - network/parse; degrade to original, but surface why
         print(f"    [ai-clean] failed: {type(exc).__name__}: {exc}", file=sys.stderr)
-        return text, "failed", False, ""
+        return text, "failed", False, "", ""
 
     data = _extract_json_object(raw)
     if data is None:
         # No usable JSON came back; keep the original text and don't flag.
         print("    [ai-clean] non-JSON reply; keeping original text", file=sys.stderr)
-        return text, "failed", False, ""
+        return text, "failed", False, "", ""
 
-    needs_review = bool(data.get("needs_review"))
+    makes_sense = bool(data.get("makes_sense", True))
+    fits_context = bool(data.get("fits_context", True))
     review_note = str(data.get("review_note") or "").strip()
+    needs_review, priority = derive_review(makes_sense, fits_context)
     cleaned = str(data.get("cleaned_text") or "").strip()
 
     if not cleaned or cleaned == text:
-        return text, "unchanged", needs_review, review_note
+        return text, "unchanged", needs_review, priority, review_note
     if clean_kept(text, cleaned):
-        return cleaned, "cleaned", needs_review, review_note
-    return text, "rejected", needs_review, review_note
+        return cleaned, "cleaned", needs_review, priority, review_note
+    return text, "rejected", needs_review, priority, review_note
 
 
 # ---------------------------------------------------------------------------
@@ -1133,7 +1211,8 @@ class Totals:
     pages_cleaned: int = 0
     pages_clean_rejected: int = 0
     pages_flagged: int = 0
-    #: (title, [flagged page numbers]) for books the clean pass flagged.
+    pages_flagged_high: int = 0
+    #: (title, [flagged page numbers], high_priority) for flagged books.
     books_flagged: list = field(default_factory=list)
     #: (title, similarity) for every book that had a validated-text reference.
     similarities: list = field(default_factory=list)
@@ -1401,6 +1480,11 @@ def plan_and_run(args) -> int:
             if args.execute:
                 import pypdfium2 as pdfium
 
+                # Pass 1: render every page to S3 and extract its RAW text
+                # (text layer if present, else Opus OCR). We collect all pages
+                # first so pass 2 can judge each story page in the context of its
+                # neighbours.
+                page_rows: list = []  # {page_number, in_story, raw}
                 pdf_doc = pdfium.PdfDocument(pdf_path)
                 try:
                     for i in range(page_count):
@@ -1410,61 +1494,76 @@ def plan_and_run(args) -> int:
                         backend.s3_put(s3_page_path(book.title, page_number), jpeg)
                         totals.images += 1
 
-                        text = ""
-                        page_needs_review = False
-                        page_review_note = ""
+                        raw = ""
                         if in_story:
                             layer = page_texts[i] if i < len(page_texts) else ""
                             if len(layer) >= TEXT_LAYER_MIN_CHARS:
-                                text = layer
+                                raw = layer
                             elif ai_client is not None:
-                                text = ai_ocr_page(ai_client, jpeg, args.ocr_model)
+                                raw = ai_ocr_page(ai_client, jpeg, args.ocr_model)
                                 totals.pages_needing_ocr += 1
-                            # Quote/punctuation-only OCR output means a blank page.
-                            text = normalise_blank_text(text)
-                            if not text:
-                                # A story-range page with no extractable text: a
-                                # human should confirm it is genuinely wordless
-                                # rather than an OCR miss.
-                                page_needs_review = True
-                                page_review_note = (
-                                    "No text extracted for an in-story page "
-                                    "(blank page or OCR miss)"
-                                )
-                            elif not args.no_clean and ai_client is not None:
-                                # Junk-character clean-up + coherence judgement in
-                                # one call. Applies to text-layer and OCR text
-                                # alike (artifacts live in the text layer too).
-                                text, status, page_needs_review, page_review_note = (
-                                    ai_clean_text(ai_client, text, args.clean_model)
-                                )
-                                if status == "cleaned":
-                                    totals.pages_cleaned += 1
-                                elif status == "rejected":
-                                    totals.pages_clean_rejected += 1
-                            story_page_count += 1
-                            if text:
-                                book_story_text_parts.append(text)
-                            if page_needs_review:
-                                review_pages.append(page_number)
-                                review_notes.append((page_number, page_review_note))
-                                totals.pages_flagged += 1
-                        backend.write_document(
-                            "pages",
-                            page_document_id(book_id, page_number),
-                            build_page_doc(
-                                book_ref=book_ref,
-                                page_number=page_number,
-                                contains_story=in_story,
-                                text=text,
-                                now=now,
-                                needs_review=page_needs_review,
-                                review_note=page_review_note,
-                            ),
+                            # Quote/tag/punctuation-only output means a blank page.
+                            raw = normalise_blank_text(raw)
+                        page_rows.append(
+                            {"page_number": page_number, "in_story": in_story, "raw": raw}
                         )
-                        totals.pages += 1
                 finally:
                     pdf_doc.close()
+
+                # Pass 2: clean + judge each story page in context of its
+                # neighbouring story pages, then persist every page.
+                story_positions = [k for k, r in enumerate(page_rows) if r["in_story"]]
+                for sp, k in enumerate(story_positions):
+                    row = page_rows[k]
+                    prev_text = page_rows[story_positions[sp - 1]]["raw"] if sp > 0 else ""
+                    next_text = (
+                        page_rows[story_positions[sp + 1]]["raw"]
+                        if sp < len(story_positions) - 1
+                        else ""
+                    )
+                    text = row["raw"]
+                    needs_review = False
+                    priority = ""
+                    note = ""
+                    if not args.no_clean and ai_client is not None:
+                        text, status, needs_review, priority, note = ai_clean_and_judge(
+                            ai_client, row["raw"], prev_text, next_text, args.clean_model
+                        )
+                        if status == "cleaned":
+                            totals.pages_cleaned += 1
+                        elif status == "rejected":
+                            totals.pages_clean_rejected += 1
+                    row["text"] = text
+                    row["needs_review"] = needs_review
+                    row["priority"] = priority
+                    row["note"] = note
+                    if text:
+                        book_story_text_parts.append(text)
+                    if needs_review:
+                        review_pages.append(row["page_number"])
+                        review_notes.append((row["page_number"], priority, note))
+                        totals.pages_flagged += 1
+                        if priority == "high":
+                            totals.pages_flagged_high += 1
+
+                for row in page_rows:
+                    if row["in_story"]:
+                        story_page_count += 1
+                    backend.write_document(
+                        "pages",
+                        page_document_id(book_id, row["page_number"]),
+                        build_page_doc(
+                            book_ref=book_ref,
+                            page_number=row["page_number"],
+                            contains_story=row["in_story"],
+                            text=row.get("text", "") if row["in_story"] else "",
+                            now=now,
+                            needs_review=row.get("needs_review", False),
+                            review_note=row.get("note", ""),
+                            review_priority=row.get("priority", ""),
+                        ),
+                    )
+                    totals.pages += 1
             else:
                 # Dry-run accounting: count planned pages / story pages / OCR
                 # needs without rendering or writing. The cross-check uses the
@@ -1498,8 +1597,9 @@ def plan_and_run(args) -> int:
         else:
             totals.no_reference.append(book.title)
 
+        high_priority = any(pri == "high" for _, pri, _ in review_notes)
         if review_pages:
-            totals.books_flagged.append((book.title, list(review_pages)))
+            totals.books_flagged.append((book.title, list(review_pages), high_priority))
 
         # --- Book document (the record every page/character references) -------
         backend.write_document(
@@ -1516,6 +1616,7 @@ def plan_and_run(args) -> int:
                 character_refs=character_refs,
                 needs_review=bool(review_pages),
                 review_pages=review_pages,
+                high_priority_review=high_priority,
                 now=now,
             ),
         )
@@ -1548,8 +1649,9 @@ def plan_and_run(args) -> int:
         if review_pages:
             print(f"    flagged     : {len(review_pages)} page(s) need review "
                   f"(re-extract / human read):")
-            for pnum, note in review_notes:
-                print(f"        - page {pnum}: {note or '(no reason given)'}")
+            for pnum, pri, note in review_notes:
+                tag = "HIGH" if pri == "high" else "normal"
+                print(f"        - page {pnum} [{tag}]: {note or '(no reason given)'}")
         if sample_page_text and not args.execute:
             print(f"    sample text : page {sample_page_text[0]}: {sample_page_text[1]!r}")
         print()
@@ -1573,13 +1675,16 @@ def plan_and_run(args) -> int:
         print(f"  story pages junk-cleaned    : {totals.pages_cleaned}")
         print(f"  clean rewrites rejected by guard (kept original) : {totals.pages_clean_rejected}")
         print(f"  pages flagged needs_review  : {totals.pages_flagged} "
-              f"(across {len(totals.books_flagged)} books)")
+              f"({totals.pages_flagged_high} high-priority) across "
+              f"{len(totals.books_flagged)} books")
     print()
 
     if args.execute and totals.books_flagged:
-        print("FLAGGED FOR REVIEW (incoherent text — re-extract / human read)")
-        for title, pages in totals.books_flagged:
-            print(f"  - {title}: pages {', '.join(str(p) for p in pages)}")
+        print("FLAGGED FOR REVIEW (fails coherence and/or context-fit)")
+        print("  [HIGH] = fails both checks (strongest re-extract / human-read signal)")
+        for title, pages, high in totals.books_flagged:
+            tag = " [HIGH]" if high else ""
+            print(f"  - {title}{tag}: pages {', '.join(str(p) for p in pages)}")
         print()
 
     # --- Text cross-check summary ----------------------------------------
