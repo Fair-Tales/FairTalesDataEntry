@@ -66,6 +66,19 @@ class BookForm:
     isbn_prefill_caption = "ℹ Metadata pre-filled from ISBN lookup — please verify."
     submit_button = "Submit"
     title_required = "Book title is required."
+    # Shown beneath a metadata selectbox when the value was pre-filled from the
+    # photo extraction, so the user understands the field is already populated and
+    # will be confirmed on the following step (#155).
+    ai_prefill_author_caption = (
+        "✓ Found by AI from your photos — you'll confirm the author on the next step."
+    )
+    ai_prefill_illustrator_caption = (
+        "✓ Found by AI from your photos — you'll confirm the illustrator on the next step."
+    )
+    ai_prefill_publisher_caption = (
+        "✓ Found by AI from your photos — you'll confirm the publisher on the next step."
+    )
+    ai_prefill_year_caption = "✓ Year first published found by AI from your photos."
 
 
 class AuthorForm:
@@ -100,34 +113,19 @@ class AuthorForm:
     cancel_text = "Cancel entering new author."
 
 class IllustratorForm:
+    # Simplified to a single name field, mirroring PublisherForm (#156). The
+    # illustrator no longer captures forename/surname/gender; it is a plain name,
+    # pre-filled from the photo extraction like the publisher.
     header = "Please enter illustrator details."
-    gender_options = ["Woman", "Man", "Non-binary", "Other", "Unknown"]
-    gender_prompt = """
-        Click "Look up gender" to auto-fill the gender using web search,
-        or select manually. If it is not clear, please select `Unknown`.
-    """
-    lookup_help = (
-        "Use AI web search to suggest the illustrator's gender based on the name "
-        "entered above (and the book title, when known, to identify the right person)."
-    )
     illustrator_exists = """
         This illustrator already exists in the database. Please either select them from the
         dropdown menu above, or enter a unique name for your new illustrator.
     """
 
     # --- to_form() widget labels (data_structures/illustrator.py) ---
-    forename_label = "First name"
-    surname_label = "Surname"
-    gender_label = "Gender"
+    name_label = "Name"
     submit_button = "Submit"
-    lookup_button = "Look up gender"
-    lookup_spinner = "Looking up gender…"
-    lookup_failed = (
-        "Couldn't find a reliable gender for this name — please select it "
-        "manually."
-    )
-    lookup_no_name = "Please enter a first name or surname before looking up."
-    name_required = "Illustrator first name and surname are required."
+    name_required = "Illustrator name is required."
     cancel_text = "Cancel entering new illustrator."
 
 class PublisherForm:
@@ -222,6 +220,24 @@ class BookPhotoEntry:
     uploads_in_progress = (
         "Your photos are still uploading. Please wait for every progress bar to "
         "finish, then click **Go** again."
+    )
+
+    # Automatic photo-first pipeline (#155). Once the upload finishes the app runs
+    # the extraction on its own (no click) — these strings drive the auto-poll
+    # status line, the "reading now" progress message, and the manual fallback.
+    auto_upload_waiting = (
+        "Waiting for your photos… select your book photos above and they'll be "
+        "read automatically once they finish uploading."
+    )
+    auto_upload_progress = "{n} photo(s) uploaded so far — waiting for the rest…"
+    auto_upload_timeout = (
+        "Still waiting for uploads to finish. If they're all done, use the "
+        "**Go** button below to read the book now."
+    )
+    auto_reading = "Photos uploaded — reading your book automatically…"
+    manual_read_help = (
+        "You don't normally need this — reading starts automatically once your "
+        "photos finish uploading. Use it only if the automatic read doesn't begin."
     )
 
 

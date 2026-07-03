@@ -12,15 +12,22 @@ check_authentication_status()
 
 def _person_name_from_ref(ref):
     """Resolve an author/illustrator value to a display name, tolerant of legacy
-    data: a Firestore DocumentReference (-> 'forename surname'), a plain string
-    stored instead of a reference (used directly), a deleted/empty doc, or a
-    missing value (-> the Unknown label)."""
+    data: a Firestore DocumentReference (-> single ``name`` field, or the legacy
+    'forename surname' pair), a plain string stored instead of a reference (used
+    directly), a deleted/empty doc, or a missing value (-> the Unknown label).
+
+    Illustrators are now stored as a single ``name`` field (#156); authors and
+    legacy illustrator records still use forename/surname, so prefer ``name`` when
+    present and fall back to joining forename/surname."""
     if ref is None:
         return UserHome.unknown
     if isinstance(ref, str):
         return ref.replace('_', ' ').strip() or UserHome.unknown
     if hasattr(ref, 'get'):
         data = ref.get().to_dict() or {}
+        name = (data.get('name') or '').strip()
+        if name:
+            return name
         return ' '.join(
             [data.get('forename', ''), data.get('surname', '')]
         ).strip() or UserHome.unknown
@@ -146,6 +153,12 @@ def add_book_from_photos():
         'extracted_illustrator_name', 'extracted_publisher_name',
         'photo_first_pages', 'book_extraction', 'book_extraction_raw',
         '_upload_pipeline_done',
+        # Photo-first AI pre-fill captions (#155/#150) and the auto-run poll state
+        # so a fresh photo entry doesn't inherit the previous book's flags.
+        'ai_prefilled_author', 'ai_prefilled_illustrator',
+        'ai_prefilled_publisher', 'ai_prefilled_year',
+        'photos_ready_auto', 'photo_extract_empty', 'photo_extract_diag',
+        '_auto_last_count', '_auto_polls',
     ):
         st.session_state.pop(_key, None)
     # Start a fresh direct-to-S3 upload session (#114) so the new entry mints its

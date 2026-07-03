@@ -8,15 +8,17 @@ from .publisher import Publisher
 from datetime import date
 
 def _new_person(person_cls, extracted_key):
-    """Create a fresh Author/Illustrator, seeding forename/surname from a name
-    extracted by the photo-first flow (#59) if one is pending in session state.
+    """Create a fresh Author, seeding forename/surname from a name extracted by
+    the photo-first flow (#59) if one is pending in session state.
 
-    The extracted name is consumed (popped) so it only pre-fills the sub-form
-    once. Returns the new, unregistered person object.
+    Used for the Author sub-entity only; the Illustrator is now a single-name
+    entity (#156) handled inline like the Publisher below. The extracted name is
+    consumed (popped) so it only pre-fills the sub-form once. Returns the new,
+    unregistered person object.
     """
     person = person_cls()
     # Starting a fresh sub-entity: drop any persisted form-widget state so the
-    # new Author/Illustrator form re-seeds from value=/index= (see #80).
+    # new Author form re-seeds from value=/index= (see #80).
     clear_entity_form_state(f"{person_cls.__name__.lower()}_form_")
     extracted = st.session_state.pop(extracted_key, None)
     if extracted:
@@ -24,6 +26,22 @@ def _new_person(person_cls, extracted_key):
         person.forename = forename
         person.surname = surname
     return person
+
+
+def _new_named(entity_cls, form_prefix, extracted_key):
+    """Create a fresh single-name entity (Illustrator #156 / Publisher), seeding
+    its ``name`` from a photo-extracted value if one is pending in session state.
+
+    Drops any persisted widget state for the entity's form so a new (empty
+    document_id) record re-seeds from ``value=`` rather than inheriting the
+    previous one (see #80). Returns the new, unregistered entity.
+    """
+    clear_entity_form_state(form_prefix)
+    entity = entity_cls()
+    extracted = st.session_state.pop(extracted_key, None)
+    if extracted:
+        entity.name = extracted
+    return entity
 
 def add_book_entries(self):
     if 'adding_book_entries' not in st.session_state or not st.session_state['adding_book_entries']:
@@ -36,19 +54,17 @@ def add_book_entries(self):
         else:
             st.session_state['current_author'] = self.author.get()
         if self.illustrator is None:
-            st.session_state['current_illustrator'] = _new_person(Illustrator, 'extracted_illustrator_name')
+            # Illustrator is now a single-name entity (#156), mirroring Publisher.
+            st.session_state['current_illustrator'] = _new_named(
+                Illustrator, "illustrator_form_", 'extracted_illustrator_name'
+            )
             navigate_to("./pages/add_illustrator.py")
         else:
             st.session_state['current_illustrator'] = self.illustrator.get()
         if self.publisher is None:
-            # Starting a fresh Publisher: drop any persisted form-widget state so
-            # the new Publisher form re-seeds from value=/index= (see #80).
-            clear_entity_form_state("publisher_form_")
-            new_publisher = Publisher()
-            extracted_publisher = st.session_state.pop('extracted_publisher_name', None)
-            if extracted_publisher:
-                new_publisher.name = extracted_publisher
-            st.session_state['current_publisher'] = new_publisher
+            st.session_state['current_publisher'] = _new_named(
+                Publisher, "publisher_form_", 'extracted_publisher_name'
+            )
             navigate_to("./pages/add_publisher.py")
         else:
             st.session_state['current_publisher'] = self.publisher.get()
@@ -97,6 +113,10 @@ def form_content(self):
     index = published_index,
     key=f"book_form_published_{key_suffix}"
     ))
+    # Photo-first AI pre-fill notice (#155/#150): tell the user the year was read
+    # from their photos so they understand it's already populated.
+    if st.session_state.get('ai_prefilled_year'):
+        st.caption(BookForm.ai_prefill_year_caption)
     st.write(Instructions.author_publisher_illustrator_select)
 
     author_options = [BookForm.new_author_option] + list(
@@ -115,6 +135,10 @@ def form_content(self):
         help=BookForm.author_help,
         key=f"book_form_author_{key_suffix}"
     )
+    # "Found by AI" caption so the user knows the author was pre-filled from their
+    # photos and will be confirmed on the next step (#155).
+    if st.session_state.get('ai_prefilled_author'):
+        st.caption(BookForm.ai_prefill_author_caption)
 
     publisher_options = [None] + list(
         st.session_state['publisher_dict'].keys()
@@ -137,6 +161,8 @@ def form_content(self):
         format_func = lambda x: BookForm.new_publisher_option if x == None else x,
         key=f"book_form_publisher_{key_suffix}"
     )
+    if st.session_state.get('ai_prefilled_publisher'):
+        st.caption(BookForm.ai_prefill_publisher_caption)
 
     illustrator_options = [None] + list(
         st.session_state['illustrator_dict'].keys()
@@ -156,6 +182,8 @@ def form_content(self):
         format_func = lambda x: BookForm.new_illustrator_option if x == None else x,
         key=f"book_form_illustrator_{key_suffix}"
     )
+    if st.session_state.get('ai_prefilled_illustrator'):
+        st.caption(BookForm.ai_prefill_illustrator_caption)
 
     values = [
         BookForm.theme_options[theme]

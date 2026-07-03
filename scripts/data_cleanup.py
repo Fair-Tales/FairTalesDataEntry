@@ -512,6 +512,11 @@ class FirestoreS3Backend(CleanupBackend):
 # ---------------------------------------------------------------------------
 
 def _person_name(data: dict) -> str:
+    # Illustrators now store a single ``name`` field (#156); authors and legacy
+    # illustrator records use forename/surname. Prefer ``name`` when present.
+    name = (data.get("name") or "").strip()
+    if name:
+        return name
     return " ".join(p for p in (data.get("forename", ""), data.get("surname", "")) if p).strip()
 
 

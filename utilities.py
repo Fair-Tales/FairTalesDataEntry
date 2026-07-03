@@ -550,11 +550,19 @@ def send_password_reset_email(send_to, username, reset_token, name):
 
 def author_entry_to_name(entry):
     """
-    Helper method converts an author entry from the Firestore database
-    to a readable string as 'forename surname'.
+    Helper method converts an author/illustrator entry from the Firestore
+    database to a readable display name.
+
+    Illustrators are now stored as a single ``name`` field (#156), while authors
+    (and legacy illustrator records) still store ``forename``/``surname``. Prefer
+    a populated ``name`` when present, otherwise fall back to joining
+    ``forename``/``surname`` so both shapes render correctly.
     """
-    author = entry.to_dict()
-    return ' '.join([author['forename'], author['surname']])
+    data = entry.to_dict()
+    name = (data.get('name') or '').strip()
+    if name:
+        return name
+    return ' '.join([data.get('forename', ''), data.get('surname', '')]).strip()
 
 
 def extract_isbn(text):
@@ -632,8 +640,8 @@ def lookup_person_details(name, role, client, book_title=None):
     right person (#113). Date of birth is no longer looked up (#149) — the forms
     only consume gender.
 
-    Returns a dict with 'gender' (str from
-    AuthorForm/IllustratorForm.gender_options), or None on any failure. A clean
+    Returns a dict with 'gender' (str from ``_PERSON_GENDER_OPTIONS``, the same
+    set AuthorForm.gender_options offers), or None on any failure. A clean
     "no reliable info found" result is returned as ``{'gender': 'Unknown'}``
     rather than a confident wrong guess.
     """
