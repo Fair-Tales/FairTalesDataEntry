@@ -46,9 +46,12 @@ def extract_page_info(image_bytes, client, *, book=None, page_number=None,
                       page_name=None, flow=None):
     """Return (text, is_story_page, page_type) by sending image bytes to Claude Sonnet.
 
-    Uses the shared ``vision_json`` helper (#129). The image is sent at full
-    resolution (``downscale=False``) — this is the corrected page image whose text
-    we are OCR-ing, so we do not shrink it.
+    Uses the shared ``vision_json`` helper (#129). The corrected page image is
+    downscaled for the vision call (``downscale=True``): Claude downsamples every
+    image to ~1.15 MP server-side anyway, so full resolution gives no OCR benefit
+    and a large full-res page (e.g. a 16 MB hi-res photo) breaches Claude's 10 MB
+    per-image limit and is rejected with a 400 — which previously failed every page
+    of such a book (#132 diagnosis).
 
     On an extraction FAILURE — an Anthropic API error, or a reply that cannot be
     parsed as usable JSON — the full detail (book, page, error type + message,
@@ -80,7 +83,7 @@ def extract_page_info(image_bytes, client, *, book=None, page_number=None,
 
     try:
         data, raw = vision_json(
-            client, [image_bytes], AIPrompts.page_extraction, downscale=False,
+            client, [image_bytes], AIPrompts.page_extraction, downscale=True,
         )
     except anthropic.AnthropicError as exc:
         _log_and_raise(type(exc).__name__, str(exc))
