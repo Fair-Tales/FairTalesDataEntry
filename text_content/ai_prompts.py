@@ -1,16 +1,32 @@
 class AIPrompts:
 
     rotation_angle = (
-        "By how many degrees clockwise should this image be rotated so that "
-        "the book page text reads horizontally? "
-        "Reply with a single integer between -180 and 180. "
-        "Reply with 0 if the text is already horizontal or there is no clear text."
+        "This is a photo of a single book page. It may have been captured "
+        "rotated sideways, or completely upside down.\n"
+        "By how many degrees CLOCKWISE must the whole image be rotated so that "
+        "the text reads the right way up — upright and left-to-right, as you "
+        "would hold the book to read it (NOT upside down and NOT sideways)?\n"
+        "Look carefully at the shapes of the letters to judge which way is up. "
+        "Upside-down text still lies along horizontal lines, so 'the lines look "
+        "horizontal' is NOT enough — the individual letters must be the right "
+        "way up.\n"
+        "Answer with EXACTLY one of these four numbers and nothing else:\n"
+        "0   = already upright, no rotation needed\n"
+        "90  = rotate a quarter turn clockwise\n"
+        "180 = upside down; rotate a half turn\n"
+        "270 = rotate a quarter turn anticlockwise (i.e. three-quarters "
+        "clockwise)\n"
+        "If there is no legible text, answer 0."
     )
 
     crop_quality_check = (
-        "Does this image show a properly cropped book page — "
-        "text roughly horizontal, the page filling most of the frame, "
-        "and no significant content cut off? "
+        "Does this image show a properly cropped book page that is the RIGHT "
+        "WAY UP? Answer 'yes' only if ALL of these hold: the text is upright "
+        "and reads left-to-right the normal way (NOT upside down and NOT "
+        "sideways); the page fills most of the frame; and no significant "
+        "content is cut off. Remember that upside-down text still lies along "
+        "horizontal lines, so check that the letters themselves are the right "
+        "way up, not merely that the lines are horizontal. "
         "Answer only: yes or no."
     )
 
@@ -49,26 +65,20 @@ Book text:
 
     person_lookup = (
         "You are a meticulous children's book archivist. Use web search to "
-        "establish the birth year and gender of {name}, a children's book "
-        "{role}{context}.\n\n"
-        "Treat the two facts independently — the birth year is usually easier "
-        "to verify than gender, so report it even when gender stays uncertain:\n\n"
-        "1. BIRTH YEAR — the 4-digit year this person was born. If you cannot "
-        "find an exact year but the sources establish an approximate decade or "
-        "active/publishing period, give your single best-estimate year rather "
-        "than null. Use null ONLY when you have no reliable basis for any "
-        "estimate.\n"
-        "2. GENDER — this person's gender identity, using EXACTLY one of: "
+        "establish the gender of {name}, a children's book {role}{context}.\n\n"
+        "The book title is the key piece of context — use it to make sure you "
+        "have identified the RIGHT person before reporting anything, especially "
+        "for common names.\n\n"
+        "GENDER — this person's gender identity, using EXACTLY one of: "
         '"Woman", "Man", "Non-binary", "Other", or "Unknown". Use "Unknown" '
         "whenever the sources do not make it clear — do not guess.\n\n"
         "Do not fabricate details. If web search turns up nothing about this "
-        "specific person, return null for the birth year and \"Unknown\" for "
-        "the gender — never invent a value or borrow details from a different "
-        "person who merely shares the name.\n\n"
+        "specific person, return \"Unknown\" for the gender — never invent a "
+        "value or borrow details from a different person who merely shares the "
+        "name.\n\n"
         "Respond with ONE line of valid JSON and nothing else — no commentary, "
         "no markdown code fence:\n"
-        '{{"birth_year": <4-digit integer or null>, "gender": "<one of the '
-        'five values above>"}}'
+        '{{"gender": "<one of the five values above>"}}'
     )
 
     # --- Character + alias detection (issue #52) ---------------------------

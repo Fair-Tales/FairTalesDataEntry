@@ -1,7 +1,6 @@
 import streamlit as st
 from text_content import PublisherForm
 from .base_structure import DataStructureBase, Field
-from datetime import date
 
 
 class Publisher(DataStructureBase):
@@ -9,7 +8,6 @@ class Publisher(DataStructureBase):
     fields = {
         'is_registered': False,
         'name': "",
-        'founding_year': 1970,
         'entered_by': None,
         'datetime_created': -1,
         'last_updated': -1
@@ -21,7 +19,6 @@ class Publisher(DataStructureBase):
 
     form_fields = {
         'name': 'Name',
-        'founding_year': 'Founding year',
     }
 
     ref_fields = []
@@ -50,20 +47,6 @@ class Publisher(DataStructureBase):
             PublisherForm.name_label, value=self.name,
             key=f"publisher_form_name_{key_suffix}"
         ).strip()
-
-        year_given = int(st.selectbox(
-            PublisherForm.founding_year_label,
-            options = (x for x in ([-1, -2]+[y for y in range(1900, (date.today().year + 1))])),
-            index=0,
-            placeholder=PublisherForm.founding_year_placeholder,
-            format_func = lambda x: PublisherForm.founding_year_unknown if x == -1 else (PublisherForm.founding_year_earlier if x == -2 else str(x)),
-            key=f"publisher_form_founding_year_{key_suffix}"
-        ))
-
-        if year_given > 0:
-            self.founding_year = year_given
-        else:
-            self.founding_year = None
 
         submitted = st.form_submit_button(
             PublisherForm.submit_button, key=f"publisher_form_submit_{key_suffix}"

@@ -66,17 +66,31 @@ class BookForm:
     isbn_prefill_caption = "ℹ Metadata pre-filled from ISBN lookup — please verify."
     submit_button = "Submit"
     title_required = "Book title is required."
+    # Shown beneath a metadata selectbox when the value was pre-filled from the
+    # photo extraction, so the user understands the field is already populated and
+    # will be confirmed on the following step (#155).
+    ai_prefill_author_caption = (
+        "✓ Found by AI from your photos — you'll confirm the author on the next step."
+    )
+    ai_prefill_illustrator_caption = (
+        "✓ Found by AI from your photos — you'll confirm the illustrator on the next step."
+    )
+    ai_prefill_publisher_caption = (
+        "✓ Found by AI from your photos — you'll confirm the publisher on the next step."
+    )
+    ai_prefill_year_caption = "✓ Year first published found by AI from your photos."
 
 
 class AuthorForm:
     header = "Please enter author details."
     gender_options = ["Woman", "Man", "Non-binary", "Other", "Unknown"]
     gender_prompt = """
-        Click "Look up birth year and gender" to auto-fill these fields using web search,
+        Click "Look up gender" to auto-fill the gender using web search,
         or select manually. If it is not clear, please select `Unknown`.
     """
     lookup_help = (
-        "Use AI web search to suggest birth year and gender based on the name entered above."
+        "Use AI web search to suggest the author's gender based on the name entered "
+        "above (and the book title, when known, to identify the right person)."
     )
     author_exists = """
         This author already exists in the database. Please either select them from the
@@ -86,69 +100,43 @@ class AuthorForm:
     # --- to_form() widget labels (data_structures/author.py) ---
     forename_label = "First name"
     surname_label = "Surname"
-    birth_year_label = "What is the author's birth year?"
-    birth_year_placeholder = "Select year of birth"
-    birth_year_unknown = "I don't know"
-    birth_year_earlier = "Earlier year"
     gender_label = "Gender"
     submit_button = "Submit"
-    lookup_button = "Look up birth year and gender"
-    lookup_spinner = "Looking up birth year and gender…"
+    lookup_button = "Look up gender"
+    lookup_spinner = "Looking up gender…"
     lookup_failed = (
-        "Couldn't find reliable birth year / gender details for this name — "
-        "please enter them manually."
+        "Couldn't find a reliable gender for this name — please select it "
+        "manually."
     )
     lookup_no_name = "Please enter a first name or surname before looking up."
     name_required = "Author first name and surname are required."
     cancel_text = "Cancel entering new author."
 
 class IllustratorForm:
+    # Simplified to a single name field, mirroring PublisherForm (#156). The
+    # illustrator no longer captures forename/surname/gender; it is a plain name,
+    # pre-filled from the photo extraction like the publisher.
     header = "Please enter illustrator details."
-    gender_options = ["Woman", "Man", "Non-binary", "Other", "Unknown"]
-    gender_prompt = """
-        Click "Look up birth year and gender" to auto-fill these fields using web search,
-        or select manually. If it is not clear, please select `Unknown`.
-    """
-    lookup_help = (
-        "Use AI web search to suggest birth year and gender based on the name entered above."
-    )
     illustrator_exists = """
         This illustrator already exists in the database. Please either select them from the
         dropdown menu above, or enter a unique name for your new illustrator.
     """
 
     # --- to_form() widget labels (data_structures/illustrator.py) ---
-    forename_label = "First name"
-    surname_label = "Surname"
-    birth_year_label = "What is the illustrator's birth year?"
-    birth_year_placeholder = "Select year of birth"
-    birth_year_unknown = "I don't know"
-    birth_year_earlier = "Earlier year"
-    gender_label = "Gender"
+    name_label = "Name"
     submit_button = "Submit"
-    lookup_button = "Look up birth year and gender"
-    lookup_spinner = "Looking up birth year and gender…"
-    lookup_failed = (
-        "Couldn't find reliable birth year / gender details for this name — "
-        "please enter them manually."
-    )
-    lookup_no_name = "Please enter a first name or surname before looking up."
-    name_required = "Illustrator first name and surname are required."
+    name_required = "Illustrator name is required."
     cancel_text = "Cancel entering new illustrator."
 
 class PublisherForm:
     header = "Please enter publisher details."
     publisher_exists = """
-        This publisher already exists in the database. Please either select them from the 
+        This publisher already exists in the database. Please either select them from the
         dropdown menu above, or enter a unique name for your new publisher.
     """
 
     # --- to_form() widget labels (data_structures/publisher.py) ---
     name_label = "Name"
-    founding_year_label = "Which year was the publisher founded?"
-    founding_year_placeholder = "Select year of founding"
-    founding_year_unknown = "I don't know"
-    founding_year_earlier = "Earlier year"
     submit_button = "Submit"
     name_required = "Publisher name is required."
     cancel_text = "Cancel entering new publisher."
@@ -157,7 +145,7 @@ class PublisherForm:
 class BookPhotoEntry:
     """Strings for the photo-initiated ("photos first") book entry flow (#59)."""
 
-    menu_label = "Add from Photos"
+    menu_label = "Add book"
     header = "Add a book from photos"
     instructions = (
         "Upload photos of the book to get started. We'll read the details and use "
@@ -182,7 +170,7 @@ class BookPhotoEntry:
     extract_empty = (
         "We couldn't extract any details from those photos. You can still add the "
         "book — tap below to enter the details manually (your photos are kept), or "
-        "re-take a clearer shot of the title page and try Read the book again."
+        "re-take a clearer shot of the title page and click Go again."
     )
     enter_manually_button = "Enter the book's details manually →"
     # Surfaced under an expander when extraction comes back empty, to help diagnose
@@ -205,9 +193,9 @@ class BookPhotoEntry:
     # assume the user is on a phone here — that's the "Go to phone" option.
     direct_upload_instructions = (
         "Choose **Select book photos** and pick every page of the book, including "
-        "the front and back covers. Each photo uploads directly to secure storage "
-        "— watch the progress bars, then choose **Read the book** once they have "
-        "all finished."
+        "the front and back covers. **The order doesn't matter** — your photos are "
+        "sorted by file name. Each photo uploads directly to secure storage; watch "
+        "the progress bars, then click **Go** once they have all finished uploading."
     )
     upload_select_button = "Select book photos"
     upload_component_hint = (
@@ -220,7 +208,7 @@ class BookPhotoEntry:
     # Shown per-file when a selected photo exceeds the client-side size cap; the
     # oversize file is skipped (not uploaded) and the rest of the batch proceeds.
     upload_too_large = "{name} is too large ({size} MB). The maximum is {max} MB — it was skipped."
-    read_button = "Read the book"
+    read_button = "Go"
     no_photos_uploaded = (
         "We couldn't find any uploaded photos yet. Please select your book photos "
         "above and wait for every progress bar to finish, then try again."
@@ -231,7 +219,25 @@ class BookPhotoEntry:
     checking_uploads = "Checking your photos have finished uploading..."
     uploads_in_progress = (
         "Your photos are still uploading. Please wait for every progress bar to "
-        "finish, then choose **Read the book** again."
+        "finish, then click **Go** again."
+    )
+
+    # Automatic photo-first pipeline (#155). Once the upload finishes the app runs
+    # the extraction on its own (no click) — these strings drive the auto-poll
+    # status line, the "reading now" progress message, and the manual fallback.
+    auto_upload_waiting = (
+        "Waiting for your photos… select your book photos above and they'll be "
+        "read automatically once they finish uploading."
+    )
+    auto_upload_progress = "{n} photo(s) uploaded so far — waiting for the rest…"
+    auto_upload_timeout = (
+        "Still waiting for uploads to finish. If they're all done, use the "
+        "**Go** button below to read the book now."
+    )
+    auto_reading = "Photos uploaded — reading your book automatically…"
+    manual_read_help = (
+        "You don't normally need this — reading starts automatically once your "
+        "photos finish uploading. Use it only if the automatic read doesn't begin."
     )
 
 
@@ -435,7 +441,7 @@ class EnterText:
     showing_original_caption = "Showing original photo"
     auto_corrected_caption = "✓ Auto-corrected"
     auto_correction_unavailable_caption = "⚠ Auto-correction unavailable — showing original photo"
-    edit_image_button = "✏ Edit image"
+    edit_image_button = "✏ Crop and rotate"
     enlarge_button = "🔍 Enlarge"
 
     # --- Text entry / navigation controls ---
@@ -947,6 +953,15 @@ class PhotoUpload:
         "{count} page(s) across the uploaded books couldn't be read "
         "automatically — you'll need to enter those manually."
     )
+    # Shown when no Anthropic API key is configured, so automatic text
+    # recognition (OCR) is skipped entirely and every page is saved blank for
+    # manual entry. Mirrors the batch (BatchBookEntry.no_api_key) and
+    # reconstruction (ReconstructOrphans.no_api_key) notices so the single-book
+    # page-upload flow never silently skips OCR with no message shown (#153).
+    no_api_key = (
+        "Automatic text recognition is unavailable because no AI API key is "
+        "configured — pages have been saved blank for you to enter by hand."
+    )
 
 
 class ReviewBooks:
@@ -982,7 +997,7 @@ class UserHome:
     publisher_label = "**Publisher:** {name}"
     illustrator_label = "**Illustrator:** {name}"
     book_expander = "{title}{year_str}  —  {author}"
-    author_expander = "{name}  —  b. {birth_year}  |  {gender}"
+    author_expander = "{name}  —  {gender}"
     no_books_for_author = "No books found for this author."
     books_label = "**Books:**"
 

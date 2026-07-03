@@ -191,9 +191,14 @@ else:
             # hidden so login behaves exactly as before.
             remember = False
             if remember_me_available():
+                # Default ON (#144): Streamlit Cloud clears in-memory session_state
+                # on every app restart (idle/1GB-memory pressure), so a session-only
+                # login drops the user after minutes. Persisting by default keeps
+                # archivists signed in across those restarts; they can untick it on a
+                # shared device.
                 remember = st.checkbox(
                     Login.remember_me_checkbox,
-                    value=False,
+                    value=True,
                     key="login_remember_me_checkbox",
                     help=Login.remember_me_help,
                 )

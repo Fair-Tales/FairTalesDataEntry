@@ -1,7 +1,7 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
 from st_keyup import st_keyup
-from text_content import Alerts, Instructions, old_books, BookPhotoEntry, BatchBookEntry, UserHome
+from text_content import Alerts, Instructions, old_books, BookPhotoEntry, UserHome
 from utilities import check_authentication_status, page_layout, navigate_to, clear_page_history, clear_entity_form_state
 from data_structures import Book
 from photo_upload import reset_upload_session
@@ -12,15 +12,22 @@ check_authentication_status()
 
 def _person_name_from_ref(ref):
     """Resolve an author/illustrator value to a display name, tolerant of legacy
-    data: a Firestore DocumentReference (-> 'forename surname'), a plain string
-    stored instead of a reference (used directly), a deleted/empty doc, or a
-    missing value (-> the Unknown label)."""
+    data: a Firestore DocumentReference (-> single ``name`` field, or the legacy
+    'forename surname' pair), a plain string stored instead of a reference (used
+    directly), a deleted/empty doc, or a missing value (-> the Unknown label).
+
+    Illustrators are now stored as a single ``name`` field (#156); authors and
+    legacy illustrator records still use forename/surname, so prefer ``name`` when
+    present and fall back to joining forename/surname."""
     if ref is None:
         return UserHome.unknown
     if isinstance(ref, str):
         return ref.replace('_', ' ').strip() or UserHome.unknown
     if hasattr(ref, 'get'):
         data = ref.get().to_dict() or {}
+        name = (data.get('name') or '').strip()
+        if name:
+            return name
         return ' '.join(
             [data.get('forename', ''), data.get('surname', '')]
         ).strip() or UserHome.unknown
@@ -103,11 +110,11 @@ def author_search():
                 author_ref = st.session_state['author_dict'][full_name]
                 author_data = author_ref.get().to_dict()
 
-                birth_year = author_data.get('birth_year')
-                birth_year_str = str(birth_year) if birth_year and birth_year > 0 else UserHome.unknown
+                # Author date of birth was dropped (#149); the expander now shows
+                # name + gender only.
                 gender = author_data.get('gender') or UserHome.not_recorded
 
-                with st.expander(UserHome.author_expander.format(name=full_name, birth_year=birth_year_str, gender=gender)):
+                with st.expander(UserHome.author_expander.format(name=full_name, gender=gender)):
                     books_df = st.session_state.firestore.get_by_field(
                         collection='books',
                         field='author',
@@ -146,6 +153,12 @@ def add_book_from_photos():
         'extracted_illustrator_name', 'extracted_publisher_name',
         'photo_first_pages', 'book_extraction', 'book_extraction_raw',
         '_upload_pipeline_done',
+        # Photo-first AI pre-fill captions (#155/#150) and the auto-run poll state
+        # so a fresh photo entry doesn't inherit the previous book's flags.
+        'ai_prefilled_author', 'ai_prefilled_illustrator',
+        'ai_prefilled_publisher', 'ai_prefilled_year',
+        'photos_ready_auto', 'photo_extract_empty', 'photo_extract_diag',
+        '_auto_last_count', '_auto_polls',
     ):
         st.session_state.pop(_key, None)
     # Start a fresh direct-to-S3 upload session (#114) so the new entry mints its
@@ -179,15 +192,14 @@ st.write(Instructions.advise_to_search)
 
 selected_option = option_menu(
     None,
-    [UserHome.menu_search_books, UserHome.menu_search_authors, UserHome.menu_add_book, BookPhotoEntry.menu_label, BatchBookEntry.menu_label, UserHome.menu_edit_books],
+    [UserHome.menu_search_books, UserHome.menu_search_authors, BookPhotoEntry.menu_label, UserHome.menu_edit_books],
     default_index=0,
-    icons=['search', 'search', 'database-add', 'camera', 'images', 'pencil-square'],
+    icons=['search', 'search', 'camera', 'pencil-square'],
     menu_icon="cast", orientation="horizontal",
     key="user_option_menu",
     styles={
-        # The menu now has 6 items and wraps to a second row on narrow phone
-        # screens. Vertical margin gives the wrapped row breathing room so its
-        # icon isn't clipped by the row above; the smaller font reduces wrapping.
+        # The menu has 4 items (Batch Upload and manual Add a Book are temporarily
+        # hidden for the pilot — #157); flex-wrap kept in case of narrow screens.
         "container": {"flex-wrap": "wrap", "padding": "0.25rem 0"},
         "nav-link": {"font-size": "13px", "text-align": "center", "margin": "4px 2px", "--hover-color": "#eee"},
         "nav-link-selected": {"background-color": "green"},
@@ -197,9 +209,7 @@ selected_option = option_menu(
 navigation_dict = {
     UserHome.menu_search_books: book_search,
     UserHome.menu_search_authors: author_search,
-    UserHome.menu_add_book: add_book,
     BookPhotoEntry.menu_label: add_book_from_photos,
-    BatchBookEntry.menu_label: add_books_batch,
     UserHome.menu_edit_books: review_my_books
 }
 

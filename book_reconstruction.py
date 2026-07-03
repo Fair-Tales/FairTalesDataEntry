@@ -181,36 +181,37 @@ def _report(progress, message):
 
 
 def _auto_lookup_person(person, role, client, book_title):
-    """Best-effort birth-year/gender enrichment for a freshly-created author or
-    illustrator (#113).
+    """Best-effort gender enrichment for a freshly-created author (#113/#149).
 
-    Mirrors the manual "Look up birth year and gender" button so pipeline-created
-    people aren't left blank. ``lookup_person_details`` swallows and logs its own
-    API/parse failures (returning ``None``), so a lookup miss simply leaves the
-    fields at their defaults and never aborts the reconstruction. Writes through
-    to Firestore via the ``Field`` descriptors, exactly as the form would.
+    Illustrators no longer carry a gender (single-name entity, #156), so this now
+    applies to authors only. Mirrors the manual "Look up gender" button so
+    pipeline-created people aren't
+    left blank. Date of birth is no longer looked up (#149).
+    ``lookup_person_details`` swallows and logs its own API/parse failures
+    (returning ``None``), so a lookup miss simply leaves the field at its default
+    and never aborts the reconstruction. Writes through to Firestore via the
+    ``Field`` descriptors, exactly as the form would.
     """
     suggestion = lookup_person_details(
         person.name.strip(), role, client, book_title=book_title
     )
     if not suggestion:
         return
-    if suggestion.get("birth_year"):
-        person.birth_year = suggestion["birth_year"]
     if suggestion.get("gender"):
         person.gender = suggestion["gender"]
 
 
 def _resolve_or_create_person(extracted_name, person_cls, dict_key, cache_clear,
                               *, client=None, book_title=None, role=None):
-    """Fuzzy-match ``extracted_name`` to an existing author/illustrator, else create
-    and register a new record. Returns the matched/created lookup-dict NAME key
-    (the value the ``Book`` ref-field setter resolves via the session dict), or
-    ``None`` when no usable name was extracted.
+    """Fuzzy-match ``extracted_name`` to an existing author, else create and
+    register a new record. Returns the matched/created lookup-dict NAME key (the
+    value the ``Book`` ref-field setter resolves via the session dict), or ``None``
+    when no usable name was extracted.
 
-    When a NEW person is registered and a ``client`` is supplied, best-effort
-    auto-runs the birth-year/gender lookup (#113) so the automated photo-first
-    pipeline populates these without a manual click.
+    Used for the Author only; the Illustrator is now a single-name entity handled
+    by :func:`_resolve_or_create_named` (#156). When a NEW author is registered and
+    a ``client`` is supplied, best-effort auto-runs the gender lookup (#113/#149)
+    so the automated photo-first pipeline populates it without a manual click.
     """
     if not extracted_name or not extracted_name.strip():
         return None
@@ -242,26 +243,35 @@ def _resolve_or_create_person(extracted_name, person_cls, dict_key, cache_clear,
     return person.name
 
 
-def _resolve_or_create_publisher(extracted_name):
-    """As :func:`_resolve_or_create_person` but for the single-field Publisher."""
+def _resolve_or_create_named(extracted_name, entity_cls, dict_key, cache_clear,
+                             *, collection):
+    """Fuzzy-match ``extracted_name`` to an existing single-name entity, else
+    create and register a new record. Returns the matched/created lookup-dict NAME
+    key (the value the ``Book`` ref-field setter resolves via the session dict), or
+    ``None`` when no usable name was extracted.
+
+    Shared by the single-field Publisher and the now single-field Illustrator
+    (#156): neither carries forename/surname or a gender lookup, so this is a
+    simpler sibling of :func:`_resolve_or_create_person`.
+    """
     if not extracted_name or not extracted_name.strip():
         return None
 
-    lookup = st.session_state.get("publisher_dict", {})
+    lookup = st.session_state.get(dict_key, {})
     match = fuzzy_match_name(extracted_name, list(lookup.keys()))
     if match is not None and match in lookup:
         return match
 
-    publisher = Publisher()
-    publisher.name = extracted_name.strip()
+    entity = entity_cls()
+    entity.name = extracted_name.strip()
     if not st.session_state["firestore"].document_exists(
-        collection="publishers", doc_id=publisher.document_id
+        collection=collection, doc_id=entity.document_id
     ):
-        publisher.register()
-    publisher_ref = publisher.get_ref()
-    st.session_state["publisher_dict"][publisher.name] = publisher_ref
-    load_publisher_dict.clear()
-    return publisher.name
+        entity.register()
+    entity_ref = entity.get_ref()
+    st.session_state[dict_key][entity.name] = entity_ref
+    cache_clear()
+    return entity.name
 
 
 def _apply_metadata_to_book(book, metadata, client=None):
@@ -288,16 +298,21 @@ def _apply_metadata_to_book(book, metadata, client=None):
 
     illustrators = metadata.get("illustrators") or []
     if illustrators:
-        illustrator_name = _resolve_or_create_person(
-            illustrators[0], Illustrator, "illustrator_dict", load_illustrator_dict.clear,
-            client=client, book_title=book_title, role="illustrator",
+        # Illustrator is now a single-name entity (#156), like Publisher — no
+        # forename/surname split and no gender lookup.
+        illustrator_name = _resolve_or_create_named(
+            illustrators[0], Illustrator, "illustrator_dict",
+            load_illustrator_dict.clear, collection="illustrators",
         )
         if illustrator_name is not None:
             book.illustrator = illustrator_name
 
     publisher = metadata.get("publisher")
     if publisher:
-        publisher_name = _resolve_or_create_publisher(publisher)
+        publisher_name = _resolve_or_create_named(
+            publisher, Publisher, "publisher_dict",
+            load_publisher_dict.clear, collection="publishers",
+        )
         if publisher_name is not None:
             book.publisher = publisher_name
 

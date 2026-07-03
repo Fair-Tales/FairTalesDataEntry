@@ -112,6 +112,16 @@ st.title(
 # replace them, rather than forcing the user back through the upload step.
 _book_id = st.session_state.current_book.document_id
 if (
+    st.session_state.get('photo_first_pages')
+    and not st.session_state.current_book.photos_uploaded
+):
+    # Photo-first flow (#59/#151): the page photos were already captured on the
+    # "Add book by photos" page and are held in memory under `photo_first_pages`.
+    # Do NOT show the upload chooser again — process the stashed photos straight
+    # through and forward to text entry. The manual flow (no stashed photos)
+    # still lands on the upload options below.
+    upload_widget(auto_forward=True)
+elif (
     st.session_state.current_book.photos_uploaded
     and st.session_state.get('_replacing_photos') != _book_id
 ):

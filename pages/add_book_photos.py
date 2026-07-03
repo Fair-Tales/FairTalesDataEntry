@@ -38,6 +38,7 @@ from photo_upload import (
     reset_upload_session,
     render_go_to_phone,
     uploads_settled,
+    list_uploaded_keys,
 )
 
 # Shared "Upload here / Go to phone" chooser styling, reused across the photo
@@ -96,12 +97,14 @@ def _apply_extracted_metadata(metadata):
     st.session_state['book_extraction_raw'] = metadata.get('raw')
     st.session_state['book_extraction'] = metadata
 
-    # Clear any leftover entity selections from a previous (cancelled) entry so
-    # only freshly matched/extracted values pre-fill the form.
+    # Clear any leftover entity selections / AI-prefill flags from a previous
+    # (cancelled) entry so only freshly matched/extracted values pre-fill the form.
     for _key in (
         'current_author', 'current_illustrator', 'current_publisher',
         'extracted_author_name', 'extracted_illustrator_name',
         'extracted_publisher_name', 'adding_book_entries',
+        'ai_prefilled_author', 'ai_prefilled_illustrator',
+        'ai_prefilled_publisher', 'ai_prefilled_year',
     ):
         st.session_state.pop(_key, None)
 
@@ -119,13 +122,18 @@ def _apply_extracted_metadata(metadata):
         # Safe: book is unregistered, so the write-through Field is a no-op here.
         book.title = title
 
+    # Flag each field the AI pre-filled so the Add-Book form can show a concise
+    # "Found by AI from your photos" caption next to it (#155). The year is the
+    # book's first-published year read from the copyright page (#150).
     year = metadata.get('published_year')
     if isinstance(year, int):
         book.published = year
+        st.session_state['ai_prefilled_year'] = True
 
     authors = metadata.get('authors') or []
     if authors:
         _match_person(authors[0], 'author_dict', 'extracted_author_name', 'current_author')
+        st.session_state['ai_prefilled_author'] = True
 
     illustrators = metadata.get('illustrators') or []
     if illustrators:
@@ -133,6 +141,7 @@ def _apply_extracted_metadata(metadata):
             illustrators[0], 'illustrator_dict',
             'extracted_illustrator_name', 'current_illustrator'
         )
+        st.session_state['ai_prefilled_illustrator'] = True
 
     publisher = metadata.get('publisher')
     if publisher:
@@ -142,6 +151,7 @@ def _apply_extracted_metadata(metadata):
             st.session_state['current_publisher'] = publisher_dict[match].get()
         else:
             st.session_state['extracted_publisher_name'] = publisher
+        st.session_state['ai_prefilled_publisher'] = True
 
 
 st.header(BookPhotoEntry.header)
@@ -180,78 +190,161 @@ else:
     # so the browser→S3 PUT still uses the app origin that the S3 CORS policy allows).
     st.iframe(build_uploader_html(put_urls), height=460)
 
+def _run_extraction(fs, *, check_settled):
+    """Fetch the uploaded photos, run the two-pass extraction, and either route to
+    the pre-filled Add-Book form (#155) or surface the "enter manually" state.
+
+    ``check_settled`` gates on ``uploads_settled`` for the manual "Go" button; the
+    automatic path skips it because the poll fragment has already confirmed the
+    upload count is stable (#142).
+    """
+    if check_settled:
+        # The uploader iframe is one-way, so gate reading on the temp prefix having
+        # stopped growing — otherwise reading mid-upload reads a PARTIAL batch
+        # (#142). See photo_upload.uploads_settled for the trade-off.
+        with st.spinner(BookPhotoEntry.checking_uploads):
+            settled, uploaded_keys = uploads_settled(fs, UPLOAD_FLOW_KEY, session_id)
+        if uploaded_keys and not settled:
+            st.warning(BookPhotoEntry.uploads_in_progress)
+            return
+
+    with st.spinner(BookPhotoEntry.reading_photos):
+        # List the temp prefix and pull the uploaded photos (in page order) into
+        # memory. See photo_upload.fetch_uploaded_photos for the memory tradeoff.
+        pages = fetch_uploaded_photos(fs, UPLOAD_FLOW_KEY, session_id)
+
+    if not pages:
+        st.warning(BookPhotoEntry.no_photos_uploaded)
+        # Drop the "ready" latch so the auto-poll can re-detect a later upload.
+        st.session_state.pop('photos_ready_auto', None)
+        return
+
+    # Reuse the existing in-memory pipeline: stash the downloaded photos so the
+    # downstream page-upload step (uploader.upload_widget) orientation-corrects,
+    # crops, OCRs and writes them to sawimages/{title}/ exactly as today, then
+    # cleans up this temp prefix.
+    st.session_state['photo_first_pages'] = pages
+
+    client = get_anthropic_client()
+    metadata = None
+    try:
+        with st.spinner(BookPhotoEntry.extracting):
+            # Auto-detect the title page (and the copyright page) via the Haiku
+            # locate pass — consistent with the batch flow; no manual selection.
+            # If detection is wrong, the user corrects the details on the form.
+            metadata = extract_photo_first_metadata(pages, client)
+    except anthropic.AnthropicError as exc:
+        st.error(BookPhotoEntry.extract_failed.format(error=exc))
+        st.session_state.pop('photos_ready_auto', None)
+        return
+
+    if metadata is None:
+        st.session_state.pop('photos_ready_auto', None)
+        return
+
+    has_any = bool(
+        metadata.get('title')
+        or metadata.get('authors')
+        or metadata.get('illustrators')
+        or metadata.get('publisher')
+        or metadata.get('published_year')
+        or metadata.get('isbn_metadata')
+    )
+    if has_any:
+        st.session_state.pop('photo_extract_empty', None)
+        _apply_extracted_metadata(metadata)
+        # Photos are safely in photo_first_pages (memory) and the reuse pipeline
+        # writes them to sawimages/ from there, never re-reading this S3 buffer —
+        # so clear it now we are leaving the page (#124).
+        _cleanup_uploads()
+        navigate_to("./pages/add_book.py")
+    else:
+        # Nothing usable parsed. Keep the raw response + a diagnostic and flag the
+        # empty state so the "enter manually" UI below survives the rerun (the
+        # photos stay in photo_first_pages). Drop the auto latch so the poll does
+        # not re-trigger the same empty read every few seconds.
+        st.session_state['book_extraction_raw'] = metadata.get('raw')
+        st.session_state['book_extraction'] = metadata
+        st.session_state['photo_extract_empty'] = True
+        st.session_state['photo_extract_diag'] = {
+            'pages': len(pages),
+            'located': metadata.get('located'),
+            'raw': metadata.get('raw'),
+        }
+        st.session_state.pop('photos_ready_auto', None)
+
+
+# --- Automatic upload-completion detection + auto-run (#155) -------------------
+# The direct-to-S3 uploader iframe is intentionally ONE-WAY: it cannot post a value
+# back to Streamlit. st.iframe / st.components.v1.html only report their frame
+# height (streamlit:setFrameHeight); a genuinely reactive "uploads finished" signal
+# needs a DECLARED bidirectional custom component (Streamlit.setComponentValue),
+# which is out of scope for this release. So completion is detected with a BOUNDED
+# auto-refresh POLL: an st.fragment reruns every few seconds and lists the temp
+# prefix; because the browser PUTs the selected photos sequentially, a still-running
+# upload shows as a growing key count, so a non-empty count that is unchanged across
+# two consecutive polls means the batch has finished. We then flag it and trigger a
+# full rerun that reads the book automatically — no click (#142 follow-up).
+# TRADE-OFF (flagged): the poll lists S3 every POLL_INTERVAL_SECONDS while the user
+# is on this page (cheap: one list per tick), and completion is INFERRED — a long
+# stall between two photos could read early, though the sequential PUTs + two-sample
+# gate make that unlikely. A fully reactive gate would need the declared component
+# above. The manual "Go" button below remains as a fallback.
+POLL_INTERVAL_SECONDS = 3
+MAX_IDLE_POLLS = 200  # ~10 min ceiling on idle polling before we defer to "Go".
+
+
+@st.fragment(run_every=POLL_INTERVAL_SECONDS)
+def _auto_upload_watcher(flow_key, sid):
+    # Stop once we've decided to read, hit the empty state, or (no API key) can't
+    # extract anyway. Returning early keeps the fragment cheap on later ticks.
+    if (
+        not ai_available
+        or st.session_state.get('photos_ready_auto')
+        or st.session_state.get('photo_extract_empty')
+    ):
+        return
+    fs = get_s3_filesystem()
+    keys = list_uploaded_keys(fs, flow_key, sid)
+    prev = st.session_state.get('_auto_last_count', 0)
+    st.session_state['_auto_last_count'] = len(keys)
+    if keys:
+        # Photos are arriving: reset the idle ceiling and show live progress.
+        st.session_state['_auto_polls'] = 0
+        st.caption(BookPhotoEntry.auto_upload_progress.format(n=len(keys)))
+        if len(keys) == prev:
+            # Non-empty count stable across two polls => the upload has finished.
+            st.session_state['photos_ready_auto'] = True
+            st.rerun()  # full-app rerun so the extraction below runs automatically
+    else:
+        polls = st.session_state.get('_auto_polls', 0) + 1
+        st.session_state['_auto_polls'] = polls
+        if polls >= MAX_IDLE_POLLS:
+            st.caption(BookPhotoEntry.auto_upload_timeout)
+        else:
+            st.caption(BookPhotoEntry.auto_upload_waiting)
+
+
+# Watch for the upload finishing and auto-run (works for both the upload-here and
+# go-to-phone methods, which land in the same prefix). Skipped without an API key.
+if ai_available:
+    _auto_upload_watcher(UPLOAD_FLOW_KEY, session_id)
+
+# Once the poll flags the upload complete, read the book automatically — no click.
+if st.session_state.get('photos_ready_auto') and not st.session_state.get('photo_extract_empty'):
+    st.info(BookPhotoEntry.auto_reading)
+    _run_extraction(get_s3_filesystem(), check_settled=False)
+
+# Manual fallback trigger, kept only for the rare case the automatic read does not
+# begin (e.g. the poll ceiling was reached). Normally the user never needs it.
 read_clicked = st.button(
     BookPhotoEntry.read_button,
     disabled=not ai_available,
+    help=BookPhotoEntry.manual_read_help,
     key="add_book_photos_read_button",
 )
-
 if read_clicked:
-    fs = get_s3_filesystem()
-    # The uploader iframe is one-way, so gate reading on the temp prefix having
-    # stopped growing — otherwise a click mid-upload would read a PARTIAL batch
-    # (#142). See photo_upload.uploads_settled for the trade-off.
-    with st.spinner(BookPhotoEntry.checking_uploads):
-        settled, uploaded_keys = uploads_settled(fs, UPLOAD_FLOW_KEY, session_id)
-
-    if uploaded_keys and not settled:
-        st.warning(BookPhotoEntry.uploads_in_progress)
-    else:
-        with st.spinner(BookPhotoEntry.reading_photos):
-            # List the temp prefix and pull the uploaded photos (in page order) into
-            # memory. See photo_upload.fetch_uploaded_photos for the memory tradeoff.
-            pages = fetch_uploaded_photos(fs, UPLOAD_FLOW_KEY, session_id)
-
-        if not pages:
-            st.warning(BookPhotoEntry.no_photos_uploaded)
-        else:
-            # Reuse the existing in-memory pipeline: stash the downloaded photos so
-            # the downstream page-upload step (uploader.upload_widget)
-            # orientation-corrects, crops, OCRs and writes them to sawimages/{title}/
-            # exactly as today, then cleans up this temp prefix.
-            st.session_state['photo_first_pages'] = pages
-
-            client = get_anthropic_client()
-            metadata = None
-            try:
-                with st.spinner(BookPhotoEntry.extracting):
-                    # Auto-detect the title page (and the copyright page) via the Haiku
-                    # locate pass — consistent with the batch flow; no manual selection.
-                    # If detection is wrong, the user corrects the details on the form.
-                    metadata = extract_photo_first_metadata(pages, client)
-            except anthropic.AnthropicError as exc:
-                st.error(BookPhotoEntry.extract_failed.format(error=exc))
-
-            if metadata is not None:
-                has_any = bool(
-                    metadata.get('title')
-                    or metadata.get('authors')
-                    or metadata.get('illustrators')
-                    or metadata.get('publisher')
-                    or metadata.get('published_year')
-                    or metadata.get('isbn_metadata')
-                )
-                if has_any:
-                    st.session_state.pop('photo_extract_empty', None)
-                    _apply_extracted_metadata(metadata)
-                    st.success(BookPhotoEntry.extract_success)
-                    # Photos are safely in photo_first_pages (memory) and the reuse
-                    # pipeline writes them to sawimages/ from there, never re-reading
-                    # this S3 buffer — so clear it now we are leaving the page (#124).
-                    _cleanup_uploads()
-                    navigate_to("./pages/add_book.py")
-                else:
-                    # Nothing usable parsed. Keep the raw response + a diagnostic and
-                    # flag the empty state so the "enter manually" UI below survives the
-                    # rerun (the photos stay in photo_first_pages).
-                    st.session_state['book_extraction_raw'] = metadata.get('raw')
-                    st.session_state['book_extraction'] = metadata
-                    st.session_state['photo_extract_empty'] = True
-                    st.session_state['photo_extract_diag'] = {
-                        'pages': len(pages),
-                        'located': metadata.get('located'),
-                        'raw': metadata.get('raw'),
-                    }
+    _run_extraction(get_s3_filesystem(), check_settled=True)
 
 # Persistent "couldn't extract — enter manually" state, rendered OUTSIDE the
 # read-click block so the proceed button survives the rerun the click triggers.
@@ -273,6 +366,9 @@ if st.session_state.get('photo_extract_empty'):
             'extracted_author_name', 'extracted_illustrator_name',
             'extracted_publisher_name', 'isbn_metadata', 'adding_book_entries',
             'photo_extract_empty', 'photo_extract_diag',
+            'ai_prefilled_author', 'ai_prefilled_illustrator',
+            'ai_prefilled_publisher', 'ai_prefilled_year',
+            'photos_ready_auto', '_auto_last_count', '_auto_polls',
         ):
             st.session_state.pop(_key, None)
         # Photos stay in photo_first_pages (memory) for the reuse pipeline, so the
@@ -285,6 +381,11 @@ if cancel_button:
     # Remove any photos already uploaded to the temp prefix so they don't orphan,
     # and drop the session id so the next entry mints a fresh prefix.
     _cleanup_uploads()
-    for _key in ('photo_first_pages', 'photo_extract_empty', 'photo_extract_diag'):
+    for _key in (
+        'photo_first_pages', 'photo_extract_empty', 'photo_extract_diag',
+        'photos_ready_auto', '_auto_last_count', '_auto_polls',
+        'ai_prefilled_author', 'ai_prefilled_illustrator',
+        'ai_prefilled_publisher', 'ai_prefilled_year',
+    ):
         st.session_state.pop(_key, None)
     st.switch_page("./pages/user_home.py")
