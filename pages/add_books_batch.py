@@ -28,6 +28,7 @@ the user to fill in later via the normal Edit-my-books flow.
 
 import streamlit as st
 import anthropic
+from streamlit_option_menu import option_menu
 
 from data_structures import Book, Page, ExtractionErrorLog
 from image_processing import exif_transpose_bytes
@@ -52,7 +53,14 @@ from photo_upload import (
     fetch_uploaded_photos,
     cleanup_prefix,
     reset_upload_session,
+    render_go_to_phone,
 )
+
+# Shared "Upload here / Go to phone" chooser styling (#143).
+_UPLOAD_MENU_STYLES = {
+    "nav-link": {"font-size": "15px", "text-align": "left", "margin": "0px", "--hover-color": "#eee"},
+    "nav-link-selected": {"background-color": "green"},
+}
 
 # Direct-to-S3 upload flow key (#118): namespaces the batch's temp prefix
 # (uploads/batch/{session_id}/) so it never collides with the other migrated
@@ -266,12 +274,28 @@ def _render_upload(client, ai_available):
     # Direct browser-to-S3 upload (#118): replaces st.file_uploader so the whole
     # batch PUTs straight from the device to S3 at full resolution, bypassing the
     # websocket that drops on mobile. Mint a stable temp prefix
-    # (uploads/batch/{session_id}/) + presigned PUT URLs; on "Detect books" we
-    # list the prefix to pull the photos (in page order) into memory and split.
-    st.write(BatchBookEntry.direct_upload_instructions)
+    # (uploads/batch/{session_id}/) once, then let the user pick HOW to fill it
+    # (#143): upload from this device, or scan a QR and upload from a phone. Both
+    # land in the SAME prefix, so "Detect books" below reads it either way.
     session_id = get_upload_session_id(UPLOAD_FLOW_KEY)
-    put_urls = generate_put_urls(UPLOAD_FLOW_KEY, session_id)
-    st.iframe(build_uploader_html(put_urls), height=460)
+
+    upload_method = option_menu(
+        None,
+        [PhotoUpload.method_upload_here, PhotoUpload.method_go_to_phone],
+        default_index=0,
+        icons=['laptop', 'phone'],
+        menu_icon="cast",
+        orientation="horizontal",
+        key="add_books_batch_upload_menu",
+        styles=_UPLOAD_MENU_STYLES,
+    )
+
+    if upload_method == PhotoUpload.method_go_to_phone:
+        render_go_to_phone(UPLOAD_FLOW_KEY, session_id)
+    else:
+        st.write(BatchBookEntry.direct_upload_instructions)
+        put_urls = generate_put_urls(UPLOAD_FLOW_KEY, session_id)
+        st.iframe(build_uploader_html(put_urls), height=460)
 
     detect = st.button(BatchBookEntry.detect_button, key="add_books_batch_detect_button")
     if st.button(BatchBookEntry.cancel_button, key="add_books_batch_cancel_upload_button"):
