@@ -25,7 +25,7 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 from st_keyup import st_keyup
 
-from text_content import Alerts, CollectionPicker
+from text_content import Alerts, CollectionPicker, PhotoUpload
 from utilities import (
     check_authentication_status,
     page_layout,
@@ -43,7 +43,14 @@ from photo_upload import (
     fetch_uploaded_photos,
     cleanup_prefix,
     reset_upload_session,
+    render_go_to_phone,
 )
+
+# Shared "Upload here / Go to phone" chooser styling (#143).
+_UPLOAD_MENU_STYLES = {
+    "nav-link": {"font-size": "13px", "text-align": "center", "margin": "4px 2px", "--hover-color": "#eee"},
+    "nav-link-selected": {"background-color": "green"},
+}
 
 check_authentication_status()
 page_layout(current_page="./pages/collection_picker.py")
@@ -318,14 +325,30 @@ def method_photo():
 
     # Direct browser-to-S3 upload (#118): replaces st.file_uploader so the native
     # photo picker no longer drops the websocket on mobile. Mint a stable temp
-    # prefix (uploads/collection/{session_id}/) + presigned PUT URLs; on "Read
-    # books" we list the prefix to pull the photos into memory. These cover/spine
-    # photos are transient — only used to read titles, NEVER archived as book
-    # pages — so the temp prefix is cleaned up straight after extraction.
-    st.write(CollectionPicker.photo_direct_upload_instructions)
+    # prefix (uploads/collection/{session_id}/) once, then let the user pick HOW to
+    # fill it (#143): upload from this device, or scan a QR and upload from a phone.
+    # Both land in the SAME prefix, so "Read books from photo(s)" reads it either
+    # way. These cover/spine photos are transient — only used to read titles, NEVER
+    # archived as book pages — so the temp prefix is cleaned up after extraction.
     session_id = get_upload_session_id("collection")
-    put_urls = generate_put_urls("collection", session_id)
-    st.iframe(build_uploader_html(put_urls), height=460)
+
+    upload_method = option_menu(
+        None,
+        [PhotoUpload.method_upload_here, PhotoUpload.method_go_to_phone],
+        default_index=0,
+        icons=["laptop", "phone"],
+        menu_icon="cast",
+        orientation="horizontal",
+        key="collection_photo_upload_menu",
+        styles=_UPLOAD_MENU_STYLES,
+    )
+
+    if upload_method == PhotoUpload.method_go_to_phone:
+        render_go_to_phone("collection", session_id)
+    else:
+        st.write(CollectionPicker.photo_direct_upload_instructions)
+        put_urls = generate_put_urls("collection", session_id)
+        st.iframe(build_uploader_html(put_urls), height=460)
 
     if st.button(
         CollectionPicker.photo_extract_button,

@@ -38,17 +38,20 @@ orphan whose folder name already equals the extracted title this simply
 reprocesses the photos in place. When the AI-extracted title differs from the
 original orphan folder name, the photos are re-written to the new canonical
 ``sawimages/{title}/`` folder (the bytes are already in memory, so nothing is
-lost) and the ORIGINAL orphan folder is left untouched — deletion is deliberately
-NOT performed here (it is a destructive op; the #120 cleanup CLI is the place to
-remove the now-redundant duplicate once the reconstructed book has been
-validated). The caller is told the source and destination folders so it can
-surface that to the admin.
+lost) and — on a SUCCESSFUL reconstruction — the now-redundant ORIGINAL orphan
+folder is deleted (#136), so it stops re-appearing in the Reconstruct-orphans
+list (which otherwise reads as "it didn't work"). The deletion is guarded (it
+never touches the canonical folder) and best-effort (S3 errors are swallowed and
+logged, never failing the already-committed book). The caller is told the source
+and destination folders so it can surface that to the admin.
 """
 
+import logging
 from datetime import datetime, timezone
 
 import natsort
 import streamlit as st
+from botocore.exceptions import BotoCoreError, ClientError
 
 from text_content import Reconstruction
 from utilities import (
@@ -85,6 +88,33 @@ from data_structures import (
 # it is imported here as a PEP 420 namespace package (importing the module does
 # not run its page body, which is guarded by ``if __name__ == "__main__"``).
 from pages.uploader import extract_page_info, _process_page, PageExtractionError
+
+logger = logging.getLogger(__name__)
+
+
+def _delete_source_folder(fs, source_folder):
+    """Delete the leftover orphan source folder after a successful reconstruction
+    whose photos were written to a DIFFERENT canonical title folder (#136).
+
+    The corrected photos now live in ``sawimages/{title}/``, so the original
+    ``sawimages/{source_folder}/`` is a redundant duplicate that would otherwise
+    keep re-appearing in the Reconstruct-orphans list. The caller only invokes
+    this when ``source_folder`` differs from the canonical folder, so the
+    canonical folder is never removed. Best-effort: a transient S3/permission
+    failure is logged and swallowed so it never fails the already-committed
+    reconstruction (mirrors ``photo_upload.cleanup_prefix``).
+    """
+    prefix = f"{S3_BUCKET}/{source_folder}"
+    try:
+        if fs.exists(prefix):
+            fs.rm(prefix, recursive=True)
+    except FileNotFoundError:
+        # Already gone (e.g. emptied since the orphan list was built) — nothing to do.
+        pass
+    except (OSError, BotoCoreError, ClientError) as exc:
+        logger.warning(
+            "reconstruct: could not delete source orphan folder %s: %s", prefix, exc
+        )
 
 
 def _expected_book_folders():
@@ -494,6 +524,16 @@ def reconstruct_book_from_photos(pages, client, *, fs=None, source_folder=None,
     book.datetime_submitted = datetime.now(timezone.utc)
 
     photos_folder = book.title
+    moved = bool(source_folder) and source_folder != photos_folder
+
+    # #136: on a successful reconstruction whose corrected photos were written to a
+    # DIFFERENT canonical folder, remove the now-redundant source orphan folder so
+    # it stops re-appearing in the Reconstruct-orphans list. Only reached once the
+    # book + pages + characters are fully committed above; guarded so the canonical
+    # folder is never deleted; S3 errors are swallowed+logged inside the helper.
+    if moved:
+        _delete_source_folder(fs, source_folder)
+
     return {
         "book": book,
         "title": title,
@@ -502,7 +542,7 @@ def reconstruct_book_from_photos(pages, client, *, fs=None, source_folder=None,
         "aliases_created": aliases_created,
         "source_folder": source_folder,
         "photos_folder": photos_folder,
-        "moved": bool(source_folder) and source_folder != photos_folder,
+        "moved": moved,
         # Page numbers the AI could not read (#132); kept as blanks for manual entry.
         "extraction_failures": extraction_failures,
     }

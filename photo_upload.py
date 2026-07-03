@@ -27,14 +27,17 @@ import json
 import logging
 import re
 import time
+from io import BytesIO
 
 import boto3
 import natsort
+import qrcode
 import streamlit as st
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
+from requests.models import PreparedRequest
 
-from text_content import BookPhotoEntry
+from text_content import BookPhotoEntry, PhotoUpload
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +221,89 @@ def cleanup_prefix(fs, flow_key, session_id):
         pass
     except (OSError, BotoCoreError, ClientError) as exc:
         logger.warning("cleanup_prefix failed for %s: %s", prefix, exc)
+
+
+# How long to wait between the two prefix samples in :func:`uploads_settled`.
+# Long enough to catch a further photo landing (the browser PUTs sequentially),
+# short enough not to make the "read" click feel sluggish.
+UPLOAD_SETTLE_SECONDS = 2.0
+
+
+def uploads_settled(fs, flow_key, session_id, settle_seconds=UPLOAD_SETTLE_SECONDS):
+    """Best-effort check that no more photos are still arriving in the temp prefix.
+
+    The direct-to-S3 uploader iframe is intentionally ONE-WAY: it cannot signal
+    "all uploads finished" back to Streamlit. Streamlit 1.58's
+    ``st.context.cookies`` are frozen at the websocket handshake (so a JS-set
+    completion cookie is not readable without a full page reload), and a bespoke
+    bidirectional component is out of scope before this release. So to stop the
+    user reading a PARTIAL batch mid-upload (#142) we sample the prefix twice,
+    ``settle_seconds`` apart: because the browser PUTs the selected photos
+    sequentially, a still-running upload shows up as a growing key count.
+
+    Returns ``(settled, keys)`` where ``settled`` is ``True`` when the count did
+    not grow across the interval, and ``keys`` is the second (latest) listing so
+    the caller need not re-list. ``settled`` is ``True`` for an empty prefix (the
+    caller distinguishes "nothing uploaded" from "still uploading" via ``keys``).
+    """
+    first = list_uploaded_keys(fs, flow_key, session_id)
+    time.sleep(settle_seconds)
+    keys = list_uploaded_keys(fs, flow_key, session_id)
+    return len(keys) <= len(first), keys
+
+
+def build_phone_upload_url(flow_key, session_id):
+    """Build the ``qr_landing`` deep-link that points a phone at THIS surface's
+    temp prefix ``uploads/{flow_key}/{session_id}/`` (#143).
+
+    Carries the ``flow``/``session`` so the phone's uploads land in the SAME
+    prefix the computer surface reads, plus the ``user`` + confirmation ``token``
+    for auth (mirroring ``page_photo_upload``'s QR). No ``book`` param: the phone
+    only PUTs the photos; the computer surface does the processing when the user
+    returns and taps its read button.
+    """
+    url = f"{st.secrets.app_url}qr_landing"
+    user = st.session_state.username
+    token = (
+        st.session_state.firestore.username_to_doc_ref(user)
+        .get()
+        .to_dict()["confirmation_token"]
+    )
+    params = {
+        "user": user,
+        "token": token,
+        "flow": flow_key,
+        "session": session_id,
+    }
+    req = PreparedRequest()
+    req.prepare_url(url, params)
+    return req.url
+
+
+def render_go_to_phone(flow_key, session_id):
+    """Render the "scan a QR and upload from your phone" option for a surface.
+
+    Shared by every direct-to-S3 upload surface (single / batch / collection, #143)
+    so a user on a computer can photograph the book on their phone and have those
+    photos land in the exact prefix this surface reads. All strings come from
+    :class:`PhotoUpload`.
+    """
+    st.write(PhotoUpload.qr_instruction)
+    target_url = build_phone_upload_url(flow_key, session_id)
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(target_url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    temp = BytesIO()
+    img.save(temp)
+    st.image(temp.getvalue(), width="stretch")
+    st.write(PhotoUpload.link_line % (target_url, target_url))
+    st.write(PhotoUpload.qr_return_instruction)
 
 
 # The component markup/JS lives here as a template; only the *strings* shown to

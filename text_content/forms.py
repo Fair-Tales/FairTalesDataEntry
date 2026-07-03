@@ -159,16 +159,13 @@ class BookPhotoEntry:
 
     menu_label = "Add from Photos"
     header = "Add a book from photos"
-    instructions = """
-        Upload photos of the book pages to get started. We'll read the title page
-        for you and use it to pre-fill the book details on the next step — you can
-        review and correct everything before saving.
-
-        Please include a clear photo of the **title page** (the inside page showing
-        the title, author and illustrator). Upload your photos in page order if you
-        can; if the title page is not the first photo, you can tell us which one it
-        is below.
-    """
+    instructions = (
+        "Upload photos of the book to get started. We'll read the details and use "
+        "them to pre-fill the book information on the next step, where you can "
+        "review and correct everything before saving.\n\n"
+        "Please include a clear photo of all pages in the book, including front "
+        "and back covers."
+    )
     upload_label = "Select the book's page photos to upload"
     title_page_label = "Which photo is the title page?"
     title_page_help = (
@@ -202,14 +199,15 @@ class BookPhotoEntry:
     reuse_notice = "Using the {count} photo(s) you already uploaded. Processing them now..."
     cancel_text = "Cancel"
 
-    # Direct-to-S3 browser upload (#114). The phone PUTs each photo straight to
-    # S3 via presigned URLs, bypassing the Streamlit websocket that drops on
-    # mobile while the native photo picker is open.
+    # Direct-to-S3 browser upload (#114). Each photo PUTs straight to S3 via
+    # presigned URLs, bypassing the Streamlit websocket that drops on mobile while
+    # the native photo picker is open. Device-agnostic wording (#143): we don't
+    # assume the user is on a phone here — that's the "Go to phone" option.
     direct_upload_instructions = (
-        "Tap **Select book photos** and choose the book's pages (in page order if "
-        "you can, with a clear shot of the title page). Each photo uploads straight "
-        "from your phone — watch the progress bars, then tap **Read the book** once "
-        "they are all done."
+        "Choose **Select book photos** and pick every page of the book, including "
+        "the front and back covers. Each photo uploads directly to secure storage "
+        "— watch the progress bars, then choose **Read the book** once they have "
+        "all finished."
     )
     upload_select_button = "Select book photos"
     upload_component_hint = (
@@ -228,6 +226,13 @@ class BookPhotoEntry:
         "above and wait for every progress bar to finish, then try again."
     )
     reading_photos = "Fetching your uploaded photos..."
+    # Shown while the "Read the book" click checks the temp prefix has stopped
+    # growing (uploads_settled), so we don't read a partial batch (#142).
+    checking_uploads = "Checking your photos have finished uploading..."
+    uploads_in_progress = (
+        "Your photos are still uploading. Please wait for every progress bar to "
+        "finish, then choose **Read the book** again."
+    )
 
 
 class BatchBookEntry:
@@ -780,6 +785,29 @@ class Login:
     accept_checkbox = "Accept"
 
 
+class Nav:
+    """Sidebar navigation labels (utilities.page_layout).
+
+    Kept out of page bodies so the sidebar reads from one place (#137/#138/#140).
+    """
+
+    # Auth toggle: 'Login' when logged out, 'Sign out' when logged in (#138).
+    login = "Login"
+    sign_out = "Sign out"
+    # Logged-out sidebar shows only Login + Donate (#137).
+    donate = "Donate"
+    # Authenticated sidebar links.
+    home = "Home"
+    books_we_need = "Books We Need"
+    settings = "Settings"
+    report = "Report a Bug / Feature"
+    data_validation = "Data validation"
+    admin = "Admin"
+    back = "← Back"
+    # Unobtrusive current-user caption so a wrong account is noticed (#140).
+    signed_in_as = "Signed in as {username}"
+
+
 class BookEditHome:
     """Strings for the book edit/home page (pages/book_edit_home.py)."""
 
@@ -810,6 +838,15 @@ class Admin:
     not_admin = "This page is only accessible to admin users."
     title = "Admin"
     validation_link_label = "→ Go to data validation"
+
+    # Reconstruct-orphans section, moved out of the sidebar to the bottom of this
+    # page (#141). The reconstruct page itself stays team-and-above gated.
+    reconstruct_section_header = "Reconstruct orphaned books"
+    reconstruct_section_description = (
+        "Rebuild a book from a storage folder of page photos that has no matching "
+        "book record. Opens the reconstruction tool (team members and admins)."
+    )
+    reconstruct_link_label = "→ Reconstruct orphaned books"
 
     user_data_header = "User data"
     user_data_description = "Download all available fields for confirmed users (excluding sensitive fields such as password and confirmation token) for analysis."
@@ -878,6 +915,19 @@ class PhotoUpload:
     enter_book_data_title = "Enter book data: {title}"
     link_line = "Or you can use the following link: [%s](%s)"
     finished_instruction = "When you have finished, you can continue below to enter the text for this book, or return to the menu."
+
+    # Shared upload-method chooser + QR-to-phone option, reused by every direct-to-S3
+    # upload surface (add_book_photos / add_books_batch / collection_picker, #143).
+    method_upload_here = "Upload here"
+    method_go_to_phone = "Go to phone"
+    qr_instruction = (
+        "Take the photos on your phone, then scan this QR code to open the uploader "
+        "there. Each photo uploads straight to secure storage."
+    )
+    qr_return_instruction = (
+        "Once every photo has finished uploading on your phone, come back to this "
+        "screen and continue."
+    )
     continue_button = "Continue"
     back_to_menu_button = "Back to menu"
     continue_to_text_button = "Continue to enter text"
@@ -995,6 +1045,13 @@ class QrLanding:
     """Strings for the QR deep-link upload page (pages/qr_landing.py)."""
 
     title = "Photo uploader."
+    # Shown in the generic flow/session direct-upload mode (#143): the phone only
+    # PUTs the photos into the computer surface's temp prefix, then the user
+    # returns to the computer to continue.
+    phone_done_instruction = (
+        "When every photo has finished uploading above, return to the computer and "
+        "continue there. You can then close this page."
+    )
 
 
 class Validation:
@@ -1243,9 +1300,8 @@ class ReconstructOrphans:
     moved_notice = (
         "The reconstructed book's photos were written to the canonical folder "
         "'{photos_folder}', which differs from the original folder "
-        "'{source_folder}'. The original folder was left untouched — once you have "
-        "validated the book, remove the now-duplicate '{source_folder}' folder with "
-        "the data-cleanup tool."
+        "'{source_folder}'. The now-redundant '{source_folder}' folder was removed "
+        "automatically, so it no longer appears as an orphan."
     )
     error = "Could not reconstruct the book: {error}"
     no_photos_in_folder = (

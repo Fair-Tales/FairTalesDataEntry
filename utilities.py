@@ -20,6 +20,31 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Data-extraction model + resolution (issue #135).
+#
+# The DATA-EXTRACTION vision/OCR calls (page OCR, title/copyright/collection
+# metadata, #52 character detection) run on Claude Sonnet 5 rather than the
+# ``claude-sonnet-4-6`` used elsewhere. Sonnet 5 accepts a larger 2576px image
+# long edge (vs 1568px on Sonnet 4.6) at the SAME token rate, so dense
+# children's-book text is captured at higher effective resolution for better OCR
+# (Chris, 2026-07-03). The cheap routing/QC calls (Haiku title/cover-page
+# detection, rotation-angle + crop-quality checks) deliberately KEEP their own
+# models/resolution — only the extraction calls opt in here.
+#
+# Model id verified 2026-07-03 against the Anthropic models docs
+# (platform.claude.com/docs/en/about-claude/models/all-models): Claude Sonnet 5
+# is generally available with API id ``claude-sonnet-5``.
+EXTRACTION_MODEL = 'claude-sonnet-5'
+
+#: Long-edge pixel cap for EXTRACTION images (#135). Higher than the ~1568px
+#: default used by the cheap routing/QC vision calls so dense text is sent at
+#: higher resolution. ``downscale_for_vision`` still JPEG re-encodes below
+#: Claude's 10MB per-image byte cap (#134), so raising the edge cannot
+#: reintroduce the oversized-image rejection.
+EXTRACTION_MAX_EDGE = 2576
+
+
+# ---------------------------------------------------------------------------
 # Shared connection + AI helpers (issue #129).
 #
 # Single source of truth for the three patterns that were previously hand-rolled
@@ -71,19 +96,26 @@ def strip_json_fence(raw):
     return raw.strip()
 
 
-def build_vision_content(images, prompt, *, downscale=True):
+def build_vision_content(images, prompt, *, downscale=True, max_edge=1568):
     """Build the ``[image block, ..., text]`` content list for a vision request.
 
     Each item in ``images`` (raw image byte strings) becomes a base64 JPEG image
     block, optionally downscaled for Claude's vision sweet spot, followed by the
     text ``prompt``. Centralises the downscale -> base64 -> content-block
     boilerplate duplicated across the vision callers (#129).
+
+    ``max_edge`` is the longest-edge pixel cap applied when ``downscale`` is set;
+    it defaults to the ~1568px sweet spot but the DATA-EXTRACTION callers pass the
+    higher ``EXTRACTION_MAX_EDGE`` (2576px) for better OCR of dense text (#135).
     """
     from image_processing import downscale_for_vision
 
     content = []
     for image_bytes in images:
-        data = downscale_for_vision(image_bytes) if downscale else image_bytes
+        data = (
+            downscale_for_vision(image_bytes, max_edge=max_edge)
+            if downscale else image_bytes
+        )
         content.append({
             "type": "image",
             "source": {
@@ -97,20 +129,26 @@ def build_vision_content(images, prompt, *, downscale=True):
 
 
 def vision_text(client, images, prompt, *, model="claude-sonnet-4-6",
-                max_tokens=1024, downscale=True):
+                max_tokens=1024, downscale=True, max_edge=1568):
     """Send ``images`` + ``prompt`` to a Claude vision model and return the raw
     reply text (stripped), or ``None`` when the response carried no text block.
 
     Anthropic API errors propagate to the caller (#127): callers that want a
     resilient default on a transient failure catch ``anthropic.AnthropicError``
     themselves and log it.
+
+    ``max_edge`` threads the longest-edge downscale cap through to
+    ``build_vision_content`` so extraction callers can request higher-resolution
+    OCR images (#135).
     """
     response = client.messages.create(
         model=model,
         max_tokens=max_tokens,
         messages=[{
             "role": "user",
-            "content": build_vision_content(images, prompt, downscale=downscale),
+            "content": build_vision_content(
+                images, prompt, downscale=downscale, max_edge=max_edge
+            ),
         }],
     )
     try:
@@ -120,7 +158,7 @@ def vision_text(client, images, prompt, *, model="claude-sonnet-4-6",
 
 
 def vision_json(client, images, prompt, *, model="claude-sonnet-4-6",
-                max_tokens=1024, downscale=True):
+                max_tokens=1024, downscale=True, max_edge=1568):
     """Send ``images`` + ``prompt`` to a Claude vision model and parse the JSON
     reply, returning ``(data_or_None, raw_text)`` (#129).
 
@@ -129,10 +167,13 @@ def vision_json(client, images, prompt, *, model="claude-sonnet-4-6",
     model response (``""`` when there was none) so callers can retain it for
     audit even on a parse failure. Anthropic API errors propagate to the caller;
     JSON-decode failures are logged here, not silently swallowed (#127).
+
+    ``max_edge`` threads the downscale resolution through to ``vision_text`` so
+    DATA-EXTRACTION callers can OCR at the higher ``EXTRACTION_MAX_EDGE`` (#135).
     """
     raw = vision_text(
         client, images, prompt, model=model, max_tokens=max_tokens,
-        downscale=downscale,
+        downscale=downscale, max_edge=max_edge,
     )
     if raw is None:
         return None, ""
@@ -239,28 +280,53 @@ def page_layout(current_page=None):
     st.markdown(_HIDE_DEFAULT_NAV_CSS, unsafe_allow_html=True)
     if current_page:
         st.session_state['_current_page'] = current_page
-    st.sidebar.page_link("pages/login.py", label="Login")
-    st.sidebar.page_link("pages/landing.py", label="Home")
-    st.sidebar.page_link("pages/priority_books.py", label="Books We Need")
-    st.sidebar.page_link("pages/account_settings.py", label="Settings")
-    st.sidebar.page_link("pages/donate.py", label="Donate")
-    st.sidebar.page_link("pages/report_feedback.py", label="Report a Bug / Feature")
+
+    # Sidebar labels live in text_content (Nav); the Ko-fi URL in text_content
+    # (Donate). Imported lazily to match this module's text_content usage and
+    # avoid any import-time coupling.
+    from text_content import Nav, Donate
+
+    if not is_authenticated():
+        # Logged-out sidebar (#137): ONLY Login and Donate — no Home / Books We
+        # Need / Settings / Report. Donate links straight to Ko-fi (external URL,
+        # opens a new tab) so a visitor can donate without an account; it does not
+        # route through the donate.py page (which requires auth).
+        st.sidebar.page_link("pages/login.py", label=Nav.login)
+        st.sidebar.page_link(Donate.url, label=Nav.donate)
+        return
+
+    # Authenticated sidebar. The auth item reads 'Sign out' (not 'Login') and
+    # points at login.py, which renders the sign-out view when authenticated (#138).
+    st.sidebar.page_link("pages/login.py", label=Nav.sign_out)
+    st.sidebar.page_link("pages/landing.py", label=Nav.home)
+    st.sidebar.page_link("pages/priority_books.py", label=Nav.books_we_need)
+    st.sidebar.page_link("pages/account_settings.py", label=Nav.settings)
+    # Donate is a direct external Ko-fi link everywhere (#137); the donate.py page
+    # is retained but no longer linked from the sidebar.
+    st.sidebar.page_link(Donate.url, label=Nav.donate)
+    st.sidebar.page_link("pages/report_feedback.py", label=Nav.report)
     # Team members and admins can reach data validation straight from the sidebar
     # (#47/#83); admin-only tools (the Admin page) stay hidden from team members.
+    # 'Reconstruct orphaned books' has moved off the sidebar to the bottom of the
+    # Admin page (#141).
     role = st.session_state.get('role', 'archivist')
     is_admin_user = st.session_state.get('admin', False) or role == 'admin'
     if is_admin_user or role == 'team':
-        st.sidebar.page_link("pages/validation.py", label="Data validation")
-        st.sidebar.page_link(
-            "pages/reconstruct_orphans.py", label="Reconstruct orphaned books"
-        )
+        st.sidebar.page_link("pages/validation.py", label=Nav.data_validation)
     if is_admin_user:
-        st.sidebar.page_link("pages/admin.py", label="Admin")
+        st.sidebar.page_link("pages/admin.py", label=Nav.admin)
+
+    # Unobtrusive current-user caption (#140) so a user notices a wrong account.
+    # Rendered after the links and before Back so it never disrupts the layout.
+    username = st.session_state.get('username', '')
+    if username:
+        st.sidebar.caption(Nav.signed_in_as.format(username=username))
+
     history = st.session_state.get('_page_history', [])
     # Hide Back during the guided book sub-entry flow (add author/illustrator/
     # publisher): returning to add_book.py would just re-forward here. Use Cancel.
     if history and not st.session_state.get('adding_book_entries', False):
-        if st.sidebar.button("← Back", key="sidebar_back_button"):
+        if st.sidebar.button(Nav.back, key="sidebar_back_button"):
             go_back()
 
 
@@ -618,16 +684,17 @@ def lookup_person_details(name, role, client, book_title=None):
 
 
 def _claude_json(client, prompt, max_tokens=1024):
-    """Send a text prompt to Claude Sonnet and parse the JSON response.
+    """Send a text prompt to the DATA-EXTRACTION model and parse the JSON response.
 
-    Reuses the model and JSON-fence-stripping convention used by the existing
-    Claude helpers (extract_page_info, lookup_person_details, theme detection).
+    Reuses the JSON-fence-stripping convention used by the existing Claude
+    helpers. This is the #52 character-detection path (its only caller is
+    ``detect_book_characters``), so it runs on ``EXTRACTION_MODEL`` (#135).
     Raises json.JSONDecodeError if the model does not return valid JSON, or an
     anthropic error if the API call fails — the caller is expected to surface
     these to the user.
     """
     response = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=EXTRACTION_MODEL,
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}]
     )
@@ -763,6 +830,7 @@ def extract_book_metadata(image_bytes, client):
 
     result, raw_text = vision_json(
         client, [image_bytes], AIPrompts.book_metadata_extraction, max_tokens=1024,
+        model=EXTRACTION_MODEL, max_edge=EXTRACTION_MAX_EDGE,
     )
     empty = {
         'title': "",
@@ -823,6 +891,7 @@ def extract_books_from_photos(images, client):
 
     result, _raw = vision_json(
         client, images, AIPrompts.collection_books_extraction, max_tokens=2048,
+        model=EXTRACTION_MODEL, max_edge=EXTRACTION_MAX_EDGE,
     )
 
     raw_books = result.get('books', []) if isinstance(result, dict) else []
@@ -920,6 +989,7 @@ def extract_copyright_metadata(image_bytes, client):
 
     result, raw_text = vision_json(
         client, [image_bytes], AIPrompts.copyright_page_extraction, max_tokens=512,
+        model=EXTRACTION_MODEL, max_edge=EXTRACTION_MAX_EDGE,
     )
     empty = {'publisher': None, 'published_year': None, 'isbn': None, 'raw': raw_text}
     if not isinstance(result, dict):
