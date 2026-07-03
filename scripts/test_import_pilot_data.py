@@ -190,6 +190,42 @@ def test_build_alias_and_page_docs():
     assert page["text"].startswith("Once there were")
 
 
+# --- text cross-check similarity --------------------------------------------
+
+def test_text_similarity():
+    # Identical word bags -> 1.0 (order + punctuation + case independent).
+    assert mod.text_similarity("The cat sat", "the CAT, sat!") == 1.0
+    # Two empty texts count as identical; one empty as disjoint.
+    assert mod.text_similarity("", "") == 1.0
+    assert mod.text_similarity("cat", "") == 0.0
+    assert mod.text_similarity("", "cat") == 0.0
+    # Disjoint word sets -> 0.0.
+    assert mod.text_similarity("cat dog", "fish bird") == 0.0
+    # Partial overlap sits strictly between 0 and 1.
+    mid = mod.text_similarity("the cat sat on the mat", "the cat sat on the log")
+    assert 0.0 < mid < 1.0
+    # A stray junk token barely dents an otherwise-identical long passage.
+    base = "twas the night before christmas when all through the house " \
+           "not a creature was stirring not even a mouse"
+    high = mod.text_similarity(base + " as ij", base)
+    assert high > 0.9
+
+
+# --- clean-up divergence guard ----------------------------------------------
+
+def test_clean_kept_guards_against_rewrites():
+    original = "Twas the night before Christmas as&ij-\nwhen all through the house"
+    # A genuine junk-strip (a few chars removed) is kept.
+    good = "Twas the night before Christmas\nwhen all through the house"
+    assert mod.clean_kept(original, good) is True
+    # A wholesale rewrite is rejected (keep the original).
+    rewrite = "It was the evening prior to the Christmas holiday in the dwelling"
+    assert mod.clean_kept(original, rewrite) is False
+    # An empty/blank "clean" is rejected.
+    assert mod.clean_kept(original, "") is False
+    assert mod.clean_kept(original, "   ") is False
+
+
 # --- JSON extraction helper -------------------------------------------------
 
 def test_extract_json_object():

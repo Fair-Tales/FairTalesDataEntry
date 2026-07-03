@@ -1,20 +1,35 @@
 #!/usr/bin/env python3
 """Standalone pilot-corpus import CLI for FairTalesDataEntry (issue #73).
 
-Imports the ``fair-tales-methods`` PILOT study corpus (~200 primary-school
-picture books) into the production storage stack — **Firestore** for the
-structured records/text and **S3** (``sawimages``) for the page images — in
-exactly the same document shape the Streamlit app writes today.
+Imports the PILOT study corpus (~200 primary-school picture books) into the
+production storage stack — **Firestore** for the structured records/text and
+**S3** (``sawimages``) for the page images — in exactly the same document shape
+the Streamlit app writes today.
 
-Sources (a sibling checkout of ``fair-tales-methods``)
-------------------------------------------------------
+Sources (a sibling checkout of ``fair-tales-language-analysis``)
+---------------------------------------------------------------
 * ``Book-List-Final-NONA.xlsx`` (Sheet1) — one row per book: title, author,
   author gender (M/F), year of first publication, starting/ending story page,
   and protagonist/secondary-character summary columns.
 * ``character_database.db`` (SQLite) — ``characters`` (name/gender/human/
   is_protagonist per book), ``protagonists`` and ``aliases``.
-* ``text_pdfs/*.pdf`` — the scanned book pages (one PDF per book).
-* ``data/book_dataframe.json`` — Title -> full book text (text fallback only).
+* ``text_pdfs/*.pdf`` — the scanned book pages (one PDF per book), most with an
+  embedded text layer; image-only pages fall back to Claude vision OCR.
+* ``data/book_dataframe.pickle`` — Title -> full book text, the human-validated
+  text used for the published analysis. Loaded as the *cross-check reference*:
+  each book's per-page extracted text is compared against it (word-overlap) and
+  low-scoring books are flagged for review. ``data/book_dataframe.json`` is a
+  byte-identical export kept only as a fallback if the pickle won't unpickle.
+
+Per-page text pipeline (issue #73, plan "A")
+--------------------------------------------
+For each story page: take the PDF text layer, or Claude vision OCR when the page
+has none; then run a Claude "junk-strip" clean-up pass that removes extraction/
+OCR garbage (stray character runs, mojibake, control chars) **without** altering
+spelling or unusual/invented words (children's books use non-standard spelling
+deliberately). A divergence guard discards any "clean" that rewrites the text.
+Finally, the book's concatenated page text is cross-checked against the validated
+pickle reference as a per-book confidence signal.
 
 Design & safety
 ---------------
@@ -40,11 +55,11 @@ Usage
 -----
     # Dry run (default — writes nothing):
     python scripts/import_pilot_data.py \
-        --methods-dir ../fair-tales-methods
+        --methods-dir ../fair-tales-language-analysis
 
     # Real import (writes to Firestore + S3 — run only intentionally):
     python scripts/import_pilot_data.py \
-        --methods-dir ../fair-tales-methods --execute
+        --methods-dir ../fair-tales-language-analysis --execute
 
 Mapping decisions (see scripts/PILOT_IMPORT.md for the full rationale)
 ----------------------------------------------------------------------
@@ -66,13 +81,14 @@ Mapping decisions (see scripts/PILOT_IMPORT.md for the full rationale)
 from __future__ import annotations
 
 import argparse
+import difflib
 import io
 import json
 import os
 import re
 import sqlite3
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -102,6 +118,22 @@ DEFAULT_LOOKUP_MODEL = "claude-opus-4-8"
 #: Claude model used for per-page OCR when a PDF page has no extractable text
 #: layer. Overridable via --ocr-model.
 DEFAULT_OCR_MODEL = "claude-opus-4-8"
+
+#: Claude model used for the per-page junk-character clean-up pass. Cleaning is a
+#: mechanical strip-the-garbage task (NOT spelling correction), so it defaults to
+#: a fast, cheap model. Overridable via --clean-model.
+DEFAULT_CLEAN_MODEL = "claude-haiku-4-5"
+
+#: Guard for the AI clean-up pass: a cleaned page whose word-overlap similarity
+#: to the original falls below this is treated as a rewrite/hallucination and
+#: DISCARDED (the original text is kept). Junk-char stripping only removes a few
+#: characters, so a genuine clean stays well above this floor.
+CLEAN_MIN_SIMILARITY = 0.80
+
+#: Per-book cross-check: books whose extracted text matches the validated
+#: (pickle) reference below this word-overlap ratio are flagged for manual review
+#: in the report. This is a confidence signal only; it changes no data.
+DEFAULT_COMPARE_THRESHOLD = 0.60
 
 #: Longest-edge pixel cap when rendering a PDF page to JPEG for S3.
 DEFAULT_MAX_EDGE = 2000
@@ -299,6 +331,47 @@ def is_story_page(page_number: int, page_range: Optional[tuple[int, int]]) -> bo
         return True
     start, end = page_range
     return start <= page_number <= end
+
+
+def _compare_tokens(text: object) -> Counter:
+    """Lower-case word multiset used for order-independent text comparison.
+
+    Strips everything but alphanumerics so extraction/OCR whitespace, line-break
+    and punctuation differences don't distort the overlap score.
+    """
+    words = re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).split()
+    return Counter(words)
+
+
+def text_similarity(a: object, b: object) -> float:
+    """Word-overlap (Jaccard-on-multisets) similarity of two texts in [0, 1].
+
+    Order-independent and cheap (no O(n^2) diff), so it scales to full-book
+    text across the whole corpus. 1.0 == identical word bags; 0.0 == disjoint.
+    Two empty texts count as identical; one empty as disjoint.
+    """
+    aw, bw = _compare_tokens(a), _compare_tokens(b)
+    if not aw and not bw:
+        return 1.0
+    if not aw or not bw:
+        return 0.0
+    intersection = sum((aw & bw).values())
+    union = sum((aw | bw).values())
+    return intersection / union if union else 0.0
+
+
+def clean_kept(original: str, cleaned: str) -> bool:
+    """True if a cleaned page is close enough to the original to keep.
+
+    The junk-strip pass should only remove a handful of garbage characters, so a
+    genuine clean stays near-identical (high char-level ratio). A large drop
+    means the model rewrote/hallucinated — reject and keep the original. Uses
+    difflib on the raw strings (short per-page text, so O(n^2) is fine here).
+    """
+    if not cleaned.strip():
+        return False
+    ratio = difflib.SequenceMatcher(None, original, cleaned).ratio()
+    return ratio >= CLEAN_MIN_SIMILARITY
 
 
 # ---------------------------------------------------------------------------
@@ -604,6 +677,45 @@ def load_json_text(path: str) -> dict:
     return out
 
 
+def load_pickle_text(path: str) -> dict:
+    """Return {norm title: full book text} from book_dataframe.pickle.
+
+    This is the human-validated analysis text (issue #73) — the reference the
+    per-page extraction is cross-checked against. Requires pandas; raises on any
+    read/unpickle failure so the caller can fall back to the JSON export.
+    """
+    import pandas as pd  # lazy: only needed when a pickle reference is used
+
+    df = pd.read_pickle(path)
+    out: dict = {}
+    for _, row in df.iterrows():
+        out[normalise_title(row["Title"])] = str(row["Text"] or "")
+    return out
+
+
+def load_validated_text(pickle_path: str, json_path: str) -> tuple[dict, str]:
+    """Load the per-book validated text, preferring the pickle over the JSON.
+
+    Returns ``(mapping, source)`` where ``source`` is ``"pickle"`` or ``"json"``
+    (or ``"none"`` if neither is available). The pickle is the human-validated
+    analysis text; the JSON is a byte-identical export kept only as a fallback in
+    case the pickle can't be unpickled on this interpreter.
+    """
+    if os.path.exists(pickle_path):
+        try:
+            mapping = load_pickle_text(pickle_path)
+            if mapping:
+                return mapping, "pickle"
+        except Exception as exc:  # noqa: BLE001 - pandas/pickle version issues; fall back
+            print(
+                f"WARNING: could not read validated pickle {pickle_path} "
+                f"({type(exc).__name__}: {exc}); falling back to JSON export.",
+                file=sys.stderr,
+            )
+    json_map = load_json_text(json_path)
+    return json_map, ("json" if json_map else "none")
+
+
 # ---------------------------------------------------------------------------
 # PDF processing (rendering via pypdfium2, text layer via pypdf).
 # ---------------------------------------------------------------------------
@@ -760,6 +872,54 @@ def ai_ocr_page(client, jpeg_bytes: bytes, model: str) -> str:
         return ""
 
 
+def ai_clean_text(client, text: str, model: str) -> tuple[str, bool]:
+    """Strip junk/garbage characters from page text, preserving the wording.
+
+    Removes only extraction/OCR noise — stray garbage runs (e.g. ``as&ij-``),
+    control characters, mojibake, broken/duplicated fragments — while keeping
+    every real word verbatim. It explicitly does NOT correct spelling, grammar
+    or unusual/invented words, because children's books deliberately use
+    non-standard spelling, made-up words and playful sounds.
+
+    Returns ``(result_text, was_cleaned)``. The result is the model's cleaned
+    text only when it passes the ``clean_kept`` divergence guard (so a model
+    that rewrites rather than cleans is discarded); otherwise the original text
+    is returned unchanged. Any failure degrades to ``(text, False)``.
+    """
+    if not text or not text.strip():
+        return text, False
+    prompt = (
+        "The text below was extracted (via a PDF text layer or OCR) from a single "
+        "page of a children's picture book. Remove ONLY junk: stray garbage "
+        "character sequences (for example 'as&ij-'), OCR noise, control "
+        "characters, mojibake, and broken or duplicated fragments.\n\n"
+        "Do NOT correct spelling, grammar, punctuation, or capitalisation, and do "
+        "NOT change unusual, made-up, or oddly spelled words — children's books "
+        "deliberately use non-standard spelling, invented words and playful "
+        "sounds, and every real word MUST be preserved exactly as written. "
+        "Preserve line breaks and the original reading order. If the text is "
+        "already clean, return it unchanged. Return ONLY the cleaned text, with "
+        "no commentary or code fences.\n\n"
+        "TEXT:\n" + text
+    )
+    try:
+        response = client.messages.create(
+            model=model,
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        cleaned = "".join(
+            block.text for block in response.content if getattr(block, "type", None) == "text"
+        ).strip()
+    except Exception as exc:  # noqa: BLE001 - network/parse; degrade to original, but surface why
+        print(f"    [ai-clean] failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return text, False
+
+    if cleaned != text and clean_kept(text, cleaned):
+        return cleaned, True
+    return text, False
+
+
 # ---------------------------------------------------------------------------
 # Backends.
 # ---------------------------------------------------------------------------
@@ -898,6 +1058,12 @@ class Totals:
     aliases: int = 0
     pages_text_layer: int = 0
     pages_needing_ocr: int = 0
+    pages_cleaned: int = 0
+    pages_clean_rejected: int = 0
+    #: (title, similarity) for every book that had a validated-text reference.
+    similarities: list = field(default_factory=list)
+    #: books with NO validated-text reference to cross-check against.
+    no_reference: list = field(default_factory=list)
 
 
 def plan_and_run(args) -> int:
@@ -907,6 +1073,7 @@ def plan_and_run(args) -> int:
     db_path = args.db or os.path.join(methods, "character_database.db")
     pdf_dir = args.pdf_dir or os.path.join(methods, "text_pdfs")
     json_path = args.json or os.path.join(methods, "data", "book_dataframe.json")
+    pickle_path = args.pickle or os.path.join(methods, "data", "book_dataframe.pickle")
 
     for label, p in [("excel", excel_path), ("db", db_path)]:
         if not os.path.exists(p):
@@ -925,13 +1092,16 @@ def plan_and_run(args) -> int:
     print(f"  excel : {excel_path}")
     print(f"  db    : {db_path}")
     print(f"  pdfs  : {pdf_dir}")
+    print(f"  pickle: {pickle_path}")
     print(f"  json  : {json_path}")
     print()
 
     excel_books = load_excel_books(excel_path)
     db = load_db(db_path)
     pdf_map, pdf_dups = load_pdfs(pdf_dir)
-    json_text = load_json_text(json_path)
+    validated_text, validated_source = load_validated_text(pickle_path, json_path)
+    print(f"  validated text source: {validated_source} ({len(validated_text)} books)")
+    print()
 
     excel_norms = {b.norm for b in excel_books}
     db_norms = set(db.characters_by_book)
@@ -942,7 +1112,7 @@ def plan_and_run(args) -> int:
     print(f"  excel books (unique titles) : {len(excel_norms)}")
     print(f"  db books (with characters)  : {len(db_norms)}")
     print(f"  pdf files (unique titles)   : {len(pdf_norms)}")
-    print(f"  json text entries           : {len(json_text)}")
+    print(f"  validated text entries      : {len(validated_text)} (from {validated_source})")
     print()
 
     missing_pdf = sorted(b.title for b in excel_books if b.norm not in pdf_norms)
@@ -1141,6 +1311,9 @@ def plan_and_run(args) -> int:
         story_page_count = 0
         pdf_analysis = None
         sample_page_text = None
+        # Concatenated final story-page text, used to cross-check against the
+        # validated (pickle) reference for this book.
+        book_story_text_parts: list = []
         if pdf_path:
             pdf_analysis = analyse_pdf(pdf_path)
             page_count = pdf_analysis["page_count"]
@@ -1167,7 +1340,21 @@ def plan_and_run(args) -> int:
                             elif ai_client is not None:
                                 text = ai_ocr_page(ai_client, jpeg, args.ocr_model)
                                 totals.pages_needing_ocr += 1
+                            # Junk-character clean-up pass (strip garbage, keep
+                            # wording). Applies to both text-layer and OCR text
+                            # because the extraction artifacts live in the text
+                            # layer too. Guarded against rewrites in ai_clean_text.
+                            if text and not args.no_clean and ai_client is not None:
+                                text, was_cleaned = ai_clean_text(
+                                    ai_client, text, args.clean_model
+                                )
+                                if was_cleaned:
+                                    totals.pages_cleaned += 1
+                                elif text:
+                                    totals.pages_clean_rejected += 1
                             story_page_count += 1
+                            if text:
+                                book_story_text_parts.append(text)
                         backend.write_document(
                             "pages",
                             page_document_id(book_id, page_number),
@@ -1184,13 +1371,17 @@ def plan_and_run(args) -> int:
                     pdf_doc.close()
             else:
                 # Dry-run accounting: count planned pages / story pages / OCR
-                # needs without rendering or writing.
+                # needs without rendering or writing. The cross-check uses the
+                # text-layer text as a preview of extraction quality (OCR and
+                # cleaning only run on --execute).
                 for i in range(page_count):
                     if is_story_page(i + 1, book.page_range):
                         story_page_count += 1
                         layer = page_texts[i] if i < len(page_texts) else ""
                         if len(layer) < TEXT_LAYER_MIN_CHARS:
                             totals.pages_needing_ocr += 1
+                        elif layer:
+                            book_story_text_parts.append(layer)
                 totals.pages += page_count
                 totals.images += page_count
                 for i, txt in enumerate(page_texts):
@@ -1200,6 +1391,16 @@ def plan_and_run(args) -> int:
 
         totals.story_pages += story_page_count
         totals.books += 1
+
+        # --- Cross-check extracted text vs the validated reference -----------
+        reference_text = validated_text.get(book.norm, "")
+        similarity = None
+        if reference_text:
+            extracted = "\n".join(book_story_text_parts)
+            similarity = text_similarity(extracted, reference_text)
+            totals.similarities.append((book.title, similarity))
+        else:
+            totals.no_reference.append(book.title)
 
         # --- Per-book plan line ------------------------------------------
         print(f"BOOK: {book.title}  [{book_id}]")
@@ -1220,6 +1421,12 @@ def plan_and_run(args) -> int:
         print(f"    aliases     : {len(alias_plans)}")
         for line in alias_plans:
             print(f"        - {line}")
+        if similarity is not None:
+            kind = "text-layer" if not args.execute else "final"
+            flag = "  <-- LOW, review" if similarity < args.compare_threshold else ""
+            print(f"    text match  : {similarity:.0%} ({kind} vs validated){flag}")
+        elif validated_source != "none":
+            print("    text match  : (no validated reference for this title)")
         if sample_page_text and not args.execute:
             print(f"    sample text : page {sample_page_text[0]}: {sample_page_text[1]!r}")
         print()
@@ -1239,6 +1446,32 @@ def plan_and_run(args) -> int:
     print(f"  aliases           : {totals.aliases}")
     print(f"  story pages w/ text layer   : {totals.pages_text_layer}")
     print(f"  story pages needing AI OCR  : {totals.pages_needing_ocr}")
+    if args.execute:
+        print(f"  story pages junk-cleaned    : {totals.pages_cleaned}")
+        print(f"  clean passes rejected (kept original) : {totals.pages_clean_rejected}")
+    print()
+
+    # --- Text cross-check summary ----------------------------------------
+    print("TEXT CROSS-CHECK (extracted vs validated reference)")
+    kind = "text-layer preview" if not args.execute else "final imported text"
+    if totals.similarities:
+        scores = [s for _, s in totals.similarities]
+        avg = sum(scores) / len(scores)
+        low = sorted(
+            [(t, s) for t, s in totals.similarities if s < args.compare_threshold],
+            key=lambda x: x[1],
+        )
+        print(f"  compared ({kind}) : {len(scores)} books")
+        print(f"  mean word-overlap  : {avg:.0%}")
+        print(f"  books below {args.compare_threshold:.0%} ({len(low)}):")
+        for title, score in low:
+            print(f"      - {score:.0%}  {title}")
+    else:
+        print("  (no books had a validated-text reference to compare against)")
+    if totals.no_reference:
+        print(f"  books with NO validated reference ({len(totals.no_reference)}):")
+        for title in sorted(totals.no_reference):
+            print(f"      - {title}")
     print()
     if not args.execute:
         print("DRY RUN complete — nothing was written to Firestore or S3.")
@@ -1254,17 +1487,28 @@ def plan_and_run(args) -> int:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="Import the fair-tales-methods pilot corpus into Firestore + S3 (dry-run by default).",
+        description="Import the fair-tales pilot corpus into Firestore + S3 (dry-run by default).",
     )
     p.add_argument(
         "--methods-dir",
-        default="../fair-tales-methods",
-        help="Path to the fair-tales-methods checkout (default: ../fair-tales-methods).",
+        default="../fair-tales-language-analysis",
+        help="Path to the pilot-corpus checkout holding Book-List-Final-NONA.xlsx, "
+        "character_database.db, text_pdfs/ and data/ (default: "
+        "../fair-tales-language-analysis).",
     )
     p.add_argument("--excel", help="Override path to Book-List-Final-NONA.xlsx.")
     p.add_argument("--db", help="Override path to character_database.db.")
     p.add_argument("--pdf-dir", help="Override path to the text_pdfs directory.")
-    p.add_argument("--json", help="Override path to data/book_dataframe.json.")
+    p.add_argument(
+        "--pickle",
+        help="Override path to data/book_dataframe.pickle (the human-validated "
+        "text used to cross-check extraction).",
+    )
+    p.add_argument(
+        "--json",
+        help="Override path to data/book_dataframe.json (validated-text fallback "
+        "if the pickle cannot be read).",
+    )
     p.add_argument(
         "--secrets",
         default=DEFAULT_SECRETS,
@@ -1286,6 +1530,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--lookup-model", default=DEFAULT_LOOKUP_MODEL, help="Claude model for the book-metadata web lookup.")
     p.add_argument("--ocr-model", default=DEFAULT_OCR_MODEL, help="Claude model for per-page OCR fallback.")
+    p.add_argument(
+        "--clean-model",
+        default=DEFAULT_CLEAN_MODEL,
+        help=f"Claude model for the per-page junk-character clean-up pass "
+        f"(default: {DEFAULT_CLEAN_MODEL}).",
+    )
+    p.add_argument(
+        "--no-clean",
+        action="store_true",
+        help="Disable the AI junk-character clean-up pass (import raw extracted text).",
+    )
+    p.add_argument(
+        "--compare-threshold",
+        type=float,
+        default=DEFAULT_COMPARE_THRESHOLD,
+        help=f"Flag books whose extracted text matches the validated reference "
+        f"below this word-overlap ratio (default: {DEFAULT_COMPARE_THRESHOLD}).",
+    )
     p.add_argument("--max-edge", type=int, default=DEFAULT_MAX_EDGE, help="Longest-edge px when rendering page JPEGs.")
     p.add_argument("--jpeg-quality", type=int, default=DEFAULT_JPEG_QUALITY, help="JPEG quality for page images.")
     return p
