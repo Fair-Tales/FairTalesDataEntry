@@ -405,6 +405,15 @@ _UPLOADER_TEMPLATE = """
   input.addEventListener("change", function () {
     var files = Array.prototype.slice.call(input.files);
     input.value = "";  // allow re-opening the picker to add more photos
+    // Order by file name (natural/numeric) so page order follows the photo file
+    // names (e.g. IMG_1, IMG_2 ... or date-time names), NOT the order the OS
+    // picker happened to return them in — the archivist can select in any order.
+    // NOTE: applies per selection batch; selecting all pages in one go gives full
+    // file-name ordering. Assumes the camera names photos sequentially in capture
+    // order (typical for Android + iPhone) — verify on real devices.
+    files.sort(function (a, b) {
+      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+    });
     files.forEach(function (file) {
       if (file.size > MAX_BYTES) {
         // Skip oversize files without consuming a presigned URL slot, and show a

@@ -182,7 +182,7 @@ class BookPhotoEntry:
     extract_empty = (
         "We couldn't extract any details from those photos. You can still add the "
         "book — tap below to enter the details manually (your photos are kept), or "
-        "re-take a clearer shot of the title page and try Read the book again."
+        "re-take a clearer shot of the title page and click Go again."
     )
     enter_manually_button = "Enter the book's details manually →"
     # Surfaced under an expander when extraction comes back empty, to help diagnose
@@ -205,9 +205,9 @@ class BookPhotoEntry:
     # assume the user is on a phone here — that's the "Go to phone" option.
     direct_upload_instructions = (
         "Choose **Select book photos** and pick every page of the book, including "
-        "the front and back covers. Each photo uploads directly to secure storage "
-        "— watch the progress bars, then choose **Read the book** once they have "
-        "all finished."
+        "the front and back covers. **The order doesn't matter** — your photos are "
+        "sorted by file name. Each photo uploads directly to secure storage; watch "
+        "the progress bars, then click **Go** once they have all finished uploading."
     )
     upload_select_button = "Select book photos"
     upload_component_hint = (
@@ -220,7 +220,7 @@ class BookPhotoEntry:
     # Shown per-file when a selected photo exceeds the client-side size cap; the
     # oversize file is skipped (not uploaded) and the rest of the batch proceeds.
     upload_too_large = "{name} is too large ({size} MB). The maximum is {max} MB — it was skipped."
-    read_button = "Read the book"
+    read_button = "Go"
     no_photos_uploaded = (
         "We couldn't find any uploaded photos yet. Please select your book photos "
         "above and wait for every progress bar to finish, then try again."
@@ -231,7 +231,7 @@ class BookPhotoEntry:
     checking_uploads = "Checking your photos have finished uploading..."
     uploads_in_progress = (
         "Your photos are still uploading. Please wait for every progress bar to "
-        "finish, then choose **Read the book** again."
+        "finish, then click **Go** again."
     )
 
 
