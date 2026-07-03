@@ -26,7 +26,29 @@ def create_page_dict_from_db():
         for page_num in range(1, st.session_state.current_book.page_count + 1)
     }
 
+def _save_current_page_text():
+    """Persist the current page's text-area contents through to the page (#152).
+
+    Auto-save replaces the old explicit "Save page" button: every control that
+    leaves the text box (Next/Previous, the character/alias/manage/detect
+    buttons, "Back to menu", "Submit") calls this BEFORE navigating so nothing
+    the user typed is lost. Reads the text_area's live session_state value —
+    keyed per page (``enter_text_page_text_<n>``) so it captures edits made right
+    before the click — and writes it through the ``text`` Field, which persists
+    it to Firestore. Dirty-checked so an unchanged page is not re-written every
+    time the user moves around.
+    """
+    page_number = st.session_state.get('current_page_number')
+    key = f"enter_text_page_text_{page_number}"
+    if key in st.session_state:
+        new_text = st.session_state[key]
+        if new_text != st.session_state.current_page.text:
+            st.session_state.current_page.text = new_text
+
+
 def page_change(delta):
+    # Auto-save the page we are leaving before changing the page number (#152).
+    _save_current_page_text()
     st.session_state.current_page_number += delta
 
     if st.session_state.current_page_number < 1:
@@ -180,8 +202,8 @@ def display_image():
     return int(col_width * h / w)
 
 def adding_character():
-    if st.session_state['_page_text_editing'] is not None:
-        st.session_state.current_page.text = st.session_state['_page_text_editing']
+    # Auto-save the current page text before leaving the text box (#152).
+    _save_current_page_text()
     # Starting a fresh character entry: drop persisted form-widget state so the
     # new (empty document_id) character re-seeds from value=/index= (see #80).
     clear_entity_form_state("character_form_")
@@ -194,8 +216,8 @@ def adding_text():
 
 
 def adding_alias():
-    if st.session_state['_page_text_editing'] is not None:
-        st.session_state.current_page.text = st.session_state['_page_text_editing']
+    # Auto-save the current page text before leaving the text box (#152).
+    _save_current_page_text()
     # Starting a fresh alias entry: drop persisted form-widget state so the new
     # (empty document_id) alias re-seeds from value=/index= (see #80).
     clear_entity_form_state("alias_form_")
@@ -204,8 +226,8 @@ def adding_alias():
 
 
 def managing_characters():
-    if st.session_state['_page_text_editing'] is not None:
-        st.session_state.current_page.text = st.session_state['_page_text_editing']
+    # Auto-save the current page text before leaving the text box (#152).
+    _save_current_page_text()
     st.session_state.now_entering = 'manage'
 
 
@@ -245,8 +267,8 @@ def confirm_delete_alias(alias_doc_dict, name):
 
 
 def adding_detect():
-    if st.session_state['_page_text_editing'] is not None:
-        st.session_state.current_page.text = st.session_state['_page_text_editing']
+    # Auto-save the current page text before leaving the text box (#152).
+    _save_current_page_text()
     # Start a fresh detection run; discard any previous suggestions.
     st.session_state.pop('_detected_characters', None)
     st.session_state.now_entering = 'detect'
@@ -286,18 +308,19 @@ def text_entry(element, image_height, delta=50):
 
     height = max(image_height - delta, 200)
 
-    with element.form('page_text'):
-        st.session_state['_page_text_editing'] = st.text_area(
-            EnterText.page_text_label,
-            height=height,
-            value=st.session_state.current_page.text,
-            disabled=not st.session_state.current_page.contains_story,
-            key=f"enter_text_page_text_{page_number}"
-        )
-
-        submitted = st.form_submit_button(EnterText.save_page_button, key="enter_text_save_page_button")
-        if submitted:
-            st.session_state.current_page.text = st.session_state['_page_text_editing']
+    # The text area is intentionally NOT wrapped in an st.form: as a plain widget
+    # its typed value is committed to session_state whenever the user interacts
+    # with any other control, which is what lets the navigation handlers
+    # auto-save the page before leaving it (#152). The old explicit "Save page"
+    # button has been removed in favour of that auto-save-on-navigation. The key
+    # stays per-page (see #80) so nav handlers can read this page's value.
+    st.session_state['_page_text_editing'] = element.text_area(
+        EnterText.page_text_label,
+        height=height,
+        value=st.session_state.current_page.text,
+        disabled=not st.session_state.current_page.contains_story,
+        key=f"enter_text_page_text_{page_number}"
+    )
 
 
 def character_entry(element):
@@ -742,9 +765,13 @@ return_button = butcol1.button(EnterText.back_to_menu_button, width="stretch", k
 save_button = butcol2.button(EnterText.finish_submit_button, help=EnterText.save_help, width="stretch", key="enter_text_finish_submit_button")
 
 if return_button:
+    # Auto-save the current page text before leaving for the menu (#152).
+    _save_current_page_text()
     st.switch_page("./pages/book_edit_home.py")
 
 if save_button:
+    # Auto-save the current page text before opening the submit dialog (#152).
+    _save_current_page_text()
     confirm_submit()
 
 
