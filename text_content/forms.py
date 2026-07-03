@@ -425,7 +425,7 @@ class EnterText:
     showing_original_caption = "Showing original photo"
     auto_corrected_caption = "✓ Auto-corrected"
     auto_correction_unavailable_caption = "⚠ Auto-correction unavailable — showing original photo"
-    edit_image_button = "✏ Edit image"
+    edit_image_button = "✏ Crop and rotate"
     enlarge_button = "🔍 Enlarge"
 
     # --- Text entry / navigation controls ---

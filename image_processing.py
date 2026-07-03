@@ -273,10 +273,20 @@ def correct_book_page(image_bytes):
 
 def get_rotation_angle(image_bytes, client):
     """
-    Ask Claude Sonnet to estimate the clockwise rotation angle needed to
-    make the book page text read horizontally.
-    Returns an integer angle in degrees, or 0 if no rotation is needed,
-    the model is uncertain, or the API call fails.
+    Ask Claude (a cheap routing/QC vision call) for the clockwise rotation
+    needed to make the book page text read the RIGHT WAY UP — including the
+    full 180° upside-down case, not just 90° sideways (#154).
+
+    The prompt (``AIPrompts.rotation_angle``) asks for exactly one of
+    0/90/180/270. This parses the first integer out of the reply, normalises it
+    modulo 360 (so a stray ``-90`` becomes ``270`` and ``360`` becomes ``0``),
+    and snaps it to the nearest quarter turn. Snapping keeps a slightly-off
+    estimate (e.g. ``178``) from failing to correct an upside-down page, and
+    matches the granularity of a page-orientation fix — the fine-perspective
+    deskew is handled geometrically upstream in ``correct_book_page``.
+
+    Returns 0/90/180/270. Returns 0 when no rotation is needed, the model is
+    uncertain / gives no number, or the API call fails.
     """
     import anthropic
     from utilities import vision_text
@@ -296,8 +306,11 @@ def get_rotation_angle(image_bytes, client):
     match = re.search(r'-?\d+', raw)
     if not match:
         return 0
-    angle = int(match.group())
-    return 0 if abs(angle) < 5 else angle
+    # Normalise to [0, 360) then snap to the nearest quarter turn. Candidate 360
+    # collapses back to 0 via the modulo, so angles just under a full turn
+    # (e.g. 350) round to 0 rather than an invalid 360.
+    angle = int(match.group()) % 360
+    return min((0, 90, 180, 270, 360), key=lambda q: abs(q - angle)) % 360
 
 
 def rotate_image(image_bytes, angle_degrees):
