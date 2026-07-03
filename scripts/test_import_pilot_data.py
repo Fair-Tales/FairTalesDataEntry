@@ -147,6 +147,27 @@ def test_build_book_doc_shape():
     assert doc["last_content_page"] == 29
     assert doc["character_count"] == 1
     assert doc["is_registered"] is True
+    # Review fields default to "clean" when not flagged.
+    assert doc["needs_review"] is False
+    assert doc["review_pages"] == []
+
+
+def test_build_book_doc_review_flags():
+    doc = mod.build_book_doc(
+        title="Owl Babies",
+        author_ref=None,
+        illustrator_ref=None,
+        publisher_ref=None,
+        published=1992,
+        page_range=(6, 29),
+        page_count=34,
+        character_refs=[],
+        now=_now(),
+        needs_review=True,
+        review_pages=[7, 12],
+    )
+    assert doc["needs_review"] is True
+    assert doc["review_pages"] == [7, 12]
 
 
 def test_build_character_doc_defaults():
@@ -188,6 +209,21 @@ def test_build_alias_and_page_docs():
     assert page["page_number"] == 6
     assert page["contains_story"] is True
     assert page["text"].startswith("Once there were")
+    # Review fields default to unflagged.
+    assert page["needs_review"] is False
+    assert page["review_note"] == ""
+
+    flagged = mod.build_page_doc(
+        book_ref=mod.Ref("books", "owl_babies"),
+        page_number=7,
+        contains_story=True,
+        text="garbled ~~~ fragment",
+        now=now,
+        needs_review=True,
+        review_note="text is jumbled and out of order",
+    )
+    assert flagged["needs_review"] is True
+    assert flagged["review_note"] == "text is jumbled and out of order"
 
 
 # --- text cross-check similarity --------------------------------------------
@@ -209,6 +245,22 @@ def test_text_similarity():
            "not a creature was stirring not even a mouse"
     high = mod.text_similarity(base + " as ij", base)
     assert high > 0.9
+
+
+# --- blank-text normalisation -----------------------------------------------
+
+def test_normalise_blank_text():
+    # Quote/punctuation-only OCR output collapses to a true empty string.
+    assert mod.normalise_blank_text('""') == ""
+    assert mod.normalise_blank_text('"..."') == ""
+    assert mod.normalise_blank_text("   ") == ""
+    assert mod.normalise_blank_text("-- .. ") == ""
+    assert mod.normalise_blank_text("") == ""
+    assert mod.normalise_blank_text(None) == ""
+    # Any real word is preserved verbatim (including surrounding quotes).
+    assert mod.normalise_blank_text("Once upon a time") == "Once upon a time"
+    assert mod.normalise_blank_text('"Boo!" said the owl') == '"Boo!" said the owl'
+    assert mod.normalise_blank_text("splosh 3 times") == "splosh 3 times"
 
 
 # --- clean-up divergence guard ----------------------------------------------
