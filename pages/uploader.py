@@ -1,16 +1,14 @@
-import base64
-import json
-import s3fs
 import streamlit as st
 import anthropic
-from data_structures import Page
+from data_structures import Page, ExtractionErrorLog
 from image_processing import (
     correct_book_page, check_crop_quality, get_rotation_angle, rotate_image,
     exif_transpose_bytes,
 )
-from text_content import Instructions, AIPrompts, BookPhotoEntry, Uploader
+from text_content import Instructions, AIPrompts, BookPhotoEntry, Uploader, PhotoUpload
 from utilities import (
-    page_layout, check_authentication_status, extract_isbn, lookup_isbn
+    page_layout, check_authentication_status, extract_isbn, lookup_isbn,
+    get_s3_filesystem, get_anthropic_client, vision_json,
 )
 from photo_upload import (
     get_upload_session_id,
@@ -18,6 +16,7 @@ from photo_upload import (
     build_uploader_html,
     fetch_uploaded_photos,
     cleanup_prefix,
+    reset_upload_session,
 )
 
 # Direct-to-S3 upload flow key (#118) for the shared page-photo / QR-phone upload
@@ -26,41 +25,82 @@ from photo_upload import (
 UPLOAD_FLOW_KEY = "pages"
 
 
-def extract_page_info(image_bytes, client):
-    """Return (text, is_story_page, page_type) by sending image bytes to Claude Sonnet."""
+class PageExtractionError(Exception):
+    """Raised when a page's AI text-extraction fails (#132).
+
+    Covers the two genuine failure cases — an Anthropic API error, or a reply that
+    cannot be parsed as usable JSON. The full detail has ALREADY been written to
+    the ``extraction_errors`` debug log by the time this is raised, so callers just
+    need to catch it, keep the page blank in the sequence, and count it. Carries
+    the classified ``error_type`` and ``error_message`` for any caller that wants
+    them, but the raw text is never shown to the user.
+    """
+
+    def __init__(self, error_type, error_message):
+        super().__init__(error_message)
+        self.error_type = error_type
+        self.error_message = error_message
+
+
+def extract_page_info(image_bytes, client, *, book=None, page_number=None,
+                      page_name=None, flow=None):
+    """Return (text, is_story_page, page_type) by sending image bytes to Claude Sonnet.
+
+    Uses the shared ``vision_json`` helper (#129). The image is sent at full
+    resolution (``downscale=False``) — this is the corrected page image whose text
+    we are OCR-ing, so we do not shrink it.
+
+    On an extraction FAILURE — an Anthropic API error, or a reply that cannot be
+    parsed as usable JSON — the full detail (book, page, error type + message,
+    username, flow, UTC timestamp) is written to the ``extraction_errors`` Firestore
+    debug log and a :class:`PageExtractionError` is raised, so the caller can keep
+    the page blank in the sequence, count it, and tell the user which pages need
+    manual entry (#132). The raw API error is never surfaced to the user. This
+    replaces the previous behaviour where API errors propagated raw and parse
+    failures were silently saved as a blank, non-story page (#127).
+
+    ``book``/``page_number``/``page_name``/``flow`` are optional logging context
+    passed through by the caller; they do not affect the success path.
+    """
+    book_id = getattr(book, 'document_id', None) if book is not None else None
+    book_title = getattr(book, 'title', None) if book is not None else None
+
+    def _log_and_raise(error_type, error_message):
+        ExtractionErrorLog.record(
+            book_id=book_id,
+            book_title=book_title,
+            page_number=page_number,
+            page_name=page_name,
+            error_type=error_type,
+            error_message=error_message,
+            username=st.session_state.get('username'),
+            flow=flow,
+        )
+        raise PageExtractionError(error_type, error_message)
+
     try:
-        image_data = base64.standard_b64encode(image_bytes).decode('utf-8')
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1024,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/jpeg",
-                            "data": image_data
-                        }
-                    },
-                    {"type": "text", "text": AIPrompts.page_extraction}
-                ]
-            }]
+        data, raw = vision_json(
+            client, [image_bytes], AIPrompts.page_extraction, downscale=False,
         )
-        raw = response.content[0].text.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        result = json.loads(raw)
-        return (
-            result.get("text", "").strip(),
-            bool(result.get("is_story_page", False)),
-            result.get("page_type", ""),
+    except anthropic.AnthropicError as exc:
+        _log_and_raise(type(exc).__name__, str(exc))
+
+    if not isinstance(data, dict):
+        # ``vision_json`` already logged any JSON-decode failure and returned no
+        # data; treat a missing/unparseable reply as an extraction failure rather
+        # than silently saving a blank page.
+        snippet = (raw or "").strip()
+        message = (
+            f"Model reply could not be parsed as usable JSON: {snippet[:500]}"
+            if snippet else "Model returned no usable reply."
         )
-    except Exception:
-        return "", False, ""
+        _log_and_raise(ExtractionErrorLog.ERROR_PARSE, message)
+
+    return (
+        data.get("text", "").strip(),
+        bool(data.get("is_story_page", False)),
+        data.get("page_type", ""),
+    )
 
 
 def _make_reporter(status, page_number, total, prefix=""):
@@ -148,6 +188,9 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
     total = len(sort_file_names)
     photos_url = f"sawimages/{st.session_state['current_book'].title}"
     copyright_text = None
+    # Page numbers whose AI text-extraction failed (#132): the pages stay in the
+    # sequence as blanks and are surfaced to the user for manual entry afterwards.
+    failed_pages = []
 
     # One live st.status drives the whole pipeline. Updating its label at every
     # sub-step (upload → correct → check → extract) sends the browser frequent
@@ -179,9 +222,8 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
         status.update(label=Uploader.photos_saved)
 
         # Phase 2 — image correction + text extraction per page
-        if 'ANTHROPIC_API_KEY' in st.secrets:
-            ai_client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
-
+        ai_client = get_anthropic_client()
+        if ai_client is not None:
             for i, raw_bytes in enumerate(raw_bytes_list):
                 page_number = i + 1
                 report = _make_reporter(status, page_number, total)
@@ -197,15 +239,25 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
                 page.register()
 
                 report(Uploader.substep_extracting)
-                text, is_story, page_type = extract_page_info(
-                    bytes_for_extraction, ai_client
-                )
-                if text:
-                    page.text = text
-                page.contains_story = is_story
+                try:
+                    text, is_story, page_type = extract_page_info(
+                        bytes_for_extraction, ai_client,
+                        book=st.session_state['current_book'],
+                        page_number=page_number,
+                        page_name=f"page_{page_number}.jpg",
+                        flow=ExtractionErrorLog.FLOW_SINGLE,
+                    )
+                except PageExtractionError:
+                    # Detail already logged to extraction_errors; keep the blank
+                    # page in the sequence and record it for the user (#132).
+                    failed_pages.append(page_number)
+                else:
+                    if text:
+                        page.text = text
+                    page.contains_story = is_story
 
-                if page_type == 'copyright' and text and copyright_text is None:
-                    copyright_text = text
+                    if page_type == 'copyright' and text and copyright_text is None:
+                        copyright_text = text
 
                 progress.progress((i + 1) / total)
 
@@ -219,6 +271,16 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
                 )
                 page.register()
             status.update(label=Uploader.processing_complete, state="complete")
+
+    # Tell the user (once) which pages the AI could not read, so they know where
+    # to focus manual entry (#132). The raw errors are never shown — they are in
+    # the extraction_errors debug log. Rendered outside the st.status block so it
+    # is a normal page message, not hidden inside the collapsed status container.
+    if failed_pages:
+        st.warning(PhotoUpload.extraction_partial_fail.format(
+            failed=len(failed_pages), total=total,
+            pages=", ".join(str(p) for p in failed_pages),
+        ))
 
     # ISBN lookup — use the copyright page text to fetch book metadata and
     # pre-populate the Add Book form. Done outside the st.status block so the
@@ -237,13 +299,26 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
     st.session_state['_upload_pipeline_done'] = True
 
 
+def _cleanup_upload_buffer(fs, flow_key):
+    """Delete this session's temp ``uploads/{flow_key}/{session_id}/`` buffer once
+    its photos have been written into ``sawimages/{title}/``, and drop the session
+    id so a new entry mints a fresh prefix (#124).
+
+    Scoped strictly to THIS browser session's ``flow_key`` (the session id is read
+    from ``st.session_state``), so it can never clear another user's or another
+    session's prefix. A no-op when no session id is present. ``cleanup_prefix``
+    swallows/logs any S3 failure, so this never breaks the just-completed entry.
+    """
+    session_id = st.session_state.get(f"upload_session_{flow_key}")
+    if not session_id:
+        return
+    cleanup_prefix(fs, flow_key, session_id)
+    reset_upload_session(flow_key)
+
+
 def upload_widget(on_submit='enter_text'):
 
-    fs = s3fs.S3FileSystem(
-        anon=False,
-        key=st.secrets['AWS_ACCESS_KEY_ID'],
-        secret=st.secrets['AWS_SECRET_ACCESS_KEY']
-    )
+    fs = get_s3_filesystem()
 
     def upload_page_photos():
         # Photos captured in the photo-first flow (#59) are reused here so the
@@ -258,6 +333,11 @@ def upload_widget(on_submit='enter_text'):
                 sort_file_names = [name for name, _ in stashed]
                 raw_bytes_list = [data for _, data in stashed]
                 _process_photo_batch(raw_bytes_list, sort_file_names, fs)
+                # Pages are now in sawimages/{title}/. The photo-first reuse path
+                # was fed from the "single" flow's temp buffer (uploaded in
+                # add_book_photos.py), so clear it now rather than waiting on the
+                # "Continue" click below (which the user may never reach) (#124).
+                _cleanup_upload_buffer(fs, "single")
         else:
             # Direct browser-to-S3 upload (#114/#118): replaces st.file_uploader,
             # which drops the Streamlit websocket on mobile while the native photo
@@ -285,6 +365,12 @@ def upload_widget(on_submit='enter_text'):
                 sort_file_names = [name for name, _ in pages]
                 raw_bytes_list = [data for _, data in pages]
                 _process_photo_batch(raw_bytes_list, sort_file_names, fs)
+                # Pages are now in sawimages/{title}/, so the direct page-upload
+                # temp buffer (uploads/pages/{session_id}/) is no longer needed —
+                # clear it here rather than waiting on the "Continue" click below
+                # (which the user may abandon), which is what left prefixes to pile
+                # up (#124).
+                _cleanup_upload_buffer(fs, UPLOAD_FLOW_KEY)
 
         st.write(Uploader.upload_complete)
         submit = st.button(Uploader.continue_button, key="uploader_continue_button")
@@ -293,16 +379,9 @@ def upload_widget(on_submit='enter_text'):
             st.session_state.pop('_upload_pipeline_done', None)
             st.session_state.pop('book_pages_dict', None)
             st.session_state.pop('photo_first_pages', None)
-            # The photos have now been processed into sawimages/{title}/, so the
-            # direct-upload temp prefixes (uploads/{flow}/{session_id}/, #114/#118)
-            # are no longer needed. Delete whichever fed this widget — the
-            # photo-first reuse path uses the "single" flow, the direct page-upload
-            # path uses "pages" — and drop the session ids so a new entry mints
-            # fresh ones.
-            for flow_key in (UPLOAD_FLOW_KEY, "single"):
-                session_id = st.session_state.pop(f"upload_session_{flow_key}", None)
-                if session_id:
-                    cleanup_prefix(fs, flow_key, session_id)
+            # The temp upload buffers were already cleared right after the photos
+            # were written to sawimages/{title}/ (see the _cleanup_upload_buffer
+            # calls above), so nothing to clean here — just leave the flow.
             if on_submit == 'enter_text':
                 st.switch_page("./pages/enter_text.py")
             else:

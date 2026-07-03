@@ -66,6 +66,15 @@ _COOKIE_MANAGER_KEY = "_cookie_manager"
 # login page can redirect a freshly-restored user home instead of showing the
 # sign-out prompt.
 RESTORED_FLAG = "_remember_restored"
+# One-shot session_state flag set by ``pages/login.logout()`` to defeat the
+# Sign-Out vs remember-me race (#125). Restore reads the cookie SYNCHRONOUSLY from
+# ``st.context.cookies`` (request headers) while logout deletes it via the ASYNC
+# CookieManager, so the ``st.rerun()`` after Sign Out would otherwise re-read the
+# not-yet-expired request cookie and re-authenticate — making Sign Out a no-op
+# while 'Remember me' is active. The flag lives only in in-memory ``session_state``
+# so it survives that same-session rerun; ``restore_session_from_cookie`` consumes
+# it once (pop) and skips, so Sign Out actually sticks.
+JUST_LOGGED_OUT_FLAG = "_just_logged_out"
 
 
 def _signing_key():
@@ -210,6 +219,15 @@ def restore_session_from_cookie():
     from the Firestore user document (never trusting the cookie) and confirms the
     user still exists, then sets the session authentication state.
     """
+    # One-shot guard for the Sign-Out vs remember-me race (#125). logout() sets
+    # JUST_LOGGED_OUT_FLAG just before its st.rerun(); because the cookie is
+    # deleted via the ASYNC CookieManager but read here SYNCHRONOUSLY from
+    # st.context.cookies, that rerun would otherwise still see the request cookie
+    # and re-authenticate, turning Sign Out into a no-op. Consume the flag (pop) and
+    # skip restore exactly once so the user lands on — and stays on — the login
+    # page. Checked first so the flag is always cleared on the post-logout rerun.
+    if st.session_state.pop(JUST_LOGGED_OUT_FLAG, False):
+        return
     if st.session_state.get("authentication_status"):
         return
     if not remember_me_available():
@@ -220,6 +238,18 @@ def restore_session_from_cookie():
     # reload it returns nothing on the first run and the user is bounced to login
     # before it hydrates. st.context.cookies is populated from the request and is
     # available immediately on the first run.
+    #
+    # RESIDUAL RACE (#125, accepted): the one-shot flag only lives in this
+    # session's memory, so it cannot cover a *different* run that has no flag — most
+    # notably a hard reload (new session) issued in the brief window before the
+    # async cookie delete propagates to the browser. In that window st.context.cookies
+    # still carries the stale (signature-valid, unexpired) token and the session
+    # would be restored. We deliberately do NOT re-confirm against the CookieManager
+    # copy here: the component returns nothing on its first run (the very reason this
+    # function reads st.context.cookies), so gating on it would break the legitimate
+    # cold-reload restore that #111 added. The exposure is a sub-second timing edge
+    # on a shared browser; a user who needs a guaranteed local sign-out should not
+    # immediately hard-reload. Revisit if a server-side session/revocation list lands.
     cookies = getattr(st.context, "cookies", None)
     raw = cookies.get(COOKIE_NAME) if cookies else None
     if not raw:

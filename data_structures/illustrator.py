@@ -1,5 +1,4 @@
 import streamlit as st
-import anthropic
 from text_content import IllustratorForm
 from .base_structure import DataStructureBase, Field
 from datetime import date
@@ -43,7 +42,7 @@ class Illustrator(DataStructureBase):
         return self.name.lower().replace(" ", "_")
 
     def to_form(self):
-        from utilities import lookup_person_details
+        from utilities import lookup_person_details, get_anthropic_client
 
         st.header(IllustratorForm.header)
 
@@ -118,9 +117,16 @@ class Illustrator(DataStructureBase):
 
         if lookup_clicked:
             if self.forename.strip() or self.surname.strip():
-                ai_client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
+                ai_client = get_anthropic_client()
+                # Pass the current book title (when one is in progress) as
+                # disambiguating context for common names (#113).
+                _current_book = st.session_state.get('current_book')
+                _book_title = getattr(_current_book, 'title', None)
                 with st.spinner(IllustratorForm.lookup_spinner):
-                    suggestion = lookup_person_details(self.name.strip(), 'illustrator', ai_client)
+                    suggestion = lookup_person_details(
+                        self.name.strip(), 'illustrator', ai_client,
+                        book_title=_book_title,
+                    )
                 if suggestion:
                     st.session_state['_illustrator_lookup_suggestion'] = suggestion
                 else:

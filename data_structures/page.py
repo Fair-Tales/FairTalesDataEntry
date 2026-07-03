@@ -31,7 +31,10 @@ class Page(DataStructureBase):
 
     @property
     def document_id(self):
-        return f"{self.book.get().id}_{self.page_number}"
+        # ``self.book`` is a DocumentReference whose ``.id`` is available locally;
+        # use it directly rather than ``.get().id``, which makes a Firestore
+        # round-trip on every access of this hot-path property (#128).
+        return f"{self.book.id}_{self.page_number}"
 
     def to_form(self):
         st.warning(Alerts.not_implemented)

@@ -3,15 +3,145 @@ import streamlit as st
 from google.cloud.firestore_v1 import FieldFilter
 from google.oauth2 import service_account
 import pandas as pd
+import anthropic
 import base64
 import difflib
 import json
+import logging
 import re
 import urllib.request
+import urllib.error
 import bcrypt
 import smtplib
 from email.mime.text import MIMEText
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Shared connection + AI helpers (issue #129).
+#
+# Single source of truth for the three patterns that were previously hand-rolled
+# across many pages/modules: the S3 filesystem, the Anthropic client, and the
+# image -> vision-call -> JSON boilerplate. Construct these ONLY via these
+# accessors — never inline an ``s3fs.S3FileSystem(...)`` /
+# ``anthropic.Anthropic(...)`` / vision request in a page or data structure.
+# (scripts/data_cleanup.py is the one exception: it runs OUTSIDE Streamlit, has
+# no ``st.secrets``, and keeps its own construction.)
+# ---------------------------------------------------------------------------
+
+
+@st.cache_resource(show_spinner=False)
+def get_s3_filesystem():
+    """Build the app's authenticated s3fs filesystem from the AWS secrets (#129).
+
+    Cached so every Streamlit surface that touches S3 shares one configured
+    filesystem instead of constructing ``s3fs.S3FileSystem`` inline.
+    """
+    import s3fs
+
+    return s3fs.S3FileSystem(
+        anon=False,
+        key=st.secrets["AWS_ACCESS_KEY_ID"],
+        secret=st.secrets["AWS_SECRET_ACCESS_KEY"],
+    )
+
+
+def get_anthropic_client():
+    """Return an ``anthropic.Anthropic`` client, or ``None`` when no API key is
+    configured (#129).
+
+    Centralises the ``'ANTHROPIC_API_KEY' in st.secrets`` guard: callers do
+    ``client = get_anthropic_client(); if client is None: <show no-API-key UI>``.
+    """
+    if 'ANTHROPIC_API_KEY' not in st.secrets:
+        return None
+    return anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
+
+
+def strip_json_fence(raw):
+    """Strip a leading ```` ``` ```` / ```` ```json ```` markdown fence from a
+    model reply and return the inner payload, ready for ``json.loads`` (#129)."""
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    return raw.strip()
+
+
+def build_vision_content(images, prompt, *, downscale=True):
+    """Build the ``[image block, ..., text]`` content list for a vision request.
+
+    Each item in ``images`` (raw image byte strings) becomes a base64 JPEG image
+    block, optionally downscaled for Claude's vision sweet spot, followed by the
+    text ``prompt``. Centralises the downscale -> base64 -> content-block
+    boilerplate duplicated across the vision callers (#129).
+    """
+    from image_processing import downscale_for_vision
+
+    content = []
+    for image_bytes in images:
+        data = downscale_for_vision(image_bytes) if downscale else image_bytes
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": base64.standard_b64encode(data).decode('utf-8'),
+            },
+        })
+    content.append({"type": "text", "text": prompt})
+    return content
+
+
+def vision_text(client, images, prompt, *, model="claude-sonnet-4-6",
+                max_tokens=1024, downscale=True):
+    """Send ``images`` + ``prompt`` to a Claude vision model and return the raw
+    reply text (stripped), or ``None`` when the response carried no text block.
+
+    Anthropic API errors propagate to the caller (#127): callers that want a
+    resilient default on a transient failure catch ``anthropic.AnthropicError``
+    themselves and log it.
+    """
+    response = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        messages=[{
+            "role": "user",
+            "content": build_vision_content(images, prompt, downscale=downscale),
+        }],
+    )
+    try:
+        return response.content[0].text.strip()
+    except (IndexError, AttributeError):
+        return None
+
+
+def vision_json(client, images, prompt, *, model="claude-sonnet-4-6",
+                max_tokens=1024, downscale=True):
+    """Send ``images`` + ``prompt`` to a Claude vision model and parse the JSON
+    reply, returning ``(data_or_None, raw_text)`` (#129).
+
+    ``data`` is the parsed object (typically a dict), or ``None`` when the reply
+    carried no text block or could not be parsed as JSON. ``raw_text`` is the raw
+    model response (``""`` when there was none) so callers can retain it for
+    audit even on a parse failure. Anthropic API errors propagate to the caller;
+    JSON-decode failures are logged here, not silently swallowed (#127).
+    """
+    raw = vision_text(
+        client, images, prompt, model=model, max_tokens=max_tokens,
+        downscale=downscale,
+    )
+    if raw is None:
+        return None, ""
+    try:
+        return json.loads(strip_json_fence(raw)), raw
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning("vision_json: could not parse model reply as JSON: %s", exc)
+        return None, raw
+
 
 def is_authenticated():
     if 'authentication_status' not in st.session_state:
@@ -80,11 +210,33 @@ def clear_entity_form_state(prefix):
         st.session_state.pop(key, None)
 
 
+# Belt-and-braces hide of Streamlit's *default* multipage navigation (#116).
+#
+# The app suppresses the auto page list with ``st.navigation(pages,
+# position="hidden")`` in Home.py, but on a cold load / reconnect the frontend
+# can momentarily render the default ``pages/``-directory nav (the full list of
+# would-be-hidden internal pages) into the ``stSidebarNav`` container before the
+# server's "hidden" config lands — the intermittent flash reported on the login
+# screen (#116). This static CSS is part of the served page markup, so the
+# container is forced hidden as soon as the stylesheet is parsed, regardless of
+# render order. Our intended sidebar links use ``st.sidebar.page_link(...)``,
+# which render into the sidebar *user-content* area (NOT ``stSidebarNav``), so
+# this never hides the real navigation.
+_HIDE_DEFAULT_NAV_CSS = """
+    <style>
+    [data-testid="stSidebarNav"] { display: none !important; }
+    </style>
+"""
+
+
 def page_layout(current_page=None):
     st.set_page_config(
         initial_sidebar_state="collapsed",
         layout="wide"
     )
+    # Force-hide the default multipage nav to defeat the intermittent flash (#116)
+    # before any sidebar content is rendered.
+    st.markdown(_HIDE_DEFAULT_NAV_CSS, unsafe_allow_html=True)
     if current_page:
         st.session_state['_current_page'] = current_page
     st.sidebar.page_link("pages/login.py", label="Login")
@@ -99,6 +251,9 @@ def page_layout(current_page=None):
     is_admin_user = st.session_state.get('admin', False) or role == 'admin'
     if is_admin_user or role == 'team':
         st.sidebar.page_link("pages/validation.py", label="Data validation")
+        st.sidebar.page_link(
+            "pages/reconstruct_orphans.py", label="Reconstruct orphaned books"
+        )
     if is_admin_user:
         st.sidebar.page_link("pages/admin.py", label="Admin")
     history = st.session_state.get('_page_history', [])
@@ -146,6 +301,14 @@ ROLE_ARCHIVIST = 'archivist'
 ROLE_TEAM = 'team'
 ROLE_ADMIN = 'admin'
 VALID_ROLES = (ROLE_ARCHIVIST, ROLE_TEAM, ROLE_ADMIN)
+
+#: Reserved system "user" that OWNS AI-generated books (#131). A book whose
+#: ``entered_by`` is databot is editable by ANY role — AI-reconstructed books
+#: are not locked to the single person who triggered their creation, so whoever
+#: is free can pick one up to finish/correct. Not a real login account; it is a
+#: stable owner identity that AI-creation flows stamp onto the books they produce
+#: (book_reconstruction now; #123's automated pipeline later).
+DATABOT_USERNAME = 'databot'
 
 
 def resolve_role(user_dict):
@@ -195,6 +358,33 @@ def is_team_or_above():
     the validation page (the validation workflow itself is #47).
     """
     return st.session_state.get('role', ROLE_ARCHIVIST) in (ROLE_TEAM, ROLE_ADMIN)
+
+
+def databot_entered_by():
+    """The ``entered_by`` value identifying the databot system user (#131).
+
+    Returns the SAME representation real books use for ``entered_by`` — a
+    ``users``-collection ``DocumentReference`` (here pointing at
+    ``users/databot``) — so databot is treated exactly like a normal owner by
+    Firestore equality queries and by ref-path comparisons (e.g. validation's
+    ``_current_ref_name`` / the "entered by" caption).
+
+    Representation choice: we ALWAYS return ``username_to_doc_ref(DATABOT_USERNAME)``
+    rather than conditionally falling back to the plain string ``"databot"`` when
+    no ``users/databot`` document exists. ``username_to_doc_ref`` only builds a
+    reference (it does not require the document to exist), and Firestore reference
+    equality is path-based, so a reference to a not-yet-created ``users/databot``
+    doc still matches consistently. This keeps a single, stable representation
+    (a doc ref, matching real books) used both when STAMPING databot onto a book
+    (book_reconstruction) and when QUERYING databot-owned books (review_my_books),
+    avoids an extra existence read on every call, and — crucially — does not
+    silently switch representation (string vs ref) if a databot user doc is later
+    created, which would split databot books into two non-matching owner values.
+    The codebase still tolerates a plain-string ``entered_by`` (see
+    ``pages/validation.py``) for legacy/single-DB records, so nothing breaks if a
+    string ``"databot"`` is ever encountered.
+    """
+    return st.session_state['firestore'].username_to_doc_ref(DATABOT_USERNAME)
 
 
 def authenticate_user(username, password):
@@ -319,45 +509,111 @@ def extract_isbn(text):
     return None
 
 
-def lookup_person_details(name, role, client):
+_PERSON_GENDER_OPTIONS = ("Woman", "Man", "Non-binary", "Other", "Unknown")
+
+
+def _parse_person_details(response):
+    """Extract a validated ``{'birth_year', 'gender'}`` dict from a lookup
+    response, robustly (#113).
+
+    A web-search reply may narrate before emitting the JSON, so this walks the
+    text blocks (preferring the final one), strips any markdown fence and, when
+    the whole block still isn't valid JSON, falls back to extracting the first
+    ``{...}`` object. Returns ``None`` when no JSON payload can be recovered.
+    """
+    texts = [
+        block.text for block in response.content
+        if getattr(block, "type", None) == "text" and getattr(block, "text", None)
+    ]
+    if not texts:
+        return None
+
+    data = None
+    # Try the final text block first (the model's answer usually comes last),
+    # then the whole reply joined, so a stray leading narration can't hide the
+    # JSON.
+    for candidate in (texts[-1], "\n".join(texts)):
+        candidate = strip_json_fence(candidate.strip())
+        try:
+            data = json.loads(candidate)
+        except (json.JSONDecodeError, ValueError):
+            match = re.search(r"\{.*?\}", candidate, re.DOTALL)
+            if match:
+                try:
+                    data = json.loads(match.group())
+                except (json.JSONDecodeError, ValueError):
+                    data = None
+        if isinstance(data, dict):
+            break
+    if not isinstance(data, dict):
+        return None
+
+    birth_year = data.get("birth_year")
+    try:
+        birth_year = int(birth_year) if birth_year is not None else None
+    except (ValueError, TypeError):
+        birth_year = None
+    # Discard an implausible year rather than store a confident wrong guess (#113).
+    if birth_year is not None and not (1000 <= birth_year <= datetime.now(timezone.utc).year):
+        birth_year = None
+
+    gender = data.get("gender", "Unknown")
+    if gender not in _PERSON_GENDER_OPTIONS:
+        gender = "Unknown"
+
+    return {"birth_year": birth_year, "gender": gender}
+
+
+def lookup_person_details(name, role, client, book_title=None):
     """Use Claude + web search to suggest birth year and gender for a named person.
 
+    When known, ``book_title`` is passed to the model as disambiguating context
+    ("<role> of the children's book '<title>'") so common names resolve to the
+    right person (#113).
+
     Returns a dict with 'birth_year' (int or None) and 'gender' (str from
-    AuthorForm/IllustratorForm.gender_options), or None on any failure.
+    AuthorForm/IllustratorForm.gender_options), or None on any failure. A clean
+    "no reliable info found" result is returned as
+    ``{'birth_year': None, 'gender': 'Unknown'}`` rather than a confident wrong
+    guess.
     """
-    import json as _json
     from text_content import AIPrompts
+
+    context = ""
+    if book_title and book_title.strip():
+        context = AIPrompts.person_lookup_book_context.format(title=book_title.strip())
+    prompt = AIPrompts.person_lookup.format(name=name, role=role, context=context)
+
+    tools = [{"type": "web_search_20260209", "name": "web_search"}]
     try:
+        messages = [{"role": "user", "content": prompt}]
         response = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=512,
-            tools=[{"type": "web_search_20260209", "name": "web_search"}],
-            messages=[{
-                "role": "user",
-                "content": AIPrompts.person_lookup.format(name=name, role=role)
-            }]
+            max_tokens=1024,
+            tools=tools,
+            messages=messages,
         )
-        text_block = None
-        for block in response.content:
-            if hasattr(block, 'type') and block.type == "text":
-                text_block = block.text
-        if text_block is None:
-            return None
-        raw = text_block.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        result = _json.loads(raw.strip())
-        birth_year = result.get("birth_year")
-        if birth_year is not None:
-            birth_year = int(birth_year)
-        gender = result.get("gender", "Unknown")
-        valid_genders = ["Woman", "Man", "Non-binary", "Other", "Unknown"]
-        if gender not in valid_genders:
-            gender = "Unknown"
-        return {"birth_year": birth_year, "gender": gender}
-    except Exception:
+        # The server-side web-search loop can stop with ``pause_turn`` before it
+        # has produced the final answer; re-send so it resumes rather than
+        # returning an empty/partial reply (#113).
+        continuations = 0
+        while getattr(response, "stop_reason", None) == "pause_turn" and continuations < 3:
+            messages.append({"role": "assistant", "content": response.content})
+            response = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=1024,
+                tools=tools,
+                messages=messages,
+            )
+            continuations += 1
+
+        return _parse_person_details(response)
+    except (anthropic.AnthropicError, json.JSONDecodeError,
+            ValueError, TypeError) as exc:
+        # Narrowed from a broad ``except`` (#127): API failures and malformed /
+        # unparseable replies degrade to "no suggestion", but are logged rather
+        # than silently swallowed so transient issues are diagnosable.
+        logger.warning("lookup_person_details failed for %r (%s): %s", name, role, exc)
         return None
 
 
@@ -375,12 +631,7 @@ def _claude_json(client, prompt, max_tokens=1024):
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}]
     )
-    raw = response.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    return json.loads(raw.strip())
+    return json.loads(strip_json_fence(response.content[0].text))
 
 
 def detect_book_characters(pages, client, progress_callback=None):
@@ -481,7 +732,11 @@ def lookup_isbn(isbn):
             'publisher': info.get('publisher', ''),
             'published_date': info.get('publishedDate', ''),
         }
-    except Exception:
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError,
+            ValueError, KeyError, IndexError) as exc:
+        # Narrowed from a broad ``except`` (#127): a network/timeout failure or an
+        # unexpected response shape degrades to "no metadata", but is logged.
+        logger.warning("lookup_isbn failed for %r: %s", isbn, exc)
         return None
 
 
@@ -505,34 +760,10 @@ def extract_book_metadata(image_bytes, client):
     here, by returning empty fields alongside the raw text.
     """
     from text_content import AIPrompts
-    from image_processing import downscale_for_vision
 
-    image_data = base64.standard_b64encode(
-        downscale_for_vision(image_bytes)
-    ).decode('utf-8')
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1024,
-        messages=[{
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "image/jpeg",
-                        "data": image_data,
-                    },
-                },
-                {"type": "text", "text": AIPrompts.book_metadata_extraction},
-            ],
-        }],
+    result, raw_text = vision_json(
+        client, [image_bytes], AIPrompts.book_metadata_extraction, max_tokens=1024,
     )
-
-    try:
-        raw_text = response.content[0].text.strip()
-    except (IndexError, AttributeError):
-        raw_text = ""
     empty = {
         'title': "",
         'authors': [],
@@ -541,15 +772,7 @@ def extract_book_metadata(image_bytes, client):
         'published_year': None,
         'raw': raw_text,
     }
-
-    cleaned = raw_text
-    if cleaned.startswith("```"):
-        cleaned = cleaned.split("```")[1]
-        if cleaned.startswith("json"):
-            cleaned = cleaned[4:]
-    try:
-        result = json.loads(cleaned.strip())
-    except (json.JSONDecodeError, ValueError):
+    if not isinstance(result, dict):
         return empty
 
     def _as_name_list(value):
@@ -597,42 +820,10 @@ def extract_books_from_photos(images, client):
     response-parsing problems are handled here, by returning an empty list.
     """
     from text_content import AIPrompts
-    from image_processing import downscale_for_vision
 
-    content = []
-    for image_bytes in images:
-        content.append({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": "image/jpeg",
-                "data": base64.standard_b64encode(
-                    downscale_for_vision(image_bytes)
-                ).decode('utf-8'),
-            },
-        })
-    content.append({"type": "text", "text": AIPrompts.collection_books_extraction})
-
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=2048,
-        messages=[{"role": "user", "content": content}],
+    result, _raw = vision_json(
+        client, images, AIPrompts.collection_books_extraction, max_tokens=2048,
     )
-
-    try:
-        raw_text = response.content[0].text.strip()
-    except (IndexError, AttributeError):
-        return []
-
-    cleaned = raw_text
-    if cleaned.startswith("```"):
-        cleaned = cleaned.split("```")[1]
-        if cleaned.startswith("json"):
-            cleaned = cleaned[4:]
-    try:
-        result = json.loads(cleaned.strip())
-    except (json.JSONDecodeError, ValueError):
-        return []
 
     raw_books = result.get('books', []) if isinstance(result, dict) else []
     books = []
@@ -693,12 +884,8 @@ def locate_key_pages(pages, client):
         raw = response.content[0].text.strip()
     except (IndexError, AttributeError):
         return none_result
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
     try:
-        result = json.loads(raw.strip())
+        result = json.loads(strip_json_fence(raw))
     except (json.JSONDecodeError, ValueError):
         return none_result
 
@@ -730,44 +917,12 @@ def extract_copyright_metadata(image_bytes, client):
     problems yield empty fields, and Anthropic API errors propagate to the caller.
     """
     from text_content import AIPrompts
-    from image_processing import downscale_for_vision
 
-    image_data = base64.standard_b64encode(
-        downscale_for_vision(image_bytes)
-    ).decode('utf-8')
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=512,
-        messages=[{
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "image/jpeg",
-                        "data": image_data,
-                    },
-                },
-                {"type": "text", "text": AIPrompts.copyright_page_extraction},
-            ],
-        }],
+    result, raw_text = vision_json(
+        client, [image_bytes], AIPrompts.copyright_page_extraction, max_tokens=512,
     )
-
-    try:
-        raw_text = response.content[0].text.strip()
-    except (IndexError, AttributeError):
-        raw_text = ""
     empty = {'publisher': None, 'published_year': None, 'isbn': None, 'raw': raw_text}
-
-    cleaned = raw_text
-    if cleaned.startswith("```"):
-        cleaned = cleaned.split("```")[1]
-        if cleaned.startswith("json"):
-            cleaned = cleaned[4:]
-    try:
-        result = json.loads(cleaned.strip())
-    except (json.JSONDecodeError, ValueError):
+    if not isinstance(result, dict):
         return empty
 
     publisher = result.get('publisher')
@@ -929,12 +1084,8 @@ def locate_cover_pages(pages, client):
         raw = response.content[0].text.strip()
     except (IndexError, AttributeError):
         return []
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
     try:
-        result = json.loads(raw.strip())
+        result = json.loads(strip_json_fence(raw))
     except (json.JSONDecodeError, ValueError):
         return []
 

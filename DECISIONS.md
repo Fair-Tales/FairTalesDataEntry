@@ -121,7 +121,7 @@ Status: `accepted` | `superseded` | `deprecated`.
 - **Signing key:** read from `st.secrets["cookie_signing_key"]`. **If the secret is absent the feature disables cleanly** — no cookie is written, no restore attempted, login behaves exactly as before (session-only). No key is invented or committed.
 - **Restore point:** `Home.py` (the single entry script that runs before every page body, consistent with #107) calls `init_cookie_manager()` then `restore_session_from_cookie()` each rerun, before `navigate_pages().run()`. Restore verifies the signature (constant-time `hmac.compare_digest`) and expiry; on success it sets `authentication_status`/`username`.
 - **Re-resolve role on restore (security):** the role/admin flag is **NOT trusted from the cookie**. On restore the role is re-fetched from the Firestore user document via `get_role()` and the user's continued existence is confirmed, so a **stale or forged cookie cannot escalate privileges** and a deleted user cannot be restored. Coordinates with the #83 three-tier roles.
-- **Teardown:** `logout()` clears the cookie (`clear_remember_cookie()`) before wiping session state, so Sign Out cannot be silently undone by the next reload.
+- **Teardown:** `logout()` clears the cookie (`clear_remember_cookie()`) before wiping session state. **Note (#125):** clearing the cookie alone is *not* sufficient, because `clear_remember_cookie()` deletes via the **async** `CookieManager` while `restore_session_from_cookie()` reads **synchronously** from `st.context.cookies` (the request headers). The `st.rerun()` that ends `logout()` would therefore re-read the not-yet-expired request cookie and re-authenticate, making Sign Out a no-op while 'Remember me' is active. The fix is a one-shot `_just_logged_out` flag (`cookie_auth.JUST_LOGGED_OUT_FLAG`): `logout()` sets it after the session wipe (so the wipe cannot delete it, and it is intentionally **not** in `_LOGOUT_KEEP` so it does not persist past the single post-logout rerun), and `restore_session_from_cookie()` pops it and returns at the very top before any cookie read. A **residual** sub-second edge remains: a *new-session* hard reload issued before the async cookie delete propagates has no in-memory flag and may restore from the still-present request cookie. We do not gate on the `CookieManager` copy to close it (the component returns nothing on its first run — the reason restore reads `st.context.cookies` at all — so gating there would break the #111 cold-reload restore); revisit only if server-side session/revocation lands.
 
 **Reasons:**
 - Reusing an existing, maintained dependency avoids new supply-chain surface and matches how streamlit-authenticator already manages cookies.
@@ -156,3 +156,46 @@ Status: `accepted` | `superseded` | `deprecated`.
 - **HARD PREREQUISITE (AWS, Chris):** the `sawimages` bucket needs a CORS policy allowing `PUT`/`GET` from the app origin, or the browser PUT is blocked (the `image/jpeg` PUT is non-simple, so the browser sends a CORS preflight). The Streamlit `components.html` iframe carries `allow-same-origin`, so requests use the **app origin** (the Streamlit/HF app URL), not `null`. CORS JSON is in the PR summary.
 - **Untestable here:** mobile and live-S3 behaviour cannot be exercised in CI — this needs real-device + live-S3 testing on the deploy, with CORS applied first.
 - **Phase-1 scope:** per-item *remove* in the uploader is deferred (true remove needs an S3 delete); the UI supports *adding* more photos. Batch upload (#84) and the QR/phone flow (#81) are the remaining follow-ups.
+
+---
+
+## 008 — Harden the direct-S3 presigned uploads (issue #126)
+
+**Status:** accepted (code landed; the AWS lifecycle + CORS steps are **Chris-run on the live bucket**)
+
+**Context:** `photo_upload.generate_put_urls` presigns only `Bucket`+`Key`; `Content-Length` and `Content-Type` are intentionally **unsigned** (so the browser can PUT jpeg/png/heic without header-matching). Consequence: an *authenticated* user could PUT arbitrarily large objects under `uploads/` (cost/DoS), and abandoned/closed-tab uploads accumulate because **both cleanup tools exclude `uploads/`**. Scoped to `uploads/` only.
+
+**Decision (defence-in-depth, no regression to the working PUT uploader):**
+- **Client-side size guard (50 MB, Chris-approved):** new constant `photo_upload.MAX_UPLOAD_BYTES = 50 * 1024 * 1024`, injected into the uploader JS (`__MAX_BYTES__`). Before PUTting each file the JS checks `file.size > MAX_BYTES`; an oversize file is **skipped** (it does not consume a presigned-URL slot) and a clear per-file error row is shown in the existing progress UI — the rest of the batch still uploads. The message is `BookPhotoEntry.upload_too_large` (text_content). This catches accidental huge files; it is **not** a security boundary (client JS is bypassable).
+- **S3 lifecycle expiry for `uploads/` (7 days):** new standalone script `scripts/set_uploads_lifecycle.py` puts a bucket lifecycle rule (`ID=expire-uploads-prefix`, `Filter.Prefix=uploads/`, `Expiration.Days=7`). It is **dry-run by default** (prints the rule), `--execute` applies it, and it **merges** into any existing lifecycle config (keyed on the rule id) so unrelated rules are preserved. The script docstring carries the equivalent AWS CLI and Console steps. **Not run here** (no live creds in the worktree); Chris applies it.
+- **CORS scope (deploy checklist):** confirm the `sawimages` bucket CORS policy allows the **app origin only** (not `*`) for `PUT`/`GET` on `uploads/`. Coupled with DECISIONS-007's CORS prerequisite — this just narrows the allowed origin before launch.
+
+**Reasons:**
+- The PUT uploader currently works well on real mobile devices; rewriting it risks regressing the hard-won mobile-reliability fix (DECISIONS-007). The 50 MB JS guard + lifecycle expiry + tightened CORS remove the practical accidental-abuse and cost-creep surface without touching the transfer path.
+
+**Consequences / follow-up:**
+- **True server-side hard cap (recommended follow-up, NOT done now):** a presigned **PUT** URL cannot cleanly enforce a maximum object size — `Content-Length` would have to be signed, which forces the client to declare an exact byte count up front and breaks the flexible browser PUT. The clean fix is to switch the mint to a **presigned POST** (`generate_presigned_post`) with a `["content-length-range", 0, MAX]` policy condition, which S3 enforces server-side regardless of the client. This is a larger change to both `generate_put_urls` and the uploader JS (multipart form POST instead of raw PUT), so it is deferred as a recommendation, not implemented in #126.
+- **Chris must run (live AWS), before/at launch:** (1) `python scripts/set_uploads_lifecycle.py --execute` (or the CLI/Console equivalent in the script docstring); (2) confirm bucket CORS is scoped to the app origin only for PUT/GET on `uploads/`.
+---
+
+## 009 — Editing scope: own-books-only for all roles + `databot`-owned AI books + Validation all/own toggle (issue #131)
+
+**Status:** accepted (reverses part of #83's "team+admin may edit any book")
+
+**Context:** #83 introduced three roles (archivist / team / admin) and let team members and admins EDIT books entered by anyone (the `is_team_or_above()` edit-all branch in `pages/review_my_books.py`). Chris decided (2026-06-30) that cross-user *editing* on that page is the wrong surface: corrections by another person belong in the dedicated **Validation** workflow (#47, which already records an edit-audit log), while the per-archivist edit page should stay personal. Separately, AI-generated books (#122 reconstruction now, #123 automated pipeline later) have no human "owner" and must not be locked to whichever admin happened to trigger them.
+
+**Decision:**
+- **Edit page (`review_my_books.py`) is OWN-BOOKS-ONLY for ALL roles.** The `is_team_or_above()` edit-all branch is removed. For every role the editable list is the union of two `entered_by` equality queries: the current user's own books **and** books owned by the **`databot` system user**. Own books keep the existing `entry_status == 'started'` filter (submitted books are locked); **databot books are shown regardless of `entry_status`** so anyone can pick up an AI-generated book to finish/correct it. (The databot status choice is flagged to Chris for confirmation.)
+- **`databot` owner:** a reserved system "user" (`utilities.DATABOT_USERNAME = 'databot'`) owns AI-generated books, making them editable by any role. Its `entered_by` value is produced by `utilities.databot_entered_by()`, which **always** returns `username_to_doc_ref('databot')` — a `users`-collection `DocumentReference` (to a possibly-non-existent `users/databot` doc), the SAME representation real books use. This single stable representation is used both to STAMP databot onto reconstructed books and to QUERY databot-owned books; it avoids an existence read and avoids silently switching between a string and a ref (which would split databot books into two non-matching owner values). Plain-string `entered_by` remains tolerated for legacy records.
+- **AI-creation flows stamp databot:** `book_reconstruction.reconstruct_book_from_photos` overrides `book.entered_by = databot_entered_by()` right after `register()`. #123's automated pipeline must do the same (noted in code).
+- **Validation (`validation.py`) gains an All/Just-mine scope control** (`st.radio`, key `validation_scope_radio`, default **All books**). The page is already gated to team+admin; "Just mine" filters the unvalidated list to books whose `entered_by` resolves to the current username (ref-or-string handled by the new `_entered_by_name` helper). All-books default preserves cross-user review as the team's primary surface.
+
+**Reasons:**
+- Keeps personal editing personal and routes cross-user corrections through the audited Validation workflow, where every change is logged as training data (#47).
+- A dedicated databot owner cleanly expresses "AI book, anyone may edit" without a per-role special case in the query, and reuses the normal `entered_by` ownership mechanism.
+- Defaulting Validation to "All" matches the team's job (review everyone's submissions) while still letting a validator focus on their own entries.
+
+**Consequences / follow-up:**
+- `ReviewBooks.all_header` / `all_select_label` (the #83 edit-all variants) are now unused; left in place for now.
+- **Confirm with Chris:** databot books appear on the edit page even when `entry_status == 'completed'` (already in the validation queue) — intentional so they can be picked up, but unlike own-book behaviour (started-only).
+- A real `users/databot` document is not required; create one only if a databot login/identity is ever needed. #123 must stamp `entered_by = databot_entered_by()` on its books.

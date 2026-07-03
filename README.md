@@ -17,3 +17,20 @@ The tool can be installed locally for testing and exploration of its functionali
 
 ### User-flow Diagram
 ![plot](./resources/user_flow.png)
+
+### Deployment checklist — direct-to-S3 photo uploads (`sawimages`)
+
+The mobile photo uploader PUTs photos straight to the `sawimages` S3 bucket via
+presigned URLs (see `DECISIONS.md` 007/008). Before/at launch, run these against
+the **live bucket** (they cannot be run from CI or an isolated worktree):
+
+* **Lifecycle expiry for `uploads/`** — expire abandoned/closed-tab uploads after
+  7 days (both data-cleanup tools exclude `uploads/`). From the project root:
+  `python scripts/set_uploads_lifecycle.py --execute` (dry-run without `--execute`;
+  the script docstring also lists the equivalent AWS CLI / Console steps).
+* **CORS scope** — confirm the bucket CORS policy allows **the app origin only**
+  (not `*`) for `PUT`/`GET` on `uploads/`.
+
+A 50 MB per-image client-side size guard is enforced in the uploader; a true
+server-side hard cap is a recommended follow-up (presigned POST +
+`content-length-range` — see DECISIONS 008).

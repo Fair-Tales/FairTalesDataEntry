@@ -24,6 +24,7 @@ app origin, or the browser PUT is blocked. See the issue/PR summary for the JSON
 """
 
 import json
+import logging
 import re
 import time
 
@@ -31,8 +32,11 @@ import boto3
 import natsort
 import streamlit as st
 from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
 
 from text_content import BookPhotoEntry
+
+logger = logging.getLogger(__name__)
 
 # First path segment used everywhere else in the codebase for s3fs writes
 # (e.g. ``sawimages/{title}/page_N.jpg``) is the bucket name.
@@ -48,6 +52,15 @@ MAX_UPLOAD_PAGES = 60
 # Presigned URL lifetime (seconds). One hour comfortably covers a slow mobile
 # upload of a full picture book.
 PRESIGN_EXPIRY_SECONDS = 3600
+
+# Client-side per-image size cap (50 MB; Chris-approved, #126). The presigned PUT
+# URLs sign only Bucket+Key — ``Content-Length`` is unsigned — so the uploader JS
+# enforces this bound *before* PUTting each file to catch accidental huge uploads
+# (cost/DoS) without changing normal photo uploads. This is a client-side guard
+# only; a true server-side hard cap needs presigned POST + a ``content-length-range``
+# policy condition (see DECISIONS-007 follow-up). The matching S3 lifecycle rule
+# (``scripts/set_uploads_lifecycle.py``) expires abandoned ``uploads/`` objects.
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
 def _s3_client():
@@ -186,14 +199,25 @@ def fetch_uploaded_photos(fs, flow_key, session_id):
 def cleanup_prefix(fs, flow_key, session_id):
     """Delete the temporary ``uploads/{flow_key}/{session_id}/`` prefix from S3.
 
-    Safe to call when nothing was uploaded (a missing prefix is ignored).
+    Scoped strictly to the ONE ``flow_key``/``session_id`` prefix passed in, so it
+    can never touch another user's or another session's upload buffer (#124).
+
+    Safe to call when nothing was uploaded (a missing prefix is ignored). A
+    transient S3 / permission failure is logged and swallowed rather than raised:
+    cleanup runs on the success path of a flow that has ALREADY relocated the
+    photos into ``sawimages/``, so a cleanup error must never break the user's
+    completed entry. The #126 ``uploads/`` lifecycle rule (7-day expiry) is the
+    backstop for anything a failed cleanup leaves behind.
     """
     prefix = f"{S3_BUCKET}/{upload_prefix(flow_key, session_id)}"
     try:
         if fs.exists(prefix):
             fs.rm(prefix, recursive=True)
     except FileNotFoundError:
+        # Nothing was uploaded, or the prefix is already gone — nothing to do.
         pass
+    except (OSError, BotoCoreError, ClientError) as exc:
+        logger.warning("cleanup_prefix failed for %s: %s", prefix, exc)
 
 
 # The component markup/JS lives here as a template; only the *strings* shown to
@@ -237,10 +261,23 @@ _UPLOADER_TEMPLATE = """
 (function () {
   var URLS = __URLS__;
   var TEXT = __TEXT__;
+  var MAX_BYTES = __MAX_BYTES__;
+  var MAX_MB = Math.round(MAX_BYTES / (1024 * 1024));
   var input = document.getElementById("ftu-input");
   var list = document.getElementById("ftu-list");
   var summary = document.getElementById("ftu-summary");
   var nextIndex = 0, total = 0, done = 0, failed = 0;
+
+  function showError(label) {
+    // Render a per-file error row (no progress bar) in the existing list UI.
+    var row = document.createElement("div"); row.className = "ftu-row";
+    var name = document.createElement("span"); name.className = "ftu-name";
+    name.textContent = label;
+    var status = document.createElement("span");
+    status.className = "ftu-status err"; status.textContent = "✗";
+    row.appendChild(name); row.appendChild(status);
+    list.appendChild(row);
+  }
 
   function refresh() {
     if (total === 0) { summary.textContent = ""; return; }
@@ -283,6 +320,18 @@ _UPLOADER_TEMPLATE = """
     var files = Array.prototype.slice.call(input.files);
     input.value = "";  // allow re-opening the picker to add more photos
     files.forEach(function (file) {
+      if (file.size > MAX_BYTES) {
+        // Skip oversize files without consuming a presigned URL slot, and show a
+        // clear per-file error; the rest of the batch continues uploading (#126).
+        var mb = (file.size / (1024 * 1024)).toFixed(1);
+        showError(TEXT.too_large
+          .replace("{name}", file.name)
+          .replace("{size}", mb)
+          .replace("{max}", MAX_MB));
+        failed += 1;
+        refresh();
+        return;
+      }
       if (nextIndex >= URLS.length) {
         var note = document.createElement("div");
         note.className = "ftu-hint"; note.textContent = TEXT.max_reached;
@@ -309,11 +358,13 @@ def build_uploader_html(put_urls):
         "uploaded": BookPhotoEntry.upload_progress,
         "failed": BookPhotoEntry.upload_failed_count,
         "max_reached": BookPhotoEntry.upload_max_reached,
+        "too_large": BookPhotoEntry.upload_too_large,
     }
     return (
         _UPLOADER_TEMPLATE
         .replace("__URLS__", json.dumps(put_urls))
         .replace("__TEXT__", json.dumps(text))
+        .replace("__MAX_BYTES__", str(MAX_UPLOAD_BYTES))
         .replace("__SELECT_LABEL__", BookPhotoEntry.upload_select_button)
         .replace("__HINT__", BookPhotoEntry.upload_component_hint)
     )

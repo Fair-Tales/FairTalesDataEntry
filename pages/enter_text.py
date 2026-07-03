@@ -4,10 +4,10 @@ import streamlit as st
 import anthropic
 from PIL import Image, ImageOps
 from streamlit_dimensions import st_dimensions
-import s3fs
 from utilities import (
     page_layout, confirm_submit, check_authentication_status,
     detect_book_characters, clear_entity_form_state,
+    get_s3_filesystem, get_anthropic_client,
 )
 from data_structures import Page, Character, Alias
 from text_content import EnterText, ManageCharacters, AliasForm, CharacterForm
@@ -408,7 +408,8 @@ def run_character_detection():
     Returns True when suggestions were produced (and a rerun should follow),
     False otherwise (a warning/error has already been shown to the user).
     """
-    if 'ANTHROPIC_API_KEY' not in st.secrets:
+    client = get_anthropic_client()
+    if client is None:
         st.warning(EnterText.detect_no_api_key)
         return False
 
@@ -421,7 +422,6 @@ def run_character_detection():
         st.warning(EnterText.detect_no_text)
         return False
 
-    client = anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
     status = st.empty()
     progress = st.progress(0.0)
 
@@ -680,11 +680,7 @@ def user_entry_box(element, image_height, delta=50):
 
 page_layout(current_page="./pages/enter_text.py")
 
-fs = s3fs.S3FileSystem(
-        anon=False,
-        key=st.secrets['AWS_ACCESS_KEY_ID'],
-        secret=st.secrets['AWS_SECRET_ACCESS_KEY']
-    )
+fs = get_s3_filesystem()
 
 # Rebuild the page cache whenever the current book changes. Without this, the
 # dict for the first book opened persists in session state and is shown for

@@ -26,14 +26,15 @@ records (no interactive "create new" sub-forms); unmatched creators are left for
 the user to fill in later via the normal Edit-my-books flow.
 """
 
-import s3fs
 import streamlit as st
 import anthropic
 
-from data_structures import Book, Page
+from data_structures import Book, Page, ExtractionErrorLog
 from image_processing import exif_transpose_bytes
-from pages.uploader import _process_page, extract_page_info, _make_reporter
-from text_content import BatchBookEntry, Uploader
+from pages.uploader import (
+    _process_page, extract_page_info, _make_reporter, PageExtractionError,
+)
+from text_content import BatchBookEntry, Uploader, PhotoUpload
 from utilities import (
     page_layout,
     check_authentication_status,
@@ -41,6 +42,8 @@ from utilities import (
     extract_photo_first_metadata,
     fuzzy_match_name,
     load_book_dict,
+    get_s3_filesystem,
+    get_anthropic_client,
 )
 from photo_upload import (
     get_upload_session_id,
@@ -55,15 +58,6 @@ from photo_upload import (
 # (uploads/batch/{session_id}/) so it never collides with the other migrated
 # surfaces (single / pages / collection) within one browser session.
 UPLOAD_FLOW_KEY = "batch"
-
-
-def _filesystem():
-    """Authenticated s3fs filesystem from the AWS secrets (shared app config)."""
-    return s3fs.S3FileSystem(
-        anon=False,
-        key=st.secrets['AWS_ACCESS_KEY_ID'],
-        secret=st.secrets['AWS_SECRET_ACCESS_KEY'],
-    )
 
 check_authentication_status()
 page_layout(current_page="./pages/add_books_batch.py")
@@ -167,9 +161,13 @@ def _make_book_from_metadata(metadata, used_ids):
 def _process_group_pages(book, group_pages, fs, ai_client, status):
     """Upload, correct and text-extract every page of one book group, mirroring
     the single-book pipeline (``uploader._process_photo_batch``) but scoped to an
-    explicit, already-registered ``book``."""
+    explicit, already-registered ``book``.
+
+    Returns the list of page numbers whose AI text-extraction failed (#132); those
+    pages stay in the sequence as blanks for later manual entry."""
     photos_url = f"sawimages/{book.title}"
     total = len(group_pages)
+    failed_pages = []
     # Per-book prefix so the shared sub-step messages name the current book (#110).
     prefix = BatchBookEntry.page_prefix.format(title=book.title)
 
@@ -201,15 +199,28 @@ def _process_group_pages(book, group_pages, fs, ai_client, status):
             page = Page(page_number=page_number, book=book.title)
             page.register()
             report(Uploader.substep_extracting)
-            text, is_story, _page_type = extract_page_info(bytes_for_extraction, ai_client)
-            if text:
-                page.text = text
-            page.contains_story = is_story
+            try:
+                text, is_story, _page_type = extract_page_info(
+                    bytes_for_extraction, ai_client,
+                    book=book, page_number=page_number,
+                    page_name=f"page_{page_number}.jpg",
+                    flow=ExtractionErrorLog.FLOW_BATCH,
+                )
+            except PageExtractionError:
+                # Detail already logged to extraction_errors; keep the blank page
+                # and record it for the user (#132).
+                failed_pages.append(page_number)
+            else:
+                if text:
+                    page.text = text
+                page.contains_story = is_story
     else:
         # No API key — register pages without extraction.
         for index in range(total):
             page = Page(page_number=index + 1, book=book.title)
             page.register()
+
+    return failed_pages
 
 
 def _create_books(detected, fs, ai_client):
@@ -230,12 +241,15 @@ def _create_books(detected, fs, ai_client):
             book.register()
             # Register into the session lookup so Page.book string resolution
             # works, then invalidate the shared cache for other/new sessions.
-            st.session_state['book_dict'][book.title] = book.get_ref()
-            _process_group_pages(book, entry['pages'], fs, ai_client, status)
+            st.session_state.setdefault('book_dict', {})[book.title] = book.get_ref()
+            failed_pages = _process_group_pages(
+                book, entry['pages'], fs, ai_client, status
+            )
             results.append({
                 'title': book.title,
                 'pages': len(entry['pages']),
                 'metadata_error': entry.get('metadata_error'),
+                'extraction_failures': failed_pages,
             })
             overall.progress((index + 1) / max(total, 1))
 
@@ -262,12 +276,12 @@ def _render_upload(client, ai_available):
     detect = st.button(BatchBookEntry.detect_button, key="add_books_batch_detect_button")
     if st.button(BatchBookEntry.cancel_button, key="add_books_batch_cancel_upload_button"):
         # Remove any photos already uploaded so they don't orphan in S3.
-        cleanup_prefix(_filesystem(), UPLOAD_FLOW_KEY, session_id)
+        cleanup_prefix(get_s3_filesystem(), UPLOAD_FLOW_KEY, session_id)
         _reset_batch_state()
         st.switch_page("./pages/user_home.py")
 
     if detect:
-        fs = _filesystem()
+        fs = get_s3_filesystem()
         with st.spinner(BatchBookEntry.detecting):
             # Pull the uploaded batch (in page order: page_1..page_N as the browser
             # PUT them) into memory, then split it into per-book groups.
@@ -341,7 +355,7 @@ def _render_review(client):
         st.rerun()
 
     if confirm:
-        fs = _filesystem()
+        fs = get_s3_filesystem()
         results = _create_books(detected, fs, client)
         st.session_state['batch_results'] = results
         st.session_state['batch_step'] = 'done'
@@ -358,6 +372,15 @@ def _render_done():
     st.success(BatchBookEntry.done_summary.format(count=len(results)))
     if needs_details:
         st.warning(BatchBookEntry.done_needs_details.format(count=needs_details))
+
+    # One simple summary of pages the AI couldn't read across the whole batch, so
+    # the user knows how many need manual entry (#132). Raw errors are never shown
+    # — they are in the extraction_errors debug log.
+    total_failed = sum(
+        len(result.get('extraction_failures') or []) for result in results
+    )
+    if total_failed:
+        st.warning(PhotoUpload.extraction_partial_fail_batch.format(count=total_failed))
 
     for result in results:
         if result.get('metadata_error'):
@@ -383,11 +406,8 @@ def _render_done():
 
 st.header(BatchBookEntry.header)
 
-_ai_available = 'ANTHROPIC_API_KEY' in st.secrets
-_client = (
-    anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
-    if _ai_available else None
-)
+_client = get_anthropic_client()
+_ai_available = _client is not None
 
 _step = st.session_state.get('batch_step', 'upload')
 if _step == 'review':

@@ -1,25 +1,17 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
 from utilities import page_layout, check_authentication_status, navigate_to
-from text_content import Instructions, PhotoUpload, Uploader, BookDataEntry
-from photo_upload import (
-    get_upload_session_id,
-    generate_put_urls,
-    build_uploader_html,
-)
+from text_content import Instructions, PhotoUpload, BookDataEntry
 
 check_authentication_status()
 
 
 def upload_page_photos():
-    # Direct browser-to-S3 upload (#118): replaces st.file_uploader so the native
-    # photo picker no longer drops the Streamlit websocket on mobile. This legacy
-    # page has no implemented downstream yet (Save is a stub), so the uploader is
-    # rendered here for consistency; photos land in uploads/data_entry/{session_id}/.
-    st.write(Uploader.direct_upload_instructions)
-    session_id = get_upload_session_id("data_entry")
-    put_urls = generate_put_urls("data_entry", session_id)
-    st.iframe(build_uploader_html(put_urls), height=460)
+    # Route into the real working photo pipeline (#130): page_photo_upload.py
+    # drives uploader.upload_widget (orientation-correct/crop/OCR -> sawimages/
+    # {title}/ + Page records) and offers the QR-to-phone option, working off
+    # st.session_state.current_book which this hub sets.
+    navigate_to("./pages/page_photo_upload.py")
 
 
 def enter_text():
@@ -54,9 +46,4 @@ navigation_dict = {
 }
 
 navigation_dict[selected_option]()
-
-save_button = st.button(BookDataEntry.save_button, key="book_data_entry_save_button")
-
-if save_button:
-    st.warning(BookDataEntry.not_implemented)
 
