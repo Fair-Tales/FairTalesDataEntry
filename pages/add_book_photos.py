@@ -17,8 +17,9 @@ the #63 ISBN/copyright-page machinery reachable (#103) for AI-assisted data entr
 
 import streamlit as st
 import anthropic
+from streamlit_option_menu import option_menu
 
-from text_content import BookPhotoEntry
+from text_content import BookPhotoEntry, PhotoUpload
 from utilities import (
     page_layout,
     check_authentication_status,
@@ -35,7 +36,16 @@ from photo_upload import (
     fetch_uploaded_photos,
     cleanup_prefix,
     reset_upload_session,
+    render_go_to_phone,
+    uploads_settled,
 )
+
+# Shared "Upload here / Go to phone" chooser styling, reused across the photo
+# upload surfaces (#143).
+_UPLOAD_MENU_STYLES = {
+    "nav-link": {"font-size": "15px", "text-align": "left", "margin": "0px", "--hover-color": "#eee"},
+    "nav-link-selected": {"background-color": "green"},
+}
 
 check_authentication_status()
 page_layout(current_page="./pages/add_book_photos.py")
@@ -141,20 +151,34 @@ ai_available = 'ANTHROPIC_API_KEY' in st.secrets
 if not ai_available:
     st.warning(BookPhotoEntry.no_api_key)
 
-st.write(BookPhotoEntry.direct_upload_instructions)
-
 # Direct browser-to-S3 upload (#114). Mint a stable per-session temp prefix
-# (uploads/{session_id}/) and a batch of presigned PUT URLs, then render the
-# browser-side uploader. Each photo PUTs straight from the phone to S3, bypassing
-# the Streamlit websocket that drops on mobile while the native photo picker is
-# full-screen. The component is intentionally one-way: we discover what landed by
-# listing the S3 prefix when the user clicks "Read the book".
+# (uploads/single/{session_id}/) once, then let the user pick HOW to fill it (#143):
+# upload from this device, or scan a QR and upload from a phone. Either way the
+# photos land in the SAME prefix, so the single "Read the book" button below reads
+# it regardless of which method was used. Each photo PUTs straight to S3, bypassing
+# the Streamlit websocket that drops on mobile while the native picker is open.
 session_id = get_upload_session_id(UPLOAD_FLOW_KEY)
-put_urls = generate_put_urls(UPLOAD_FLOW_KEY, session_id)
-# st.iframe (Streamlit 1.56+) replaces the deprecated st.components.v1.html. An HTML
-# string is embedded via srcdoc exactly as before (same-origin preserved, so the
-# browser→S3 PUT still uses the app origin that the S3 CORS policy allows).
-st.iframe(build_uploader_html(put_urls), height=460)
+
+upload_method = option_menu(
+    None,
+    [PhotoUpload.method_upload_here, PhotoUpload.method_go_to_phone],
+    default_index=0,
+    icons=['laptop', 'phone'],
+    menu_icon="cast",
+    orientation="horizontal",
+    key="add_book_photos_upload_menu",
+    styles=_UPLOAD_MENU_STYLES,
+)
+
+if upload_method == PhotoUpload.method_go_to_phone:
+    render_go_to_phone(UPLOAD_FLOW_KEY, session_id)
+else:
+    st.write(BookPhotoEntry.direct_upload_instructions)
+    put_urls = generate_put_urls(UPLOAD_FLOW_KEY, session_id)
+    # st.iframe (Streamlit 1.56+) replaces the deprecated st.components.v1.html. An
+    # HTML string is embedded via srcdoc exactly as before (same-origin preserved,
+    # so the browser→S3 PUT still uses the app origin that the S3 CORS policy allows).
+    st.iframe(build_uploader_html(put_urls), height=460)
 
 read_clicked = st.button(
     BookPhotoEntry.read_button,
@@ -163,61 +187,71 @@ read_clicked = st.button(
 )
 
 if read_clicked:
-    with st.spinner(BookPhotoEntry.reading_photos):
-        # List the temp prefix and pull the uploaded photos (in page order) into
-        # memory. See photo_upload.fetch_uploaded_photos for the memory tradeoff.
-        pages = fetch_uploaded_photos(get_s3_filesystem(), UPLOAD_FLOW_KEY, session_id)
+    fs = get_s3_filesystem()
+    # The uploader iframe is one-way, so gate reading on the temp prefix having
+    # stopped growing — otherwise a click mid-upload would read a PARTIAL batch
+    # (#142). See photo_upload.uploads_settled for the trade-off.
+    with st.spinner(BookPhotoEntry.checking_uploads):
+        settled, uploaded_keys = uploads_settled(fs, UPLOAD_FLOW_KEY, session_id)
 
-    if not pages:
-        st.warning(BookPhotoEntry.no_photos_uploaded)
+    if uploaded_keys and not settled:
+        st.warning(BookPhotoEntry.uploads_in_progress)
     else:
-        # Reuse the existing in-memory pipeline: stash the downloaded photos so the
-        # downstream page-upload step (uploader.upload_widget) orientation-corrects,
-        # crops, OCRs and writes them to sawimages/{title}/ exactly as today, then
-        # cleans up this temp prefix.
-        st.session_state['photo_first_pages'] = pages
+        with st.spinner(BookPhotoEntry.reading_photos):
+            # List the temp prefix and pull the uploaded photos (in page order) into
+            # memory. See photo_upload.fetch_uploaded_photos for the memory tradeoff.
+            pages = fetch_uploaded_photos(fs, UPLOAD_FLOW_KEY, session_id)
 
-        client = get_anthropic_client()
-        metadata = None
-        try:
-            with st.spinner(BookPhotoEntry.extracting):
-                # Auto-detect the title page (and the copyright page) via the Haiku
-                # locate pass — consistent with the batch flow; no manual selection.
-                # If detection is wrong, the user corrects the details on the form.
-                metadata = extract_photo_first_metadata(pages, client)
-        except anthropic.AnthropicError as exc:
-            st.error(BookPhotoEntry.extract_failed.format(error=exc))
+        if not pages:
+            st.warning(BookPhotoEntry.no_photos_uploaded)
+        else:
+            # Reuse the existing in-memory pipeline: stash the downloaded photos so
+            # the downstream page-upload step (uploader.upload_widget)
+            # orientation-corrects, crops, OCRs and writes them to sawimages/{title}/
+            # exactly as today, then cleans up this temp prefix.
+            st.session_state['photo_first_pages'] = pages
 
-        if metadata is not None:
-            has_any = bool(
-                metadata.get('title')
-                or metadata.get('authors')
-                or metadata.get('illustrators')
-                or metadata.get('publisher')
-                or metadata.get('published_year')
-                or metadata.get('isbn_metadata')
-            )
-            if has_any:
-                st.session_state.pop('photo_extract_empty', None)
-                _apply_extracted_metadata(metadata)
-                st.success(BookPhotoEntry.extract_success)
-                # Photos are safely in photo_first_pages (memory) and the reuse
-                # pipeline writes them to sawimages/ from there, never re-reading
-                # this S3 buffer — so clear it now we are leaving the page (#124).
-                _cleanup_uploads()
-                navigate_to("./pages/add_book.py")
-            else:
-                # Nothing usable parsed. Keep the raw response + a diagnostic and
-                # flag the empty state so the "enter manually" UI below survives the
-                # rerun (the photos stay in photo_first_pages).
-                st.session_state['book_extraction_raw'] = metadata.get('raw')
-                st.session_state['book_extraction'] = metadata
-                st.session_state['photo_extract_empty'] = True
-                st.session_state['photo_extract_diag'] = {
-                    'pages': len(pages),
-                    'located': metadata.get('located'),
-                    'raw': metadata.get('raw'),
-                }
+            client = get_anthropic_client()
+            metadata = None
+            try:
+                with st.spinner(BookPhotoEntry.extracting):
+                    # Auto-detect the title page (and the copyright page) via the Haiku
+                    # locate pass — consistent with the batch flow; no manual selection.
+                    # If detection is wrong, the user corrects the details on the form.
+                    metadata = extract_photo_first_metadata(pages, client)
+            except anthropic.AnthropicError as exc:
+                st.error(BookPhotoEntry.extract_failed.format(error=exc))
+
+            if metadata is not None:
+                has_any = bool(
+                    metadata.get('title')
+                    or metadata.get('authors')
+                    or metadata.get('illustrators')
+                    or metadata.get('publisher')
+                    or metadata.get('published_year')
+                    or metadata.get('isbn_metadata')
+                )
+                if has_any:
+                    st.session_state.pop('photo_extract_empty', None)
+                    _apply_extracted_metadata(metadata)
+                    st.success(BookPhotoEntry.extract_success)
+                    # Photos are safely in photo_first_pages (memory) and the reuse
+                    # pipeline writes them to sawimages/ from there, never re-reading
+                    # this S3 buffer — so clear it now we are leaving the page (#124).
+                    _cleanup_uploads()
+                    navigate_to("./pages/add_book.py")
+                else:
+                    # Nothing usable parsed. Keep the raw response + a diagnostic and
+                    # flag the empty state so the "enter manually" UI below survives the
+                    # rerun (the photos stay in photo_first_pages).
+                    st.session_state['book_extraction_raw'] = metadata.get('raw')
+                    st.session_state['book_extraction'] = metadata
+                    st.session_state['photo_extract_empty'] = True
+                    st.session_state['photo_extract_diag'] = {
+                        'pages': len(pages),
+                        'located': metadata.get('located'),
+                        'raw': metadata.get('raw'),
+                    }
 
 # Persistent "couldn't extract — enter manually" state, rendered OUTSIDE the
 # read-click block so the proceed button survives the rerun the click triggers.
