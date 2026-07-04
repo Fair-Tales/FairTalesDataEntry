@@ -3,12 +3,12 @@
 Deterministic, non-AI coverage. The landing page's 'View results' now routes
 here first. We assert:
 
-* the page renders (title, method option_menu, the two view-results buttons),
+* the page renders (title, method option_menu, the single view-results button),
 * each of the three method tabs renders its own stable widget,
 * the search-and-select method shows a 'no matching books' warning for a
   nonsense query (mirrors user_home's book search), and
-* the 'View results for this collection' button is disabled while the selection
-  is empty (it enables only once a book is ticked).
+* the single 'View results' button is enabled even with an empty selection
+  (#163: an empty selection scopes the dashboard to ALL books).
 
 The 'From photos' method calls Claude vision on submit; per DECISIONS.md 004 we
 do NOT trigger it — we only assert the upload widget renders.
@@ -27,12 +27,11 @@ def _open_picker(page):
 
 
 def test_collection_picker_renders(logged_in_page):
-    """Title, method menu, and both view-results buttons mount."""
+    """Title, method menu, and the single view-results button mount."""
     page = logged_in_page
     _open_picker(page)
     assert page.get_by_text(h.COLLECTION_PAGE_TITLE, exact=False).first.is_visible()
-    assert page.locator(f"{h.key(h.COLLECTION_VIEW_ALL_BUTTON)} button").is_visible()
-    assert page.locator(h.key(h.COLLECTION_VIEW_RESULTS_BUTTON)).count() > 0
+    assert page.locator(f"{h.key(h.COLLECTION_VIEW_RESULTS_BUTTON)} button").is_visible()
 
 
 def test_collection_method_tabs_render(logged_in_page):
@@ -80,10 +79,10 @@ def test_collection_search_no_match_warning(logged_in_page):
     )
 
 
-def test_view_results_disabled_when_selection_empty(logged_in_page):
-    """With nothing selected, 'View results for this collection' is disabled."""
+def test_view_results_enabled_when_selection_empty(logged_in_page):
+    """With nothing selected, 'View results' is enabled (#163: scopes to all books)."""
     page = logged_in_page
     _open_picker(page)
     button = page.locator(f"{h.key(h.COLLECTION_VIEW_RESULTS_BUTTON)} button")
     button.wait_for(state="attached", timeout=h.RERUN_TIMEOUT)
-    assert button.is_disabled()
+    assert button.is_enabled()

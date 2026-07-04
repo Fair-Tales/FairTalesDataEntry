@@ -59,6 +59,36 @@ page_layout(current_page="./pages/collection_picker.py")
 # and accumulated across the three picker methods.
 builder = st.session_state.setdefault("collection_builder", {})
 
+# Default scope on landing is ALL books (#163): an empty/absent
+# 'selected_collection' is exactly what the dashboard treats as "every book", so
+# a single click-through with nothing built shows all-books results. We do NOT
+# materialise every book reference into the builder — the empty list is the whole
+# mechanism.
+st.session_state.setdefault("selected_collection", [])
+
+# Widget key for the Search & Select left-hand quick-add dropdown (#163).
+_SEARCH_MULTISELECT_KEY = "collection_search_multiselect"
+
+
+def _sync_search_multiselect():
+    """on_change for the search dropdown (#163): reconcile the running selection.
+
+    The callback fires (with the user's new picks already in session state)
+    BEFORE the script reruns, so we update ``builder`` here to match. Only titles
+    that are selectable via this dropdown (i.e. valid ``book_dict`` keys) are
+    touched, so books added by the other methods are never disturbed.
+    """
+    book_dict = st.session_state.get("book_dict", {})
+    selected = set(st.session_state.get(_SEARCH_MULTISELECT_KEY, []))
+    # Add newly picked titles.
+    for title in selected:
+        if title in book_dict:
+            builder[title] = book_dict[title]
+    # Drop titles that were unpicked (only those offered by this dropdown).
+    for title in [t for t in list(builder) if t in book_dict]:
+        if title not in selected:
+            builder.pop(title, None)
+
 
 def _book_id_to_title():
     """Reverse the session ``book_dict`` to map a book document id -> title.
@@ -104,24 +134,19 @@ def render_selection():
             builder.clear()
             st.rerun()
 
-    view_cols = st.columns(2)
-    if view_cols[0].button(
+    # Single "View results" button (#163). It is always enabled: with a built
+    # selection it scopes to that collection; with nothing selected it hands off
+    # an empty list, which the dashboard scopes to ALL books.
+    if not builder:
+        st.caption(CollectionPicker.view_results_all_hint)
+    if st.button(
         CollectionPicker.view_results_button,
         key="collection_view_results_button",
-        disabled=not builder,
         width="stretch",
     ):
         # Hand off in the exact shape the dashboard expects: a list of book
-        # references held under 'selected_collection'.
+        # references held under 'selected_collection' (empty -> all books).
         st.session_state["selected_collection"] = list(builder.values())
-        navigate_to("./pages/results_dashboard.py")
-    if view_cols[1].button(
-        CollectionPicker.view_all_button,
-        key="collection_view_all_button",
-        width="stretch",
-    ):
-        # An empty/absent selection makes the dashboard scope to ALL books.
-        st.session_state["selected_collection"] = []
         navigate_to("./pages/results_dashboard.py")
 
 
@@ -131,38 +156,60 @@ def render_selection():
 def method_search():
     st.subheader(CollectionPicker.search_header)
     book_dict = st.session_state.get("book_dict", {})
+    titles = list(book_dict.keys())
 
-    # Live-filter as the user types (mirrors user_home.book_search).
-    search_string = st_keyup(
-        CollectionPicker.search_label,
-        value="",
-        debounce=300,
-        key="collection_search_keyup",
-    )
-    if search_string and len(search_string) > 0:
-        term = search_string.lower()
-        matching_titles = [
-            title for title in book_dict.keys() if term in title.lower()
-        ]
-        if not matching_titles:
-            st.warning(Alerts.no_matching_book)
-        else:
-            st.write(
-                CollectionPicker.search_results_found.format(
-                    count=len(matching_titles)
+    left, right = st.columns(2)
+
+    # LEFT (#163): a dropdown of every book title as a faster add/remove path.
+    # Its displayed value is refreshed from the builder each render so picks made
+    # via the checkboxes / other methods (and the remove buttons) show here too;
+    # the on_change callback reconciles the builder back the other way. Comparing
+    # as sets means the refresh only fires on a genuine external divergence, so it
+    # never clobbers an in-flight user interaction.
+    with left:
+        st.caption(CollectionPicker.search_dropdown_help)
+        desired = [t for t in titles if t in builder]
+        if set(st.session_state.get(_SEARCH_MULTISELECT_KEY, [])) != set(desired):
+            st.session_state[_SEARCH_MULTISELECT_KEY] = desired
+        st.multiselect(
+            CollectionPicker.search_dropdown_label,
+            options=titles,
+            key=_SEARCH_MULTISELECT_KEY,
+            on_change=_sync_search_multiselect,
+        )
+
+    # RIGHT: live-filter as the user types (mirrors user_home.book_search).
+    with right:
+        search_string = st_keyup(
+            CollectionPicker.search_label,
+            value="",
+            debounce=300,
+            key="collection_search_keyup",
+        )
+        if search_string and len(search_string) > 0:
+            term = search_string.lower()
+            matching_titles = [
+                title for title in book_dict.keys() if term in title.lower()
+            ]
+            if not matching_titles:
+                st.warning(Alerts.no_matching_book)
+            else:
+                st.write(
+                    CollectionPicker.search_results_found.format(
+                        count=len(matching_titles)
+                    )
                 )
-            )
-            for title in matching_titles:
-                checked = st.checkbox(
-                    CollectionPicker.add_book_checkbox.format(title=title),
-                    value=title in builder,
-                    key=f"collection_search_cb_{title}",
-                )
-                # Keep the running selection in step with the checkbox state.
-                if checked:
-                    builder[title] = book_dict[title]
-                else:
-                    builder.pop(title, None)
+                for title in matching_titles:
+                    checked = st.checkbox(
+                        CollectionPicker.add_book_checkbox.format(title=title),
+                        value=title in builder,
+                        key=f"collection_search_cb_{title}",
+                    )
+                    # Keep the running selection in step with the checkbox state.
+                    if checked:
+                        builder[title] = book_dict[title]
+                    else:
+                        builder.pop(title, None)
 
 
 # ---------------------------------------------------------------------------
@@ -218,25 +265,53 @@ def _render_create_form():
         )
 
 
+# Sentinel option (#163): a virtual "All books" collection at the top of the
+# predefined selectbox. It is not stored in Firestore — choosing it scopes the
+# dashboard to every book via an empty ``selected_collection``.
+_ALL_BOOKS_OPTION = "__all_books__"
+
+
 def method_predefined():
     st.subheader(CollectionPicker.predefined_header)
     id_map = _book_id_to_title()
     collections = _load_collections()
 
     if not collections:
+        # No named collections yet — the "All books" option below still lets the
+        # user scope to the full corpus.
         st.info(CollectionPicker.predefined_none)
-    else:
-        # Index-based options so two collections may share a display name.
-        choice = st.selectbox(
-            CollectionPicker.predefined_select_label,
-            options=range(len(collections)),
-            format_func=lambda i: (
-                f"{collections[i].name} ({collections[i].owner})"
-                if collections[i].owner
-                else collections[i].name
-            ),
-            key="collection_predefined_select",
+
+    # Options: the synthetic "All books" entry first, then index-based options so
+    # two stored collections may share a display name.
+    options = [_ALL_BOOKS_OPTION] + list(range(len(collections)))
+
+    def _format_option(option):
+        if option == _ALL_BOOKS_OPTION:
+            return CollectionPicker.predefined_all_books_option
+        return (
+            f"{collections[option].name} ({collections[option].owner})"
+            if collections[option].owner
+            else collections[option].name
         )
+
+    choice = st.selectbox(
+        CollectionPicker.predefined_select_label,
+        options=options,
+        format_func=_format_option,
+        key="collection_predefined_select",
+    )
+
+    if choice == _ALL_BOOKS_OPTION:
+        st.caption(CollectionPicker.predefined_all_books_caption)
+        if st.button(
+            CollectionPicker.predefined_all_books_view_button,
+            key="collection_predefined_all_books_button",
+        ):
+            # Empty selection -> the dashboard scopes to ALL books. We do NOT
+            # materialise every reference into the builder.
+            st.session_state["selected_collection"] = []
+            navigate_to("./pages/results_dashboard.py")
+    else:
         chosen = collections[choice]
         if chosen.owner:
             st.caption(
