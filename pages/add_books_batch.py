@@ -204,8 +204,9 @@ def _process_group_pages(book, group_pages, fs, ai_client, status):
             bytes_for_extraction, _method = _process_page(
                 raw_bytes, page_number, photos_url, fs, ai_client, report
             )
+            # Set fields on the unregistered Page, then register() once (audit
+            # item 8 — one write instead of register()+per-field write-throughs).
             page = Page(page_number=page_number, book=book.title)
-            page.register()
             report(Uploader.substep_extracting)
             try:
                 text, is_story, _page_type = extract_page_info(
@@ -217,11 +218,13 @@ def _process_group_pages(book, group_pages, fs, ai_client, status):
             except PageExtractionError:
                 # Detail already logged to extraction_errors; keep the blank page
                 # and record it for the user (#132).
+                page.register()
                 failed_pages.append(page_number)
             else:
                 if text:
                     page.text = text
                 page.contains_story = is_story
+                page.register()
     else:
         # No API key — register pages without extraction.
         for index in range(total):

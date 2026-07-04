@@ -353,8 +353,9 @@ def _process_pages(book, pages, client, fs, progress):
             raw_bytes, page_number, photos_url, fs, client
         )
 
+        # Set fields on the unregistered Page, then register() once (audit item 8
+        # — one write instead of register()+per-field write-throughs).
         page = Page(page_number=page_number, book=book_ref)
-        page.register()
 
         try:
             text, is_story, _page_type = extract_page_info(
@@ -367,11 +368,13 @@ def _process_pages(book, pages, client, fs, progress):
             # Detail already logged to extraction_errors; keep the blank page in
             # the sequence and record it for the caller to surface (#132). A single
             # failed page no longer aborts the whole reconstruction.
+            page.register()
             failed_pages.append(page_number)
         else:
             if text:
                 page.text = text
             page.contains_story = is_story
+            page.register()
         page_objs[page_number] = page
 
     return page_objs, failed_pages

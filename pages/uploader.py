@@ -9,7 +9,7 @@ from text_content import Instructions, AIPrompts, BookPhotoEntry, Uploader, Phot
 from utilities import (
     page_layout, check_authentication_status, extract_isbn, lookup_isbn,
     get_s3_filesystem, get_anthropic_client, vision_json,
-    EXTRACTION_MODEL, EXTRACTION_MAX_EDGE,
+    EXTRACTION_MODEL, EXTRACTION_MAX_EDGE, EXTRACTION_OCR_MAX_TOKENS,
 )
 from photo_upload import (
     get_upload_session_id,
@@ -47,6 +47,12 @@ def extract_page_info(image_bytes, client, *, book=None, page_number=None,
                       page_name=None, flow=None):
     """Return (text, is_story_page, page_type) by sending image bytes to the
     DATA-EXTRACTION model (Claude Sonnet 5, #135).
+
+    Wordless-page guard (audit item 2): the model now returns a ``has_text``
+    boolean. Many picture-book pages are wordless full illustrations, and without
+    this guard the model narrates the illustration into ``text`` — which is then
+    stored as story text and pollutes the research word/character counts. When
+    ``has_text`` is false the returned ``text`` is forced to ``""``.
 
     Uses the shared ``vision_json`` helper (#129) on ``EXTRACTION_MODEL`` with the
     higher ``EXTRACTION_MAX_EDGE`` (2576px) so dense page text is OCR'd at higher
@@ -88,6 +94,7 @@ def extract_page_info(image_bytes, client, *, book=None, page_number=None,
         data, raw = vision_json(
             client, [image_bytes], AIPrompts.page_extraction, downscale=True,
             model=EXTRACTION_MODEL, max_edge=EXTRACTION_MAX_EDGE,
+            max_tokens=EXTRACTION_OCR_MAX_TOKENS, label=flow or "page_extraction",
         )
     except anthropic.AnthropicError as exc:
         _log_and_raise(type(exc).__name__, str(exc))
@@ -103,8 +110,17 @@ def extract_page_info(image_bytes, client, *, book=None, page_number=None,
         )
         _log_and_raise(ExtractionErrorLog.ERROR_PARSE, message)
 
+    # Wordless-page guard (audit item 2): when the model reports no story text,
+    # store an empty string rather than whatever it may have written into
+    # ``text`` (e.g. a description of the illustration). ``has_text`` defaults to
+    # true when absent so a model reply that predates the field still behaves as
+    # before.
+    text = data.get("text", "").strip()
+    if not bool(data.get("has_text", True)):
+        text = ""
+
     return (
-        data.get("text", "").strip(),
+        text,
         bool(data.get("is_story_page", False)),
         data.get("page_type", ""),
     )
@@ -171,14 +187,27 @@ def _process_page(raw_bytes, page_number, photos_url, fs, ai_client, report=None
         if check_crop_quality(corrected_bytes, ai_client):
             return _save_and_return(corrected_bytes, 'opencv')
 
-    # Stage 2 — rotation-only fallback via Sonnet
+    # Stage 2 — rotation-only fallback via Sonnet.
+    #
+    # Rotation fix (audit item 3): when the model detects a non-zero rotation the
+    # rotated bytes are the CORRECT orientation for OCR and must be used
+    # unconditionally. Previously the rotated bytes were only used if
+    # ``check_crop_quality`` passed — but that prompt requires the page to fill
+    # the frame / not be cropped, which a rotation-only raw phone photo (still
+    # showing table/hands/background) routinely fails, so the UPSIDE-DOWN original
+    # was silently sent to OCR instead. The crop-quality check now only gates the
+    # OPTIONAL saving of the ``_cropped`` artifact, never which bytes go to OCR.
     report(Uploader.substep_detecting_rotation)
     angle = get_rotation_angle(raw_bytes, ai_client)
     if angle != 0:
         rotated_bytes = rotate_image(raw_bytes, angle)
         report(Uploader.substep_checking_crop)
         if check_crop_quality(rotated_bytes, ai_client):
+            # Well-framed after rotation — save the corrected artifact too.
             return _save_and_return(rotated_bytes, 'rotation')
+        # Not well-framed (background/cropping), but the orientation is now
+        # correct — use the rotated bytes for extraction regardless.
+        return rotated_bytes, 'rotation'
 
     return raw_bytes, None
 
@@ -239,11 +268,16 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
                     raw_bytes, page_number, photos_url, fs, ai_client, report
                 )
 
+                # Set the page's fields on the UNREGISTERED object first, then
+                # register() once (audit item 8 — write amplification): otherwise
+                # register() writes the doc and each of ``text``/``contains_story``
+                # then write-throughs a separate Firestore update. Both branches
+                # register exactly once, so the stored result is identical with
+                # one write instead of several.
                 page = Page(
                     page_number=page_number,
                     book=st.session_state['current_book'].title
                 )
-                page.register()
 
                 report(Uploader.substep_extracting)
                 try:
@@ -257,11 +291,13 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
                 except PageExtractionError:
                     # Detail already logged to extraction_errors; keep the blank
                     # page in the sequence and record it for the user (#132).
+                    page.register()
                     failed_pages.append(page_number)
                 else:
                     if text:
                         page.text = text
                     page.contains_story = is_story
+                    page.register()
 
                     if page_type == 'copyright' and text and copyright_text is None:
                         copyright_text = text

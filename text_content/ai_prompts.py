@@ -148,6 +148,57 @@ Respond with valid JSON only — no other text before or after:
 Character references by page:
 {mentions_json}"""
 
+    # Single-call character + alias detection (audit item 5). A whole picture
+    # book's story text is only ~1-2K tokens, so the two-pass extract/consolidate
+    # flow above is now collapsed into ONE call that reads every page's text at
+    # once and returns the consolidated characters directly. Output shape matches
+    # ``character_consolidation`` exactly. (The two prompts above are retained for
+    # reference / possible fallback but are no longer called.)
+    character_detection = """\
+You are analysing the FULL text of a SINGLE children's picture book to identify \
+its characters. Below is a JSON array; each entry gives one page's number and \
+that page's story text.
+
+Identify every distinct character referred to ANYWHERE in the book, grouping all \
+the references to the SAME character into one entry. For example "the boy", "Tom" \
+and "Tommy" are probably the same character and should be merged — choose ONE as \
+the main name and record the others as aliases. Track characters across pages: a \
+character introduced as "the boy" on page 1 and named "Tom" on page 3 is one \
+character.
+
+Include every kind of reference:
+- proper names (e.g. "Tom")
+- nicknames (e.g. "Tommy")
+- descriptive references (e.g. "the boy", "the little rabbit", "Mum")
+- groups of characters (e.g. "the children", "the witches")
+
+Do NOT invent characters that are not referred to in the text.
+
+For each distinct character provide:
+- "name": the clearest, most specific name (prefer a proper name over a \
+description).
+- "aliases": the OTHER references used for this character (exclude the chosen \
+name; may be an empty list).
+- "gender": exactly one of "Female", "Male", "Non-specific", "Transgender". \
+Infer ONLY from gendered pronouns or words in the references; use "Non-specific" \
+when unclear. Only use "Transgender" if it is explicit.
+- "human": true if the character is a person, false if an animal, object or \
+other creature.
+- "plural": true if this refers to a group or collection of characters \
+(e.g. "the children").
+- "protagonist": true only for the clear main character of the story.
+
+Be conservative: only merge references you are confident refer to the same \
+character. When in doubt keep them separate — the user will review and can merge \
+further.
+
+Respond with valid JSON only — no other text before or after:
+{{"characters": [{{"name": "Tom", "aliases": ["the boy", "Tommy"], \
+"gender": "Male", "human": true, "plural": false, "protagonist": true}}]}}
+
+Book pages (JSON array of {{"page", "text"}}):
+{pages_json}"""
+
     book_metadata_extraction = """\
 Analyse this photo of the TITLE PAGE (or front cover) of a children's picture book.
 
@@ -288,7 +339,11 @@ Analyse this photo of a children's picture book page.
 Instructions:
 1. Correct for any rotation or tilt in the image. Focus on the book page itself \
 and ignore any background (table, hands, etc.).
-2. Transcribe ALL story text visible on the page exactly as written. Include speech \
+2. Decide whether the page contains any of the book's OWN text at all. Many \
+picture-book pages are WORDLESS full illustrations — that is normal and \
+expected. Set has_text to true only if the page carries real story/narrative \
+text; set it to false for a wordless illustration.
+3. Transcribe ALL story text visible on the page exactly as written. Include speech \
 bubbles and captions. Do not include page numbers.
    - Text may use a variety of fonts, stylised or decorative lettering, or handwriting — \
 transcribe it as accurately as possible regardless of style.
@@ -300,7 +355,11 @@ or other background signage. Only extract text that belongs to the story itself.
    - If a word or passage is difficult to read (blurred, partially obscured, \
 unusual lettering), enclose it in square brackets with a question mark: [like this?]
    - If you cannot make out any part of a word at all, write [?] in its place.
-3. Classify whether this is a STORY page — meaning it contains narrative text \
+   - If the page has no story text (has_text is false), set text to "" (an empty \
+string). NEVER put a description, caption, or note ABOUT the illustration into the \
+text field — the text field must contain only the book's own transcribed words and \
+nothing else.
+4. Classify whether this is a STORY page — meaning it contains narrative text \
 that is part of the story itself. The following page types are NOT story pages: \
 title page, half-title, copyright, dedication, contents, about the author, \
 publisher information, back-cover synopsis, end matter, blank pages.
@@ -308,7 +367,16 @@ publisher information, back-cover synopsis, end matter, blank pages.
 Respond with valid JSON only — no other text before or after. Example of the \
 expected format:
 {
+  "has_text": true,
   "text": "Once upon a time, a [small?] rabbit lived in the forest.",
+  "is_story_page": true,
+  "page_type": "story"
+}
+
+Example for a wordless illustration:
+{
+  "has_text": false,
+  "text": "",
   "is_story_page": true,
   "page_type": "story"
 }
