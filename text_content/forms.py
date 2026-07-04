@@ -896,6 +896,100 @@ class Admin:
     )
 
 
+class AdminSettings:
+    """Strings for the admin AI-pipeline settings page (pages/ai_settings.py).
+
+    Lets an admin change the cost/quality-relevant Claude parameters GLOBALLY
+    without a code deploy. Gated behind an explicit safety toggle so nothing
+    changes by accident.
+    """
+
+    not_admin = "This page is only accessible to admin users."
+    title = "AI pipeline settings"
+    intro = (
+        "Change the Claude API parameters used across the automated data-entry "
+        "pipeline. These apply globally to every user, immediately, without a "
+        "code deploy."
+    )
+
+    # Link shown on the Admin page.
+    admin_link_label = "→ AI pipeline settings"
+
+    # Current effective values panel.
+    current_values_header = "Current effective settings"
+    current_values_caption = (
+        "These are the values in force right now (stored overrides plus defaults "
+        "for anything unset)."
+    )
+    cost_hint = (
+        "Rough guide: extraction images are sent at up to {edge}px on the long "
+        "edge, ≈{tokens} image tokens per page. A higher resolution improves OCR "
+        "of dense text but costs proportionally more per page; a lower one is "
+        "cheaper but may miss small print."
+    )
+
+    # Safety gate.
+    safety_header = "Edit settings"
+    enable_editing_label = "Enable editing of AI parameters"
+    enable_editing_help = (
+        "Off by default. Turn on to unlock the controls below and the Save button."
+    )
+    editing_warning = (
+        "⚠️ You are changing key AI parameters that directly affect the cost and "
+        "quality of automated data entry. Change these only if you understand the "
+        "impact. These changes apply to every user immediately."
+    )
+    editing_disabled_info = (
+        "Editing is locked. Turn on “Enable editing of AI parameters” above to "
+        "change any value."
+    )
+
+    # Control section.
+    controls_header = "AI pipeline parameters"
+
+    models_subheader = "Models"
+    extraction_model_label = "Page OCR / extraction model"
+    metadata_model_label = "Metadata model (title / copyright / collection)"
+    character_model_label = "Character-detection model"
+    locate_model_label = "Page-locate model (title / cover / copyright)"
+    rotation_model_label = "Rotation-detection model"
+    crop_model_label = "Crop-quality model"
+    theme_model_label = "Theme-suggestion model"
+
+    resolution_subheader = "Resolution & tokens"
+    extraction_edge_label = "Extraction image long-edge (px)"
+    extraction_edge_help = (
+        "Resolution of page images sent for OCR. Higher = better OCR of dense "
+        "text but higher cost. Bounds: {min}–{max}px."
+    )
+    locate_edge_label = "Page-locate image long-edge (px)"
+    locate_edge_help = (
+        "Resolution of images sent for cheap page-type classification (no OCR). "
+        "Bounds: {min}–{max}px."
+    )
+    extraction_tokens_label = "Extraction reply max tokens"
+    extraction_tokens_help = (
+        "Cap on the OCR reply length. Too low can truncate a dense page. Bounds: "
+        "{min}–{max}."
+    )
+
+    features_subheader = "Feature toggles"
+    enable_rotation_label = "Enable rotation correction"
+    enable_rotation_help = (
+        "When on, an AI call detects and fixes upside-down / sideways pages "
+        "before OCR."
+    )
+    enable_crop_gate_label = "Enable crop-quality gate"
+    enable_crop_gate_help = (
+        "When on, an AI call verifies the cropped page looks correct before it is "
+        "trusted."
+    )
+
+    save_button = "Save AI settings"
+    save_success = "AI pipeline settings saved. They now apply to every user."
+    save_error = "Could not save the AI settings: {error}"
+
+
 class RegisterUser:
     """Strings for the registration form (pages/register_user.py and
     pages/register_user_done.py)."""

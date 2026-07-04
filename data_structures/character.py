@@ -49,8 +49,13 @@ class Character(DataStructureBase):
         ``document_id`` is ``{book_id}_{name}``, so a rename changes the id;
         editing code uses this to test for a target-id collision (and to find
         the old id) without mutating ``self.name``.
+
+        ``self.book`` is a ``DocumentReference`` whose ``.id`` is available
+        locally, so use it directly rather than ``.get().id``, which makes a
+        Firestore round-trip on every access of this hot-path property (mirrors
+        the #128 fix in page.py; audit item 8).
         """
-        return f"{self.book.get().id}_{name.replace(' ', '_').lower()}"
+        return f"{self.book.id}_{name.replace(' ', '_').lower()}"
 
     @property
     def document_id(self):

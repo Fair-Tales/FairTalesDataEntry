@@ -85,6 +85,10 @@ def navigate_pages():
             st.Page("./pages/collection_picker.py"),
             st.Page("./pages/results_dashboard.py"),
             st.Page("./pages/add_books_batch.py"),
+            # Admin-only AI-pipeline settings page. Registered here so
+            # st.page_link()/st.switch_page() can reach it from the Admin page;
+            # the page enforces its own admin gating.
+            st.Page("./pages/ai_settings.py"),
             # Reconstruct orphaned books is no longer a sidebar item (#141); it is
             # reached from a gated link at the bottom of the Admin page. It must
             # stay registered here so that st.page_link()/st.switch_page() can
