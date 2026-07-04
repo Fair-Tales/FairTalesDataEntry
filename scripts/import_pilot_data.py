@@ -26,11 +26,20 @@ Per-page text pipeline (issue #73, plan "A")
 Two passes per book:
 
 * **Pass 1 (extract):** render each page to JPEG (S3) and get its raw text — the
-  PDF text layer where present, otherwise Claude vision OCR (Opus by default, a
-  detailed picture-book-aware prompt) for the image-only minority. Quote/tag/
-  punctuation-only output is normalised to empty (a blank page). An OCR *call
-  failure* is recorded distinctly from a genuine blank so it becomes a
-  high-priority review flag instead of silently blanking real text (M1).
+  PDF text layer where present, otherwise Claude vision OCR (Sonnet 5 by default,
+  a detailed picture-book-aware prompt) for the image-only minority. Before
+  paying for OCR, an image-only STORY page that is flanked on BOTH sides by
+  text-layer story pages is put through a cheap text-only **neighbour-continuity
+  judge** (``ai_continuity.check_narrative_continuity``, a Sonnet model): if the
+  story reads continuously straight across it, the page is a genuine wordless
+  spread and its OCR is SKIPPED (text stored empty, ``text_source=
+  "skipped_wordless"``, verdict recorded for audit) — validated at ~81% of such
+  OCR calls avoided with ~zero data loss (DECISIONS 010). Edges, runs of
+  consecutive image-only pages, and any image-only neighbour always OCR; and a
+  judge error always OCRs (never a false skip). Quote/tag/punctuation-only output
+  is normalised to empty (a blank page). An OCR *call failure* is recorded
+  distinctly from a genuine blank so it becomes a high-priority review flag
+  instead of silently blanking real text (M1).
 * **Pass 2 (clean + judge in context):** for each story page, one Claude call
   (a) strips extraction/OCR garbage AND print artefacts (page numbers, running
   heads, copyright boilerplate) **without** altering spelling or unusual/invented
@@ -126,6 +135,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
+# The reusable, Streamlit-free neighbour-continuity judge lives at the repo root
+# (importable by both this standalone CLI and the live app's utilities.py). This
+# script's own directory is ``scripts/``, so add the repo root to the path first.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from ai_continuity import check_narrative_continuity, should_skip_ocr  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Configuration.
 # ---------------------------------------------------------------------------
@@ -149,8 +166,15 @@ ENTERED_BY = "pilot_import"
 DEFAULT_LOOKUP_MODEL = "claude-opus-4-8"
 
 #: Claude model used for per-page OCR when a PDF page has no extractable text
-#: layer. Overridable via --ocr-model.
-DEFAULT_OCR_MODEL = "claude-opus-4-8"
+#: layer. Defaults to Sonnet 5 — validated as equal-quality OCR at ~-60% cost vs
+#: Opus on this corpus (DECISIONS 010). Overridable via --ocr-model.
+DEFAULT_OCR_MODEL = "claude-sonnet-5"
+
+#: Claude model used for the text-only neighbour-continuity judge that lets an
+#: image-only story page flanked by text-layer pages SKIP OCR when the story
+#: flows straight through (ai_continuity.check_narrative_continuity). The judge
+#: was validated on a Sonnet model; overridable via --continuity-model.
+DEFAULT_CONTINUITY_MODEL = "claude-sonnet-4-6"
 
 #: Claude model used for the per-page clean-up + coherence/context judgement. The
 #: garbage-strip is mechanical, but the makes_sense / fits_context judgement is a
@@ -509,6 +533,32 @@ def is_story_page(page_number: int, page_range: Optional[tuple[int, int]]) -> bo
     return start <= page_number <= end
 
 
+def flanked_by_text_layer(pos: int, n_story: int, story_is_text_layer) -> bool:
+    """True if the story page at story-position ``pos`` is safe to consider for
+    a neighbour-continuity OCR skip.
+
+    This is the pure classification the importer uses before ever calling the
+    continuity judge (so it is unit-testable without any AI). ``story_is_text_layer``
+    is a sequence, indexed by story-position, of booleans: True where that story
+    page has a usable PDF text layer (>= ``TEXT_LAYER_MIN_CHARS``). The page at
+    ``pos`` qualifies ONLY when it is an INTERIOR story page whose immediate story
+    neighbours on BOTH sides are text-layer pages. It returns False (→ the caller
+    OCRs unconditionally) for:
+
+    * a story-range EDGE (first or last story page — no neighbour on one side);
+    * a page whose previous OR next story neighbour is itself image-only, which
+      also covers a RUN of consecutive image-only pages (each has an image-only
+      neighbour), so a wordless run is never skipped on inferred context.
+
+    The caller separately requires the neighbours to be TRUE text-layer text (not
+    OCR'd) — which this guarantees, since text-layer pages are read from the PDF
+    layer, never OCR — matching exactly what was validated.
+    """
+    if pos <= 0 or pos >= n_story - 1:
+        return False
+    return bool(story_is_text_layer[pos - 1]) and bool(story_is_text_layer[pos + 1])
+
+
 def _compare_tokens(text: object) -> Counter:
     """Lower-case word multiset used for order-independent text comparison.
 
@@ -723,6 +773,7 @@ def build_page_doc(
     clean_status: str = "",
     ocr_model: str = "",
     clean_model: str = "",
+    continuity: Optional[dict] = None,
 ) -> dict:
     """Build a ``pages`` document (mirrors data_structures/page.py).
 
@@ -732,13 +783,16 @@ def build_page_doc(
     human reading. ``review_priority`` is ``"high"`` when the page fails both the
     coherence and context-fit checks.
 
-    ``text_source`` (#73 S8: ``"layer"`` | ``"ocr"`` | ``"none"``),
-    ``clean_status`` (``"cleaned"`` / ``"unchanged"`` / ``"rejected"`` /
-    ``"failed"`` / ``""``) and the ``ocr_model`` / ``clean_model`` ids record how
+    ``text_source`` (#73 S8: ``"layer"`` | ``"ocr"`` | ``"skipped_wordless"`` |
+    ``"none"``), ``clean_status`` (``"cleaned"`` / ``"unchanged"`` / ``"rejected"``
+    / ``"failed"`` / ``""``) and the ``ocr_model`` / ``clean_model`` ids record how
     this page's text was produced and cleaned, so the OCR/AI subset is auditable
-    and re-runnable. All of these are additive: the app's ``Page`` model ignores
-    fields it doesn't declare, so recording them here is safe and makes the
-    flagged pages queryable in Firestore.
+    and re-runnable. ``continuity`` (when set) records the neighbour-continuity
+    judge verdict that decided an image-only page was a genuine wordless spread
+    and its OCR was skipped (``text_source="skipped_wordless"``) — so the skip
+    decision is auditable and re-runnable. All of these are additive: the app's
+    ``Page`` model ignores fields it doesn't declare, so recording them here is
+    safe and makes the flagged pages queryable in Firestore.
     """
     return {
         "is_registered": True,
@@ -756,6 +810,7 @@ def build_page_doc(
         "clean_status": clean_status,
         "ocr_model": ocr_model,
         "clean_model": clean_model,
+        "continuity": dict(continuity) if continuity else None,
     }
 
 
@@ -1653,6 +1708,9 @@ class Totals:
     aliases: int = 0
     pages_text_layer: int = 0
     pages_needing_ocr: int = 0
+    #: Image-only story pages whose OCR was SKIPPED because the neighbour-continuity
+    #: judge found the story flows straight through (genuine wordless spread).
+    pages_skipped_ocr: int = 0
     pages_cleaned: int = 0
     pages_clean_rejected: int = 0
     pages_flagged: int = 0
@@ -1986,9 +2044,26 @@ def plan_and_run(args) -> int:
                 import pypdfium2 as pdfium
 
                 # Pass 1: render every page to S3 and extract its RAW text
-                # (text layer if present, else Opus OCR). We collect all pages
-                # first so pass 2 can judge each story page in the context of its
-                # neighbours.
+                # (text layer if present, else Sonnet-5 OCR — unless a wordless
+                # spread flanked by text-layer pages lets us skip OCR entirely).
+                # We collect all pages first so pass 2 can judge each story page
+                # in the context of its neighbours.
+                #
+                # Neighbour-continuity skip (DECISIONS 010): a story page with no
+                # text layer, sitting between two TEXT-LAYER story pages, is a
+                # candidate to skip OCR if the story reads continuously across it
+                # (a genuine wordless spread). ``story_is_text_layer`` marks which
+                # story pages have a real PDF text layer (never OCR'd), so the
+                # judge only ever sees true text-layer neighbours, as validated.
+                story_indices = [
+                    idx for idx in range(page_count)
+                    if is_story_page(idx + 1, book.page_range)
+                ]
+                story_pos_of = {idx: pos for pos, idx in enumerate(story_indices)}
+                story_is_text_layer = [
+                    len(page_texts[idx] if idx < len(page_texts) else "") >= TEXT_LAYER_MIN_CHARS
+                    for idx in story_indices
+                ]
                 page_rows: list = []
                 pdf_doc = pdfium.PdfDocument(pdf_path)
                 try:
@@ -2003,29 +2078,64 @@ def plan_and_run(args) -> int:
                         text_source = "none"
                         ocr_error: Optional[str] = None
                         ocr_model_used = ""
+                        continuity_verdict: Optional[dict] = None
                         if in_story:
                             layer = page_texts[i] if i < len(page_texts) else ""
                             if len(layer) >= TEXT_LAYER_MIN_CHARS:
                                 raw = layer
                                 text_source = "layer"
                             elif ai_client is not None:
-                                text_source = "ocr"
-                                ocr_model_used = args.ocr_model
-                                totals.pages_needing_ocr += 1
-                                ocr_key = f"ocr:{book_id}:{page_number}:{sha1_hex(jpeg)}"
-                                cached = cache.get(ocr_key)
-                                if cached is not None:
-                                    raw = str(cached.get("text") or "")
-                                else:
-                                    raw, ocr_error = ai_ocr_page(
-                                        ai_client, jpeg, args.ocr_model
+                                # Image-only story page: try the neighbour-continuity
+                                # skip before paying for OCR. Only the flanked case
+                                # (interior page with text-layer neighbours on BOTH
+                                # sides) qualifies; edges, runs of image-only pages,
+                                # and any image-only neighbour → OCR unconditionally.
+                                pos = story_pos_of.get(i, -1)
+                                if pos >= 0 and flanked_by_text_layer(
+                                    pos, len(story_indices), story_is_text_layer
+                                ):
+                                    prev_layer = page_texts[story_indices[pos - 1]]
+                                    next_layer = page_texts[story_indices[pos + 1]]
+                                    cont_key = (
+                                        "continuity:"
+                                        + sha1_hex(prev_layer + chr(0) + next_layer)
                                     )
-                                    if ocr_error is None:
-                                        consecutive_ai_failures = 0
-                                        cache.put(ocr_key, {"text": raw})
+                                    verdict = cache.get(cont_key)
+                                    if verdict is None:
+                                        # Fail-safe: check_narrative_continuity degrades
+                                        # to an OCR-forcing verdict on any error, so a
+                                        # judge failure never skips and never counts
+                                        # toward the OCR circuit-breaker.
+                                        verdict = check_narrative_continuity(
+                                            ai_client, prev_layer, next_layer,
+                                            model=args.continuity_model,
+                                        )
+                                        cache.put(cont_key, verdict)
+                                    if should_skip_ocr(verdict):
+                                        continuity_verdict = verdict
+                                if continuity_verdict is not None:
+                                    # Genuine wordless spread — store empty text, do
+                                    # not OCR, but record the verdict for auditability.
+                                    text_source = "skipped_wordless"
+                                    totals.pages_skipped_ocr += 1
+                                else:
+                                    text_source = "ocr"
+                                    ocr_model_used = args.ocr_model
+                                    totals.pages_needing_ocr += 1
+                                    ocr_key = f"ocr:{book_id}:{page_number}:{sha1_hex(jpeg)}"
+                                    cached = cache.get(ocr_key)
+                                    if cached is not None:
+                                        raw = str(cached.get("text") or "")
                                     else:
-                                        totals.ocr_failed += 1
-                                        _note_ai_failure()
+                                        raw, ocr_error = ai_ocr_page(
+                                            ai_client, jpeg, args.ocr_model
+                                        )
+                                        if ocr_error is None:
+                                            consecutive_ai_failures = 0
+                                            cache.put(ocr_key, {"text": raw})
+                                        else:
+                                            totals.ocr_failed += 1
+                                            _note_ai_failure()
                             # Quote/tag/punctuation-only output means a blank page.
                             raw = normalise_blank_text(raw)
                         page_rows.append({
@@ -2035,6 +2145,7 @@ def plan_and_run(args) -> int:
                             "text_source": text_source,
                             "ocr_error": ocr_error,
                             "ocr_model": ocr_model_used,
+                            "continuity": continuity_verdict,
                         })
                 finally:
                     pdf_doc.close()
@@ -2137,6 +2248,7 @@ def plan_and_run(args) -> int:
                             clean_status=row.get("clean_status", ""),
                             ocr_model=row.get("ocr_model", ""),
                             clean_model=row.get("clean_model", ""),
+                            continuity=row.get("continuity"),
                         ),
                     )
                     totals.pages += 1
@@ -2273,6 +2385,14 @@ def plan_and_run(args) -> int:
     print(f"  aliases           : {totals.aliases}")
     print(f"  story pages w/ text layer   : {totals.pages_text_layer}")
     print(f"  story pages needing AI OCR  : {totals.pages_needing_ocr}")
+    # OCR calls avoided by the neighbour-continuity skip (execute-only; the skip
+    # requires the AI judge so it never fires in a dry run). Denominator is the
+    # image-only story pages that were candidates for OCR (OCR'd + skipped).
+    _ocr_candidates = totals.pages_needing_ocr + totals.pages_skipped_ocr
+    _skip_pct = (totals.pages_skipped_ocr / _ocr_candidates * 100) if _ocr_candidates else 0.0
+    print(f"  story pages OCR SKIPPED (wordless, neighbour-continuity) : "
+          f"{totals.pages_skipped_ocr}  "
+          f"({_skip_pct:.0f}% of image-only story pages — OCR calls avoided)")
     print(f"  shared-entity writes skipped (already existed, M2) : "
           f"authors {totals.authors_existing}, illustrators {totals.illustrators_existing}, "
           f"publishers {totals.publishers_existing}")
@@ -2388,6 +2508,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--lookup-model", default=DEFAULT_LOOKUP_MODEL, help="Claude model for the book-metadata web lookup.")
     p.add_argument("--ocr-model", default=DEFAULT_OCR_MODEL, help="Claude model for per-page OCR fallback.")
+    p.add_argument(
+        "--continuity-model",
+        default=DEFAULT_CONTINUITY_MODEL,
+        help=f"Claude model for the text-only neighbour-continuity judge that skips "
+        f"OCR on wordless spreads flanked by text-layer pages "
+        f"(default: {DEFAULT_CONTINUITY_MODEL}).",
+    )
     p.add_argument(
         "--clean-model",
         default=DEFAULT_CLEAN_MODEL,
