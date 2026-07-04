@@ -7,7 +7,9 @@ check_authentication_status()
 clear_page_history()
 page_layout(current_page="./pages/landing.py")
 
+st.image("resources/logo_temp.png", width=180)
 st.title(Instructions.app_title)
+st.write(Instructions.landing_blurb)
 st.write(Instructions.landing_intro)
 
 col1, col2 = st.columns(2)

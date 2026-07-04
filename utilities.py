@@ -552,6 +552,9 @@ def page_layout(current_page=None):
         initial_sidebar_state="collapsed",
         layout="wide"
     )
+    # App-wide Fair Tales logo, shown at the top of the app and sidebar on every
+    # page via Streamlit's dedicated logo API (st.logo has its own sizing params).
+    st.logo("resources/logo_temp.png", size="large")
     # Force-hide the default multipage nav to defeat the intermittent flash (#116)
     # before any sidebar content is rendered.
     st.markdown(_HIDE_DEFAULT_NAV_CSS, unsafe_allow_html=True)
