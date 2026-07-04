@@ -199,3 +199,26 @@ Status: `accepted` | `superseded` | `deprecated`.
 - `ReviewBooks.all_header` / `all_select_label` (the #83 edit-all variants) are now unused; left in place for now.
 - **Confirm with Chris:** databot books appear on the edit page even when `entry_status == 'completed'` (already in the validation queue) — intentional so they can be picked up, but unlike own-book behaviour (started-only).
 - A real `users/databot` document is not required; create one only if a databot login/identity is ever needed. #123 must stamp `entered_by = databot_entered_by()` on its books.
+
+## 010 — AI cost optimizations, evidence-based (OCR model/resolution, neighbour-skip, admin-tunable params)
+
+**Status:** accepted (decisions made 2026-07-04; implementation in progress on branches)
+
+**Context:** the two Claude pipelines (one-time pilot import; ongoing live app) needed cost reduction for a large research dataset, but data quality is a hard constraint. Ran controlled experiments (full write-up + numbers in `AI_COST_OPTIMIZATION.md`): an OCR quality eval on deliberately-hard books (48 pages × 5 model/resolution conditions, scored against text-layer ground truth) and a ground-truth validation of a neighbour-continuity OCR-skip (68 flanked pages).
+
+**Decision:**
+- **Import OCR: Opus 4.8 → Sonnet 5.** Eval showed equal recall within noise (44/48 pages tie; worst single-page gap ~1 word; all dense hard pages tied) at −60% OCR cost. Backstopped by the clean+judge flag and the per-book validated-pickle containment check.
+- **Import neighbour-continuity OCR-skip (with guards).** For an image-only page flanked by text-layer pages, a cheap text-only judge decides if the story flows across it; if so, skip OCR (store `text=""`, `text_source="skipped_wordless"`). Validated: 81% OCR avoided on the 764 flanked pages, ~zero unique-word loss. Guards: skip only `flows AND not-missing`; **fail-safe → OCR on judge error**; Pass-2 `fits_context` + containment as backstops. Built as a **reusable, Streamlit-free module** so the same check runs in the live app as a validator QA flag (pages where the story doesn't flow → human review).
+- **App extraction resolution: default 2000px, admin-configurable.** Eval showed 1568px holds quality on hard pages (the old "1568 hurts" comment did not reproduce with Sonnet 5); 1568px is the real cost lever (~−27%/book measured). Default 2000px conservatively (ground truth was text-layer pages; true image-only stylised pages are marginally harder); expose the knob so it can be tuned per batch.
+- **Admin settings panel (global, Firestore-backed).** Expose the cost/quality API parameters (extraction resolution, per-flow models, max_tokens, feature toggles) as a global config editable by `admin` role **without a code deploy**, read through a cached helper with the current hardcoded values as defaults (backward-compatible). The panel is **gated behind an explicit safety toggle + warning and defaults off**, so key parameters can't be changed by accident.
+
+**Reasons:**
+- Every cost lever was validated against ground truth with worst-case pages weighted, not average-only, before adoption — quality is the hard constraint.
+- The neighbour-continuity check is reusable and doubles as an app data-quality signal, so its value outlives the one-time import.
+- Admin-tunable parameters decouple quality/cost tuning from deploys — valuable when a hard batch needs more fidelity or an easy batch can be cheaper.
+
+**Consequences / follow-up:**
+- Not adopted: Batch API (−50%) — refactor not worth ~$10–15 on a one-time import; N/A to the interactive app. Prompt caching ≈ $0 (prefixes below the cache minimum).
+- Sonnet 5 intro pricing ends ~Sep 1 2026 (+~30% app baseline); front-load heavy entry before then.
+- App-side changes need live-Streamlit-server testing before the `main` deploy.
+---
