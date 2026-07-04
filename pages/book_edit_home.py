@@ -1,11 +1,16 @@
 import json
+import logging
 from datetime import datetime
+import anthropic
 import streamlit as st
 from streamlit_option_menu import option_menu
 from text_content import Alerts, Instructions, AIPrompts, BookForm, BookEditHome
 from utilities import (
     check_authentication_status, page_layout, confirm_submit, get_anthropic_client,
+    strip_json_fence, first_text_block,
 )
+
+logger = logging.getLogger(__name__)
 
 check_authentication_status()
 
@@ -55,15 +60,27 @@ def suggest_themes():
     page_count = st.session_state.current_book.page_count
     story_text_parts = []
 
-    for page_num in range(1, page_count + 1):
-        doc = st.session_state.firestore.get_by_reference(
-            collection='pages',
-            document_ref=f"{book_id}_{page_num}"
-        )
-        if doc.exists:
-            data = doc.to_dict()
-            if data.get('contains_story') and data.get('text', '').strip():
-                story_text_parts.append(data['text'].strip())
+    # Reuse the already-loaded per-page objects (page_number -> Page) when the
+    # text-entry flow has populated them FOR THIS BOOK, so this doesn't re-read
+    # every page from Firestore (audit item 9). The ``_pages_dict_book_id`` guard
+    # (set by enter_text.py) ensures we never reuse another book's cached pages;
+    # otherwise fall back to per-page reads.
+    book_pages_dict = st.session_state.get('book_pages_dict')
+    pages_dict_book_id = st.session_state.get('_pages_dict_book_id')
+    if book_pages_dict and pages_dict_book_id == book_id:
+        for page in book_pages_dict.values():
+            if getattr(page, 'contains_story', False) and (page.text or '').strip():
+                story_text_parts.append(page.text.strip())
+    else:
+        for page_num in range(1, page_count + 1):
+            doc = st.session_state.firestore.get_by_reference(
+                collection='pages',
+                document_ref=f"{book_id}_{page_num}"
+            )
+            if doc.exists:
+                data = doc.to_dict()
+                if data.get('contains_story') and data.get('text', '').strip():
+                    story_text_parts.append(data['text'].strip())
 
     if not story_text_parts:
         st.warning(BookEditHome.no_story_text)
@@ -79,13 +96,22 @@ def suggest_themes():
                 max_tokens=512,
                 messages=[{"role": "user", "content": prompt}]
             )
-            raw = response.content[0].text.strip()
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-            result = json.loads(raw)
-        except Exception as e:
+        except anthropic.AnthropicError as e:
+            # Narrowed from a broad ``except`` (#127): surface the API failure to
+            # the user and log it rather than swallowing every exception type.
+            logger.warning("suggest_themes: theme-detection API call failed: %s", e)
+            st.error(BookEditHome.detection_failed.format(error=e))
+            return
+
+        raw = first_text_block(response)
+        if raw is None:
+            st.error(BookEditHome.detection_failed.format(error="empty model reply"))
+            return
+        try:
+            # Reuse the shared fence-stripper instead of the inline duplicate.
+            result = json.loads(strip_json_fence(raw))
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning("suggest_themes: could not parse theme JSON: %s", e)
             st.error(BookEditHome.detection_failed.format(error=e))
             return
 

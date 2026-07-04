@@ -25,11 +25,21 @@ logger = logging.getLogger(__name__)
 # The DATA-EXTRACTION vision/OCR calls (page OCR, title/copyright/collection
 # metadata, #52 character detection) run on Claude Sonnet 5 rather than the
 # ``claude-sonnet-4-6`` used elsewhere. Sonnet 5 accepts a larger 2576px image
-# long edge (vs 1568px on Sonnet 4.6) at the SAME token rate, so dense
-# children's-book text is captured at higher effective resolution for better OCR
-# (Chris, 2026-07-03). The cheap routing/QC calls (Haiku title/cover-page
-# detection, rotation-angle + crop-quality checks) deliberately KEEP their own
-# models/resolution — only the extraction calls opt in here.
+# long edge (vs 1568px on Sonnet 4.6), so dense children's-book text is captured
+# at higher effective resolution for better OCR (Chris, 2026-07-03). The cheap
+# routing/QC calls (Haiku title/cover-page detection, rotation-angle +
+# crop-quality checks) deliberately KEEP their own models/resolution — only the
+# extraction calls opt in here.
+#
+# COST NOTE (corrected 2026-07-04): the higher edge is NOT free. A ~2576px page
+# image costs roughly 3x the input tokens of the ~1568px standard tier
+# (empirically ~5,300 vs ~1,568 input tokens for a full page) — the earlier
+# "SAME token rate" claim here was wrong (#135 comment). The extra resolution is
+# a deliberate accuracy-for-cost trade for OCR of dense text; it is kept because
+# dropping to 1568px measurably hurt OCR. ``EXTRACTION_MAX_EDGE`` is a single,
+# documented knob so the trade can be re-tuned in one place, and per-call token
+# usage is now logged (see ``_log_usage``) so a resolution/model cost regression
+# like this is visible instead of silent.
 #
 # Model id verified 2026-07-03 against the Anthropic models docs
 # (platform.claude.com/docs/en/about-claude/models/all-models): Claude Sonnet 5
@@ -40,8 +50,23 @@ EXTRACTION_MODEL = 'claude-sonnet-5'
 #: default used by the cheap routing/QC vision calls so dense text is sent at
 #: higher resolution. ``downscale_for_vision`` still JPEG re-encodes below
 #: Claude's 10MB per-image byte cap (#134), so raising the edge cannot
-#: reintroduce the oversized-image rejection.
+#: reintroduce the oversized-image rejection. Single documented knob for the
+#: resolution/cost trade (see the cost note above).
 EXTRACTION_MAX_EDGE = 2576
+
+#: ``max_tokens`` for the page-OCR extraction reply. Dense picture-book pages can
+#: carry a lot of text and the Sonnet 5 tokenizer runs larger, so this is set
+#: comfortably above the 1024 default to avoid truncating a long page mid-JSON
+#: (which would otherwise surface as a generic parse failure). See the
+#: ``stop_reason == "max_tokens"`` truncation logging in ``vision_text``.
+EXTRACTION_OCR_MAX_TOKENS = 2048
+
+#: Long-edge pixel cap for the page-TYPE / cover CLASSIFICATION vision calls
+#: (``locate_key_pages`` / ``locate_cover_pages``). These only need to tell a
+#: cover/title/copyright page apart from an interior page — they do NOT OCR the
+#: text — so a much smaller image is plenty and sends far fewer image tokens
+#: across a whole-book multi-image request (#135 cost right-sizing).
+LOCATE_MAX_EDGE = 784
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +121,49 @@ def strip_json_fence(raw):
     return raw.strip()
 
 
+def first_text_block(response):
+    """Return the text of the FIRST ``text`` content block in a Claude response,
+    or ``None`` when the reply carried no text block.
+
+    Selecting the first *text* block (rather than the fragile
+    ``response.content[0].text``) is robust to a leading non-text block — e.g. a
+    ``thinking`` block on a model that emits one — which would otherwise raise
+    ``AttributeError`` and break extraction. Defensive hardening: on the real
+    OCR/extraction calls today Sonnet 5 does not emit a leading thinking block,
+    but this removes the latent failure mode entirely (audit item 1).
+    """
+    return next(
+        (block.text for block in response.content
+         if getattr(block, "type", None) == "text"),
+        None,
+    )
+
+
+def _log_usage(response, model, label=""):
+    """Log the token usage of a Claude ``response`` so per-call cost is visible.
+
+    Emitted at INFO on the module logger (visible in the Streamlit Cloud logs).
+    This is the telemetry that would have surfaced the #135 image-token
+    regression instead of it going unnoticed (audit item 7): it records the
+    input / output / cache token counts, the model, a short flow ``label`` and
+    the ``stop_reason`` for every shared vision / JSON call. Fully guarded — a
+    missing/oddly-shaped ``usage`` object never breaks the call.
+    """
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return
+    logger.info(
+        "ai_usage flow=%s model=%s input=%s output=%s cache_read=%s "
+        "cache_write=%s stop=%s",
+        label or "-", model,
+        getattr(usage, "input_tokens", None),
+        getattr(usage, "output_tokens", None),
+        getattr(usage, "cache_read_input_tokens", None),
+        getattr(usage, "cache_creation_input_tokens", None),
+        getattr(response, "stop_reason", None),
+    )
+
+
 def build_vision_content(images, prompt, *, downscale=True, max_edge=1568):
     """Build the ``[image block, ..., text]`` content list for a vision request.
 
@@ -129,7 +197,7 @@ def build_vision_content(images, prompt, *, downscale=True, max_edge=1568):
 
 
 def vision_text(client, images, prompt, *, model="claude-sonnet-4-6",
-                max_tokens=1024, downscale=True, max_edge=1568):
+                max_tokens=1024, downscale=True, max_edge=1568, label=""):
     """Send ``images`` + ``prompt`` to a Claude vision model and return the raw
     reply text (stripped), or ``None`` when the response carried no text block.
 
@@ -139,7 +207,10 @@ def vision_text(client, images, prompt, *, model="claude-sonnet-4-6",
 
     ``max_edge`` threads the longest-edge downscale cap through to
     ``build_vision_content`` so extraction callers can request higher-resolution
-    OCR images (#135).
+    OCR images (#135). The first *text* block is selected robustly via
+    ``first_text_block`` (audit item 1), token usage is logged (audit item 7),
+    and a ``max_tokens`` truncation is logged distinctly so a truncated reply is
+    diagnosable rather than surfacing only as a downstream JSON parse failure.
     """
     response = client.messages.create(
         model=model,
@@ -151,14 +222,19 @@ def vision_text(client, images, prompt, *, model="claude-sonnet-4-6",
             ),
         }],
     )
-    try:
-        return response.content[0].text.strip()
-    except (IndexError, AttributeError):
-        return None
+    _log_usage(response, model, label)
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        logger.warning(
+            "vision_text: reply truncated at max_tokens=%s (model=%s, flow=%s); "
+            "output may be incomplete and unparseable",
+            max_tokens, model, label or "-",
+        )
+    text = first_text_block(response)
+    return text.strip() if text is not None else None
 
 
 def vision_json(client, images, prompt, *, model="claude-sonnet-4-6",
-                max_tokens=1024, downscale=True, max_edge=1568):
+                max_tokens=1024, downscale=True, max_edge=1568, label=""):
     """Send ``images`` + ``prompt`` to a Claude vision model and parse the JSON
     reply, returning ``(data_or_None, raw_text)`` (#129).
 
@@ -173,7 +249,7 @@ def vision_json(client, images, prompt, *, model="claude-sonnet-4-6",
     """
     raw = vision_text(
         client, images, prompt, model=model, max_tokens=max_tokens,
-        downscale=downscale, max_edge=max_edge,
+        downscale=downscale, max_edge=max_edge, label=label,
     )
     if raw is None:
         return None, ""
@@ -685,7 +761,7 @@ def lookup_person_details(name, role, client, book_title=None):
         return None
 
 
-def _claude_json(client, prompt, max_tokens=1024):
+def _claude_json(client, prompt, max_tokens=1024, label="character_detection"):
     """Send a text prompt to the DATA-EXTRACTION model and parse the JSON response.
 
     Reuses the JSON-fence-stripping convention used by the existing Claude
@@ -694,13 +770,27 @@ def _claude_json(client, prompt, max_tokens=1024):
     Raises json.JSONDecodeError if the model does not return valid JSON, or an
     anthropic error if the API call fails — the caller is expected to surface
     these to the user.
+
+    The first *text* block is selected robustly via ``first_text_block`` (audit
+    item 1) so a leading non-text block can't break parsing, token usage is
+    logged (audit item 7), and a ``max_tokens`` truncation is logged distinctly.
     """
     response = client.messages.create(
         model=EXTRACTION_MODEL,
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}]
     )
-    return json.loads(strip_json_fence(response.content[0].text))
+    _log_usage(response, EXTRACTION_MODEL, label)
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        logger.warning(
+            "_claude_json: reply truncated at max_tokens=%s (model=%s, flow=%s); "
+            "output may be incomplete and unparseable",
+            max_tokens, EXTRACTION_MODEL, label,
+        )
+    text = first_text_block(response)
+    if text is None:
+        raise json.JSONDecodeError("no text block in model reply", "", 0)
+    return json.loads(strip_json_fence(text))
 
 
 def detect_book_characters(pages, client, progress_callback=None):
@@ -715,35 +805,31 @@ def detect_book_characters(pages, client, progress_callback=None):
         name (str), gender (one of CharacterForm.gender_options),
         human (bool), plural (bool), protagonist (bool), aliases (list[str]).
 
-    Pass 1 extracts the character references appearing on each page; pass 2
-    consolidates those references across pages so that e.g. "the boy", "Tom"
-    and "Tommy" collapse into a single character with the others as aliases.
-    Nothing is written to the database — the caller presents the result for the
-    user to review, correct and confirm.
+    A whole picture book's story text is only ~1-2K tokens, so this now sends
+    ALL of the page texts in ONE Claude call that both extracts the character
+    references and consolidates them across pages (so e.g. "the boy", "Tom" and
+    "Tommy" collapse into a single character with the others as aliases),
+    replacing the previous N-per-page + 1-consolidation call pattern (audit item
+    5). The reviewed output shape is unchanged. Nothing is written to the
+    database — the caller presents the result for the user to review, correct and
+    confirm.
     """
     from text_content import AIPrompts
 
     pages = list(pages)
-    total_steps = len(pages) + 1
+    # Single call over the whole book — report a coarse 0 -> 1 so existing
+    # progress UIs still update.
+    if progress_callback is not None:
+        progress_callback(0, 1)
 
-    # Pass 1 — per-page character mentions.
-    per_page_mentions = []
-    for index, (page_number, page_text) in enumerate(pages):
-        data = _claude_json(
-            client,
-            AIPrompts.character_extraction.format(page_text=page_text),
-            max_tokens=512,
-        )
-        mentions = data.get("mentions", []) if isinstance(data, dict) else []
-        per_page_mentions.append({"page": page_number, "mentions": mentions})
-        if progress_callback is not None:
-            progress_callback(index + 1, total_steps)
-
-    # Pass 2 — consolidate references into distinct characters.
-    mentions_json = json.dumps(per_page_mentions, ensure_ascii=False)
+    pages_json = json.dumps(
+        [{"page": page_number, "text": page_text}
+         for page_number, page_text in pages],
+        ensure_ascii=False,
+    )
     result = _claude_json(
         client,
-        AIPrompts.character_consolidation.format(mentions_json=mentions_json),
+        AIPrompts.character_detection.format(pages_json=pages_json),
         max_tokens=2048,
     )
     raw_characters = result.get("characters", []) if isinstance(result, dict) else []
@@ -776,7 +862,7 @@ def detect_book_characters(pages, client, progress_callback=None):
         })
 
     if progress_callback is not None:
-        progress_callback(total_steps, total_steps)
+        progress_callback(1, 1)
     return suggestions
 
 
@@ -937,8 +1023,11 @@ def locate_key_pages(pages, client):
             "source": {
                 "type": "base64",
                 "media_type": "image/jpeg",
+                # Page-type classification does not need OCR resolution — send a
+                # smaller image so a whole-book multi-image request stays cheap
+                # (#135 cost right-sizing).
                 "data": base64.standard_b64encode(
-                    downscale_for_vision(image_bytes)
+                    downscale_for_vision(image_bytes, max_edge=LOCATE_MAX_EDGE)
                 ).decode('utf-8'),
             },
         })
@@ -949,12 +1038,13 @@ def locate_key_pages(pages, client):
         max_tokens=128,
         messages=[{"role": "user", "content": content}],
     )
+    _log_usage(response, "claude-haiku-4-5", "locate_key_pages")
 
     none_result = {'title_page': None, 'copyright_page': None}
-    try:
-        raw = response.content[0].text.strip()
-    except (IndexError, AttributeError):
+    raw = first_text_block(response)
+    if raw is None:
         return none_result
+    raw = raw.strip()
     try:
         result = json.loads(strip_json_fence(raw))
     except (json.JSONDecodeError, ValueError):
@@ -1139,8 +1229,9 @@ def locate_cover_pages(pages, client):
             "source": {
                 "type": "base64",
                 "media_type": "image/jpeg",
+                # Cover/title classification does not need OCR resolution (#135).
                 "data": base64.standard_b64encode(
-                    downscale_for_vision(image_bytes)
+                    downscale_for_vision(image_bytes, max_edge=LOCATE_MAX_EDGE)
                 ).decode('utf-8'),
             },
         })
@@ -1151,11 +1242,12 @@ def locate_cover_pages(pages, client):
         max_tokens=256,
         messages=[{"role": "user", "content": content}],
     )
+    _log_usage(response, "claude-haiku-4-5", "locate_cover_pages")
 
-    try:
-        raw = response.content[0].text.strip()
-    except (IndexError, AttributeError):
+    raw = first_text_block(response)
+    if raw is None:
         return []
+    raw = raw.strip()
     try:
         result = json.loads(strip_json_fence(raw))
     except (json.JSONDecodeError, ValueError):
