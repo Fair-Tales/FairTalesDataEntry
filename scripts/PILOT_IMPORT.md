@@ -46,7 +46,11 @@ The dry run works from an isolated git worktree (no secrets needed — pass
 | `--execute` | Perform the real import. **Omit for a dry run.** |
 | `--limit N` | Only process the first N matched books (useful for a small test run). |
 | `--sample-ai N` | Dry-run only: run N real AI lookups as a sample (default 1; `0` disables). |
-| `--lookup-model` / `--ocr-model` | Claude model ids (default `claude-opus-4-8`). |
+| `--lookup-model` / `--ocr-model` / `--clean-model` | Claude model ids (OCR/lookup default `claude-opus-4-8`; clean/judge `claude-sonnet-4-6`). |
+| `--containment-threshold` | **Primary** cross-check: flag books capturing less than this fraction of the validated reference's words (default `0.85`). |
+| `--compare-threshold` | Secondary Jaccard threshold (reported only, default `0.60`). |
+| `--cache-dir` / `--no-cache` | Local result cache for OCR/clean+judge calls (skips re-paying on a re-run); `--no-cache` disables it. |
+| `--no-clean` | Skip the AI clean/judge pass (import raw extracted text). |
 | `--max-edge` / `--jpeg-quality` | Page-render resolution (default 2000px long edge) and JPEG quality (85). |
 
 ---
@@ -179,19 +183,48 @@ with references stored as real Firestore `DocumentReference`s on `--execute`:
 * **Illustrator / publisher / year:** `ai_lookup_book_metadata` sends the title
   + author to Claude (`--lookup-model`, default `claude-opus-4-8`) with the
   server-side **web search tool** (`web_search_20260209`), handling `pause_turn`
-  continuations, and parses a strict JSON reply
-  `{"illustrator", "publisher", "year"}`. It is instructed **not to guess** and
-  to return `"Unknown"`/`null` when unsure. Any API/parse failure degrades to
-  all-`Unknown` (logged to stderr) — never fatal.
+  continuations, and parses a JSON reply `{"illustrator", "publisher", "year"}`.
+  This is a **UK** primary-school corpus, so the prompt asks for the original UK
+  publisher/imprint as printed (e.g. Walker Books, not its US partner Candlewick
+  Press), the illustrator as credited, and the year of **first** publication. It
+  is instructed **not to guess** and to return `"Unknown"`/`null` when unsure;
+  the `"Unknown"` guard is case-insensitive and also treats `""`/`"n/a"` as
+  unknown. Any API/parse failure degrades to all-`Unknown` (logged) — never fatal.
 * **Per-page OCR fallback:** `ai_ocr_page` sends the rendered page JPEG to Claude
   vision (`--ocr-model`, default `claude-opus-4-8`) to transcribe story text,
   used only when a page lacks a usable text layer.
+* **Per-page clean + judge:** `ai_clean_and_judge` (`--clean-model`, default
+  `claude-sonnet-4-6`) strips extraction/OCR junk + print artefacts and judges
+  `makes_sense` / `fits_context`.
+* **Structured outputs + caching:** the OCR and clean/judge calls use Anthropic
+  structured outputs (`output_config` json_schema) for guaranteed-valid JSON, and
+  prompt caching (`cache_control`) on their static instruction prefix. Results are
+  cached locally under `--cache-dir` keyed by content hash, so a crash or
+  `--overwrite` re-run reuses them instead of re-paying.
 
-Model ids default to `claude-opus-4-8` (most capable widely-released model) to
-prioritise accuracy on a bounded corpus; override with `--lookup-model` /
-`--ocr-model`. In a **dry run**, only `--sample-ai` lookups are actually
-performed (default 1) to demonstrate the result; every other book is planned as
-`Unknown`. `--execute` runs the lookup for every non-skipped book.
+Model ids default to `claude-opus-4-8` to prioritise accuracy on a bounded
+corpus. In a **dry run**, only `--sample-ai` lookups are actually performed
+(default 1); every other book is planned as `Unknown`. `--execute` runs the AI
+passes for every non-skipped book.
+
+---
+
+## Review flags & robustness (issue #73)
+
+* **Per page** (`pages` doc): `needs_review` / `review_priority` / `review_note`,
+  plus provenance — `text_source` (`layer`/`ocr`/`none`), `clean_status`,
+  `ocr_model`, `clean_model`. A failed OCR call → high-priority flag; a failed
+  clean/judge call → normal flag; an empty page that breaks context → high.
+* **Per book** (`books` doc): `needs_review` / `review_pages` /
+  `high_priority_review` / `review_note`. Books with **no PDF** or **no
+  characters** are flagged and do **not** claim `photos_uploaded`; ambiguous
+  multi-author rows are flagged for manual author entry.
+* **Circuit breaker:** `MAX_CONSECUTIVE_AI_FAILURES` (default 5) consecutive AI
+  failures abort the run — safely resumable, because each book's `books` document
+  is written **last**.
+* **Cross-check:** primary metric is **containment** (recall of the validated
+  text, `--containment-threshold`, default 0.85); Jaccard is a secondary "excess
+  text" indicator.
 
 ---
 
@@ -199,12 +232,17 @@ performed (default 1) to demonstrate the result; every other book is planned as
 
 * **Dry-run by default** — writes nothing; `--execute` is the only write path.
 * **Idempotent** — before each book, `books/{id}` existence is checked and the
-  book is skipped if present. (Re-running after a partial import re-processes
-  only missing books.)
+  book is skipped if present (unless `--overwrite`). Re-running after a partial
+  import re-processes only missing books.
+* **Shared entities are never clobbered** — `authors` / `illustrators` /
+  `publishers` are written **only if the doc does not already exist**, so an
+  import can never overwrite a human-entered author's gender/`entered_by`. This
+  makes `--overwrite` safe for shared entities too. Collisions are counted and
+  reported.
 * Firestore queries/writes use the same client config as `data_cleanup.py`
   (project `sawdataentry`, `.set(..., merge=True)`).
-* Narrow exception handling throughout; AI failures degrade gracefully and are
-  logged, never swallowed silently.
+* Narrow exception handling throughout; AI failures now **record a review flag**
+  rather than silently blanking/passing, and are logged, never swallowed.
 
 ---
 
