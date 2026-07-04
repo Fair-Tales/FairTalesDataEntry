@@ -1264,29 +1264,45 @@ class CollectionPicker:
     selection_header = "Your selection"
     selection_empty = (
         "No books selected yet. Use one of the methods below to build a "
-        "collection, or view results across all books."
+        "collection, or just click **View results** to see all books."
     )
     selection_count = "{n} book(s) in your collection."
     remove_book_button = "Remove"
     clear_selection_button = "Clear selection"
-    view_results_button = "View results for this collection"
-    view_all_button = "View results for all books instead"
+    # A single button now handles both cases: with books selected it scopes to
+    # that collection; with nothing selected it scopes to ALL books (#163).
+    view_results_button = "View results"
+    view_results_all_hint = "Nothing selected — this will show results for all books."
 
     # --- Method 1: search & select ---
     search_header = "Search our database and tick the books you want"
     search_label = "Search book titles"
     search_results_found = "{count} matching book(s):"
     add_book_checkbox = "{title}"
+    # Left-hand quick add/remove dropdown (#163).
+    search_dropdown_label = "Quick add books"
+    search_dropdown_help = (
+        "Pick book titles here to add them to your selection; unpick to remove "
+        "them. Stays in sync with the search checkboxes on the right."
+    )
 
     # --- Method 2: predefined collections ---
     predefined_header = "Browse predefined collections"
-    predefined_none = "There are no predefined collections yet."
+    predefined_none = (
+        "There are no named collections yet, but you can still view results for "
+        "all books below."
+    )
     predefined_select_label = "Choose a collection"
     predefined_owner_label = "Scope: {owner}"
     predefined_books_label = "Books in this collection:"
     predefined_use_button = "Load this collection into my selection"
     predefined_view_button = "View results for this collection"
     predefined_empty_collection = "This collection has no books."
+    # Synthetic "All books" option (#163): a virtual collection scoping the
+    # dashboard to every book, not stored in Firestore.
+    predefined_all_books_option = "All books"
+    predefined_all_books_caption = "Scope results to every book in the database."
+    predefined_all_books_view_button = "View results for all books"
 
     create_header = "Save your current selection as a predefined collection"
     create_help = (
