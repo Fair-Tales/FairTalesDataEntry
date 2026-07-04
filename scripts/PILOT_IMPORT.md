@@ -51,7 +51,15 @@ The dry run works from an isolated git worktree (no secrets needed — pass
 | `--compare-threshold` | Secondary Jaccard threshold (reported only, default `0.60`). |
 | `--cache-dir` / `--no-cache` | Local result cache for OCR/clean+judge calls (skips re-paying on a re-run); `--no-cache` disables it. |
 | `--no-clean` | Skip the AI clean/judge pass (import raw extracted text). |
+| `--clean-backend` / `--continuity-backend` `{claude,ollama}` | **Optional** local-model offload for the TEXT stages (default `claude`). See [LOCAL_MODELS.md](LOCAL_MODELS.md). |
+| `--ollama-url` / `--ollama-clean-model` / `--ollama-continuity-model` | Local (Ollama) endpoint + model ids, used only with the `ollama` backends. |
 | `--max-edge` / `--jpeg-quality` | Page-render resolution (default 2000px long edge) and JPEG quality (85). |
+
+> **Cutting cost with a local model:** the clean+judge pass is ~67% of the API
+> cost and is a pure text task. You can offload it (and, optionally, the
+> continuity judge) to a free local Gemma 3 27B via Ollama with an automatic
+> Claude fallback — OCR stays on Claude. Setup, remote-GPU usage and the
+> quality eval are in **[LOCAL_MODELS.md](LOCAL_MODELS.md)**.
 
 ---
 
