@@ -271,7 +271,7 @@ def correct_book_page(image_bytes):
     return None, False, False
 
 
-def get_rotation_angle(image_bytes, client):
+def get_rotation_angle(image_bytes, client, model=None):
     """
     Ask Claude (a cheap routing/QC vision call) for the clockwise rotation
     needed to make the book page text read the RIGHT WAY UP — including the
@@ -287,14 +287,21 @@ def get_rotation_angle(image_bytes, client):
 
     Returns 0/90/180/270. Returns 0 when no rotation is needed, the model is
     uncertain / gives no number, or the API call fails.
+
+    ``model`` defaults to the admin-configured ``rotation_model`` (falling back to
+    ``claude-sonnet-4-6``) so the routing model can be re-tuned globally without a
+    deploy; callers may still pass an explicit model.
     """
     import anthropic
-    from utilities import vision_text
+    from utilities import vision_text, get_ai_settings
+
+    if model is None:
+        model = get_ai_settings()['rotation_model']
 
     try:
         raw = vision_text(
             client, [image_bytes], AIPrompts.rotation_angle,
-            model="claude-sonnet-4-6", max_tokens=10,
+            model=model, max_tokens=10,
         )
     except anthropic.AnthropicError as exc:
         # Narrowed from a broad ``except`` (#127): a transient API failure means
@@ -325,20 +332,27 @@ def rotate_image(image_bytes, angle_degrees):
     return buf.getvalue()
 
 
-def check_crop_quality(image_bytes, client):
+def check_crop_quality(image_bytes, client, model=None):
     """
     Ask Claude Haiku 4.5 whether the corrected image looks like a properly
     cropped, right-way-up book page. Returns True only on a clear 'yes'.
     Defaults to True on API errors so a successful OpenCV result is not
     discarded due to a transient network failure.
+
+    ``model`` defaults to the admin-configured ``crop_quality_model`` (falling
+    back to ``claude-haiku-4-5``) so the QC model can be re-tuned globally without
+    a deploy; callers may still pass an explicit model.
     """
     import anthropic
-    from utilities import vision_text
+    from utilities import vision_text, get_ai_settings
+
+    if model is None:
+        model = get_ai_settings()['crop_quality_model']
 
     try:
         raw = vision_text(
             client, [image_bytes], AIPrompts.crop_quality_check,
-            model="claude-haiku-4-5", max_tokens=5,
+            model=model, max_tokens=5,
         )
     except anthropic.AnthropicError as exc:
         # Narrowed from a broad ``except`` (#127): a network/API error means we

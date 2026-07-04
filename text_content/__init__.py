@@ -6,8 +6,8 @@ from text_content.forms import *
 from text_content.old_books import old_books
 from text_content.ai_prompts import AIPrompts
 from text_content.forms import (
-    ReportFeedback, Login, Nav, AddCharacterPage, BookEditHome, Admin, RegisterUser,
-    PhotoUpload, ReviewBooks, Confirm, UserHome, Uploader, BookDataEntry,
+    ReportFeedback, Login, Nav, AddCharacterPage, BookEditHome, Admin, AdminSettings,
+    RegisterUser, PhotoUpload, ReviewBooks, Confirm, UserHome, Uploader, BookDataEntry,
     QrLanding, Validation, CollectionPicker, BatchBookEntry,
     Reconstruction, ReconstructOrphans,
 )
