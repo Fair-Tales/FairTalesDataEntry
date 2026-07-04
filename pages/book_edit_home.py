@@ -7,7 +7,7 @@ from streamlit_option_menu import option_menu
 from text_content import Alerts, Instructions, AIPrompts, BookForm, BookEditHome
 from utilities import (
     check_authentication_status, page_layout, confirm_submit, get_anthropic_client,
-    strip_json_fence, first_text_block,
+    strip_json_fence, first_text_block, get_ai_settings,
 )
 
 logger = logging.getLogger(__name__)
@@ -92,7 +92,7 @@ def suggest_themes():
     with st.spinner(BookEditHome.analysing_spinner):
         try:
             response = client.messages.create(
-                model="claude-sonnet-4-6",
+                model=get_ai_settings()['theme_model'],
                 max_tokens=512,
                 messages=[{"role": "user", "content": prompt}]
             )

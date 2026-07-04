@@ -150,6 +150,12 @@ def captured_log(monkeypatch):
         return object()
 
     monkeypatch.setattr(uploader.ExtractionErrorLog, "record", _fake_record)
+
+    # extract_page_info now reads the admin-configurable AI settings; stub them
+    # with the defaults so the test does not touch Firestore/st.secrets.
+    from utilities import AI_SETTINGS_DEFAULTS
+    monkeypatch.setattr(uploader, "get_ai_settings", lambda: dict(AI_SETTINGS_DEFAULTS))
+
     return calls
 
 

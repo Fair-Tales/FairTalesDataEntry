@@ -13,7 +13,7 @@ from utilities import (
     VALID_ROLES,
     ROLE_ADMIN,
 )
-from text_content import FeedbackExport, Admin
+from text_content import FeedbackExport, Admin, AdminSettings
 
 check_authentication_status()
 
@@ -28,6 +28,7 @@ page_layout()
 st.title(Admin.title)
 
 st.page_link("pages/validation.py", label=Admin.validation_link_label)
+st.page_link("pages/ai_settings.py", label=AdminSettings.admin_link_label)
 st.divider()
 
 # ---------------------------------------------------------------------------

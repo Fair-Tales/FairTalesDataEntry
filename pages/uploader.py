@@ -8,8 +8,7 @@ from image_processing import (
 from text_content import Instructions, AIPrompts, BookPhotoEntry, Uploader, PhotoUpload
 from utilities import (
     page_layout, check_authentication_status, extract_isbn, lookup_isbn,
-    get_s3_filesystem, get_anthropic_client, vision_json,
-    EXTRACTION_MODEL, EXTRACTION_MAX_EDGE, EXTRACTION_OCR_MAX_TOKENS,
+    get_s3_filesystem, get_anthropic_client, vision_json, get_ai_settings,
 )
 from photo_upload import (
     get_upload_session_id,
@@ -90,11 +89,14 @@ def extract_page_info(image_bytes, client, *, book=None, page_number=None,
         )
         raise PageExtractionError(error_type, error_message)
 
+    ai_settings = get_ai_settings()
     try:
         data, raw = vision_json(
             client, [image_bytes], AIPrompts.page_extraction, downscale=True,
-            model=EXTRACTION_MODEL, max_edge=EXTRACTION_MAX_EDGE,
-            max_tokens=EXTRACTION_OCR_MAX_TOKENS, label=flow or "page_extraction",
+            model=ai_settings['extraction_model'],
+            max_edge=ai_settings['extraction_max_edge'],
+            max_tokens=ai_settings['extraction_max_tokens'],
+            label=flow or "page_extraction",
         )
     except anthropic.AnthropicError as exc:
         _log_and_raise(type(exc).__name__, str(exc))
@@ -171,6 +173,24 @@ def _process_page(raw_bytes, page_number, photos_url, fs, ai_client, report=None
     """
     report = report or (lambda _template: None)
 
+    # Admin-configurable pipeline settings (models + feature toggles). When the
+    # crop-quality gate is disabled the geometric OpenCV/rotation result is
+    # trusted directly; when rotation correction is disabled the Sonnet rotation
+    # pass is skipped entirely. Both default ON, so the pipeline is unchanged
+    # unless an admin turns them off.
+    ai_settings = get_ai_settings()
+    crop_gate_on = ai_settings['enable_crop_quality_gate']
+    rotation_on = ai_settings['enable_rotation_correction']
+    crop_model = ai_settings['crop_quality_model']
+    rotation_model = ai_settings['rotation_model']
+
+    def _crop_ok(image_bytes):
+        """Crop-quality gate: trust the geometry when the gate is disabled."""
+        if not crop_gate_on:
+            return True
+        report(Uploader.substep_checking_crop)
+        return check_crop_quality(image_bytes, ai_client, model=crop_model)
+
     def _save_and_return(corrected, method):
         with fs.open(f"{photos_url}/page_{page_number}_cropped.jpg", 'wb') as f:
             f.write(corrected)
@@ -183,8 +203,7 @@ def _process_page(raw_bytes, page_number, photos_url, fs, ai_client, report=None
         if high_confidence:
             # Trust the geometry and skip the Haiku verification (one fewer call).
             return _save_and_return(corrected_bytes, 'opencv')
-        report(Uploader.substep_checking_crop)
-        if check_crop_quality(corrected_bytes, ai_client):
+        if _crop_ok(corrected_bytes):
             return _save_and_return(corrected_bytes, 'opencv')
 
     # Stage 2 — rotation-only fallback via Sonnet.
@@ -197,17 +216,17 @@ def _process_page(raw_bytes, page_number, photos_url, fs, ai_client, report=None
     # showing table/hands/background) routinely fails, so the UPSIDE-DOWN original
     # was silently sent to OCR instead. The crop-quality check now only gates the
     # OPTIONAL saving of the ``_cropped`` artifact, never which bytes go to OCR.
-    report(Uploader.substep_detecting_rotation)
-    angle = get_rotation_angle(raw_bytes, ai_client)
-    if angle != 0:
-        rotated_bytes = rotate_image(raw_bytes, angle)
-        report(Uploader.substep_checking_crop)
-        if check_crop_quality(rotated_bytes, ai_client):
-            # Well-framed after rotation — save the corrected artifact too.
-            return _save_and_return(rotated_bytes, 'rotation')
-        # Not well-framed (background/cropping), but the orientation is now
-        # correct — use the rotated bytes for extraction regardless.
-        return rotated_bytes, 'rotation'
+    if rotation_on:
+        report(Uploader.substep_detecting_rotation)
+        angle = get_rotation_angle(raw_bytes, ai_client, model=rotation_model)
+        if angle != 0:
+            rotated_bytes = rotate_image(raw_bytes, angle)
+            if _crop_ok(rotated_bytes):
+                # Well-framed after rotation — save the corrected artifact too.
+                return _save_and_return(rotated_bytes, 'rotation')
+            # Not well-framed (background/cropping), but the orientation is now
+            # correct — use the rotated bytes for extraction regardless.
+            return rotated_bytes, 'rotation'
 
     return raw_bytes, None
 

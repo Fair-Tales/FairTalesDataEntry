@@ -1,5 +1,6 @@
 from google.cloud import firestore
 import streamlit as st
+from google.api_core.exceptions import GoogleAPIError
 from google.cloud.firestore_v1 import FieldFilter
 from google.oauth2 import service_account
 import pandas as pd
@@ -67,6 +68,206 @@ EXTRACTION_OCR_MAX_TOKENS = 2048
 #: text — so a much smaller image is plenty and sends far fewer image tokens
 #: across a whole-book multi-image request (#135 cost right-sizing).
 LOCATE_MAX_EDGE = 784
+
+
+# ---------------------------------------------------------------------------
+# Global, admin-editable AI-pipeline settings.
+#
+# The cost/quality-relevant Claude parameters above are the DEFAULTS. An admin
+# can override any of them GLOBALLY, without a code deploy, via a single plain
+# Firestore config document (collection ``settings``, doc ``ai_pipeline``) edited
+# from the admin AI-settings page. The doc is handled as a RAW DICT — the same
+# deliberate exception the ``User`` entity uses (#90) — rather than forced
+# through the ``DataStructureBase``/``Field`` write-through pattern, because it is
+# a single singleton config record, not a domain entity.
+#
+# Safety / backward-compatibility contract:
+#   * ``get_ai_settings()`` starts from ``AI_SETTINGS_DEFAULTS`` (today's
+#     constants) and overlays only the stored keys that VALIDATE, so an
+#     absent/empty/partial/corrupt doc behaves exactly as the hardcoded app did.
+#   * Every stored value is validated on read (models against a GA allow-list;
+#     resolutions/tokens against sane bounds) and an invalid value falls back to
+#     the default rather than being trusted (guarded lookup, #91).
+#   * The one intentional default change from the old constants is
+#     ``extraction_max_edge`` = 2000 (down from the ``EXTRACTION_MAX_EDGE`` 2576),
+#     an approved cost reduction; the constant is kept as-is for the higher-res
+#     opt-in and as documentation of the previous value.
+# ---------------------------------------------------------------------------
+
+AI_SETTINGS_COLLECTION = 'settings'
+AI_SETTINGS_DOCUMENT = 'ai_pipeline'
+
+#: Allow-list of the real, generally-available Claude model ids that may be
+#: selected for any pipeline call. A stored/selected model NOT in this tuple is
+#: rejected and the call falls back to the default model (#91 guarded lookup).
+#: Verified against the Anthropic models docs (2026-07): Opus 4.8, Sonnet 5,
+#: Sonnet 4.6 and Haiku 4.5 are the current GA ids.
+AI_MODEL_ALLOWLIST = (
+    'claude-opus-4-8',
+    'claude-sonnet-5',
+    'claude-sonnet-4-6',
+    'claude-haiku-4-5',
+)
+
+#: Sane bounds for the vision image long-edge (px) and extraction reply tokens.
+#: A stored value outside these bounds is treated as invalid and falls back to
+#: the default. The upper edge stays under what ``downscale_for_vision`` will
+#: JPEG-shrink below Claude's per-image byte cap (#134), so it can never
+#: reintroduce an oversized-image rejection.
+AI_EDGE_MIN = 512
+AI_EDGE_MAX = 4096
+AI_TOKENS_MIN = 256
+AI_TOKENS_MAX = 8192
+
+#: Effective defaults for every tunable key. Each mirrors today's hardcoded
+#: constant so an absent config doc is a no-op — EXCEPT ``extraction_max_edge``
+#: (approved 2576 -> 2000 cost reduction).
+AI_SETTINGS_DEFAULTS = {
+    # Models (validated against AI_MODEL_ALLOWLIST).
+    'extraction_model': EXTRACTION_MODEL,             # page OCR
+    'metadata_model': EXTRACTION_MODEL,               # title/copyright/collection
+    'character_detection_model': EXTRACTION_MODEL,    # #52 character detection
+    'locate_model': 'claude-haiku-4-5',               # locate key/cover pages
+    'rotation_model': 'claude-sonnet-4-6',            # get_rotation_angle
+    'crop_quality_model': 'claude-haiku-4-5',         # check_crop_quality
+    'theme_model': 'claude-sonnet-4-6',               # suggest_themes
+    # Resolutions / tokens (validated against the bounds above).
+    'extraction_max_edge': 2000,                      # approved: down from 2576
+    'extraction_max_tokens': EXTRACTION_OCR_MAX_TOKENS,  # 2048
+    'locate_max_edge': LOCATE_MAX_EDGE,               # 784
+    # Feature toggles (validated as bool).
+    'enable_rotation_correction': True,               # gate get_rotation_angle
+    'enable_crop_quality_gate': True,                 # gate check_crop_quality
+}
+
+#: The tunable keys grouped by validation type.
+AI_SETTINGS_MODEL_KEYS = (
+    'extraction_model', 'metadata_model', 'character_detection_model',
+    'locate_model', 'rotation_model', 'crop_quality_model', 'theme_model',
+)
+_AI_SETTINGS_EDGE_KEYS = ('extraction_max_edge', 'locate_max_edge')
+_AI_SETTINGS_TOKEN_KEYS = ('extraction_max_tokens',)
+_AI_SETTINGS_BOOL_KEYS = ('enable_rotation_correction', 'enable_crop_quality_gate')
+
+#: TTL for the cached read of the config doc. Short so an admin's save is picked
+#: up promptly by other sessions even without an explicit cache clear; the save
+#: path clears the cache immediately for the saving admin.
+_AI_SETTINGS_TTL_SECONDS = 60
+
+
+def _coerce_int(value):
+    """Best-effort int coercion for a stored numeric setting, or ``None``.
+
+    Accepts ints and numeric strings; rejects bools (``True``/``False`` are ints
+    in Python but are never valid resolutions/tokens) and anything unparseable.
+    """
+    if isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+@st.cache_data(ttl=_AI_SETTINGS_TTL_SECONDS, show_spinner=False)
+def _read_ai_settings_doc():
+    """Read the RAW stored AI-pipeline settings dict from Firestore (cached).
+
+    Returns ``{}`` when the doc is absent, empty, oddly-shaped, or the read
+    fails — every such case degrades to "use the defaults" rather than raising,
+    so the pipeline keeps working. A read error is logged, not swallowed (#127).
+    Validation of the individual values happens in ``get_ai_settings`` so the
+    cached raw payload stays a faithful copy of what is stored.
+    """
+    try:
+        doc = FirestoreWrapper(auth=False).get_by_reference(
+            AI_SETTINGS_COLLECTION, AI_SETTINGS_DOCUMENT
+        )
+    except GoogleAPIError as exc:
+        logger.warning("get_ai_settings: could not read %s/%s: %s",
+                       AI_SETTINGS_COLLECTION, AI_SETTINGS_DOCUMENT, exc)
+        return {}
+    if not doc.exists:
+        return {}
+    data = doc.to_dict()
+    return data if isinstance(data, dict) else {}
+
+
+def get_ai_settings():
+    """Return the effective, validated AI-pipeline settings as a plain dict.
+
+    Starts from ``AI_SETTINGS_DEFAULTS`` and overlays each stored key ONLY when
+    its value validates (model in the GA allow-list; resolution/token within
+    bounds; toggle is a real bool). An invalid or missing stored value keeps the
+    default (guarded, #91), so an empty/absent/corrupt config doc reproduces the
+    previous hardcoded behaviour exactly (bar the approved 2000px edge default).
+
+    Cheap to call repeatedly: the Firestore read is cached (``_read_ai_settings_doc``)
+    and only the light validation runs per call. Call ``clear_ai_settings_cache``
+    after an admin save so the new values are read immediately.
+    """
+    stored = _read_ai_settings_doc()
+    settings = dict(AI_SETTINGS_DEFAULTS)
+    if not isinstance(stored, dict):
+        return settings
+    for key in AI_SETTINGS_DEFAULTS:
+        if key not in stored:
+            continue
+        value = stored[key]
+        if key in AI_SETTINGS_MODEL_KEYS:
+            if isinstance(value, str) and value in AI_MODEL_ALLOWLIST:
+                settings[key] = value
+        elif key in _AI_SETTINGS_EDGE_KEYS:
+            number = _coerce_int(value)
+            if number is not None and AI_EDGE_MIN <= number <= AI_EDGE_MAX:
+                settings[key] = number
+        elif key in _AI_SETTINGS_TOKEN_KEYS:
+            number = _coerce_int(value)
+            if number is not None and AI_TOKENS_MIN <= number <= AI_TOKENS_MAX:
+                settings[key] = number
+        elif key in _AI_SETTINGS_BOOL_KEYS:
+            if isinstance(value, bool):
+                settings[key] = value
+    return settings
+
+
+def clear_ai_settings_cache():
+    """Invalidate the cached AI-settings read so the next ``get_ai_settings``
+    re-reads Firestore. Called right after an admin saves new values."""
+    _read_ai_settings_doc.clear()
+
+
+def save_ai_settings(values):
+    """Persist admin-edited AI settings to the config doc, then clear the cache.
+
+    ``values`` is filtered to the known tunable keys and re-validated (via
+    ``get_ai_settings``'s rules) so nothing out of range or off the model
+    allow-list is ever written. Writes with ``merge=True`` so a partial update
+    never drops unrelated keys. Raises ``GoogleAPIError`` on a write failure so
+    the caller can surface it (per the error-handling convention).
+    """
+    clean = {}
+    for key in AI_SETTINGS_DEFAULTS:
+        if key not in values:
+            continue
+        value = values[key]
+        if key in AI_SETTINGS_MODEL_KEYS:
+            if isinstance(value, str) and value in AI_MODEL_ALLOWLIST:
+                clean[key] = value
+        elif key in _AI_SETTINGS_EDGE_KEYS:
+            number = _coerce_int(value)
+            if number is not None and AI_EDGE_MIN <= number <= AI_EDGE_MAX:
+                clean[key] = number
+        elif key in _AI_SETTINGS_TOKEN_KEYS:
+            number = _coerce_int(value)
+            if number is not None and AI_TOKENS_MIN <= number <= AI_TOKENS_MAX:
+                clean[key] = number
+        elif key in _AI_SETTINGS_BOOL_KEYS:
+            clean[key] = bool(value)
+    FirestoreWrapper(auth=False).set_document(
+        AI_SETTINGS_COLLECTION, AI_SETTINGS_DOCUMENT, clean, merge=True
+    )
+    clear_ai_settings_cache()
 
 
 # ---------------------------------------------------------------------------
@@ -761,12 +962,15 @@ def lookup_person_details(name, role, client, book_title=None):
         return None
 
 
-def _claude_json(client, prompt, max_tokens=1024, label="character_detection"):
-    """Send a text prompt to the DATA-EXTRACTION model and parse the JSON response.
+def _claude_json(client, prompt, max_tokens=1024, label="character_detection",
+                 model=None):
+    """Send a text prompt to a Claude model and parse the JSON response.
 
     Reuses the JSON-fence-stripping convention used by the existing Claude
     helpers. This is the #52 character-detection path (its only caller is
-    ``detect_book_characters``), so it runs on ``EXTRACTION_MODEL`` (#135).
+    ``detect_book_characters``); ``model`` defaults to ``EXTRACTION_MODEL`` but
+    the caller passes the admin-configured ``character_detection_model`` so the
+    model can be re-tuned globally without a deploy.
     Raises json.JSONDecodeError if the model does not return valid JSON, or an
     anthropic error if the API call fails — the caller is expected to surface
     these to the user.
@@ -775,17 +979,18 @@ def _claude_json(client, prompt, max_tokens=1024, label="character_detection"):
     item 1) so a leading non-text block can't break parsing, token usage is
     logged (audit item 7), and a ``max_tokens`` truncation is logged distinctly.
     """
+    model = model or EXTRACTION_MODEL
     response = client.messages.create(
-        model=EXTRACTION_MODEL,
+        model=model,
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}]
     )
-    _log_usage(response, EXTRACTION_MODEL, label)
+    _log_usage(response, model, label)
     if getattr(response, "stop_reason", None) == "max_tokens":
         logger.warning(
             "_claude_json: reply truncated at max_tokens=%s (model=%s, flow=%s); "
             "output may be incomplete and unparseable",
-            max_tokens, EXTRACTION_MODEL, label,
+            max_tokens, model, label,
         )
     text = first_text_block(response)
     if text is None:
@@ -831,6 +1036,7 @@ def detect_book_characters(pages, client, progress_callback=None):
         client,
         AIPrompts.character_detection.format(pages_json=pages_json),
         max_tokens=2048,
+        model=get_ai_settings()['character_detection_model'],
     )
     raw_characters = result.get("characters", []) if isinstance(result, dict) else []
 
@@ -916,9 +1122,10 @@ def extract_book_metadata(image_bytes, client):
     """
     from text_content import AIPrompts
 
+    ai_settings = get_ai_settings()
     result, raw_text = vision_json(
         client, [image_bytes], AIPrompts.book_metadata_extraction, max_tokens=1024,
-        model=EXTRACTION_MODEL, max_edge=EXTRACTION_MAX_EDGE,
+        model=ai_settings['metadata_model'], max_edge=ai_settings['extraction_max_edge'],
     )
     empty = {
         'title': "",
@@ -977,9 +1184,10 @@ def extract_books_from_photos(images, client):
     """
     from text_content import AIPrompts
 
+    ai_settings = get_ai_settings()
     result, _raw = vision_json(
         client, images, AIPrompts.collection_books_extraction, max_tokens=2048,
-        model=EXTRACTION_MODEL, max_edge=EXTRACTION_MAX_EDGE,
+        model=ai_settings['metadata_model'], max_edge=ai_settings['extraction_max_edge'],
     )
 
     raw_books = result.get('books', []) if isinstance(result, dict) else []
@@ -1014,6 +1222,10 @@ def locate_key_pages(pages, client):
     from text_content import AIPrompts
     from image_processing import downscale_for_vision
 
+    ai_settings = get_ai_settings()
+    locate_model = ai_settings['locate_model']
+    locate_max_edge = ai_settings['locate_max_edge']
+
     pages = list(pages)
     content = []
     for index, (_name, image_bytes) in enumerate(pages):
@@ -1027,18 +1239,18 @@ def locate_key_pages(pages, client):
                 # smaller image so a whole-book multi-image request stays cheap
                 # (#135 cost right-sizing).
                 "data": base64.standard_b64encode(
-                    downscale_for_vision(image_bytes, max_edge=LOCATE_MAX_EDGE)
+                    downscale_for_vision(image_bytes, max_edge=locate_max_edge)
                 ).decode('utf-8'),
             },
         })
     content.append({"type": "text", "text": AIPrompts.locate_key_pages})
 
     response = client.messages.create(
-        model="claude-haiku-4-5",
+        model=locate_model,
         max_tokens=128,
         messages=[{"role": "user", "content": content}],
     )
-    _log_usage(response, "claude-haiku-4-5", "locate_key_pages")
+    _log_usage(response, locate_model, "locate_key_pages")
 
     none_result = {'title_page': None, 'copyright_page': None}
     raw = first_text_block(response)
@@ -1079,9 +1291,10 @@ def extract_copyright_metadata(image_bytes, client):
     """
     from text_content import AIPrompts
 
+    ai_settings = get_ai_settings()
     result, raw_text = vision_json(
         client, [image_bytes], AIPrompts.copyright_page_extraction, max_tokens=512,
-        model=EXTRACTION_MODEL, max_edge=EXTRACTION_MAX_EDGE,
+        model=ai_settings['metadata_model'], max_edge=ai_settings['extraction_max_edge'],
     )
     empty = {'publisher': None, 'published_year': None, 'isbn': None, 'raw': raw_text}
     if not isinstance(result, dict):
@@ -1217,6 +1430,10 @@ def locate_cover_pages(pages, client):
     from text_content import AIPrompts
     from image_processing import downscale_for_vision
 
+    ai_settings = get_ai_settings()
+    locate_model = ai_settings['locate_model']
+    locate_max_edge = ai_settings['locate_max_edge']
+
     pages = list(pages)
     if not pages:
         return []
@@ -1231,18 +1448,18 @@ def locate_cover_pages(pages, client):
                 "media_type": "image/jpeg",
                 # Cover/title classification does not need OCR resolution (#135).
                 "data": base64.standard_b64encode(
-                    downscale_for_vision(image_bytes, max_edge=LOCATE_MAX_EDGE)
+                    downscale_for_vision(image_bytes, max_edge=locate_max_edge)
                 ).decode('utf-8'),
             },
         })
     content.append({"type": "text", "text": AIPrompts.locate_cover_pages})
 
     response = client.messages.create(
-        model="claude-haiku-4-5",
+        model=locate_model,
         max_tokens=256,
         messages=[{"role": "user", "content": content}],
     )
-    _log_usage(response, "claude-haiku-4-5", "locate_cover_pages")
+    _log_usage(response, locate_model, "locate_cover_pages")
 
     raw = first_text_block(response)
     if raw is None:
@@ -1481,6 +1698,17 @@ class FirestoreWrapper:
         db = self.connect_book()
         doc_ref = db.collection(collection).document(document)
         doc_ref.update({field: value})
+
+    def set_document(self, collection, doc_id, data, merge=True):
+        """Write ``data`` to ``collection/doc_id`` at a fixed document id.
+
+        Used for singleton config records (e.g. the ``settings/ai_pipeline``
+        AI-parameters doc) that are handled as a raw dict rather than through the
+        ``DataStructureBase``/``Field`` write-through pattern. ``merge=True``
+        updates the given keys without dropping unrelated ones.
+        """
+        db = self.connect_book()
+        db.collection(collection).document(doc_id).set(data, merge=merge)
 
     def add_document(self, collection, data):
         """Append a new document with a Firestore-generated id.
