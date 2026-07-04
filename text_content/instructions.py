@@ -100,6 +100,12 @@ class Instructions:
         You can now close this window and return to enter the book text on your other device.
     """
 
+    landing_blurb = """
+        FairTales uses AI to explore how gender and diversity are portrayed in
+        children's picture books. Every book and character you enter helps power
+        that research — thank you for being part of it!
+    """
+
     landing_intro = """
         What would you like to do today?
     """
