@@ -201,7 +201,8 @@ def _supports_structured_outputs(client) -> bool:
     return "output_config" in sig.parameters
 
 
-def _continuity_call(client, *, model: str, content_blocks: list) -> Optional[dict]:
+def _continuity_call(client, *, model: str, content_blocks: list,
+                     on_usage=None) -> Optional[dict]:
     """Make the Claude call and return the parsed JSON dict (or None).
 
     Prefers Anthropic structured outputs (``output_config`` json_schema) for a
@@ -233,6 +234,8 @@ def _continuity_call(client, *, model: str, content_blocks: list) -> Optional[di
             max_tokens=512,
             messages=[{"role": "user", "content": _strip_cache_control(content_blocks)}],
         )
+    if on_usage is not None:
+        on_usage(getattr(response, "usage", None))
     raw = "".join(
         block.text for block in response.content if getattr(block, "type", None) == "text"
     ).strip()
@@ -246,7 +249,7 @@ def _continuity_call(client, *, model: str, content_blocks: list) -> Optional[di
 
 
 def check_narrative_continuity(
-    client, prev_text: str, next_text: str, *, model: str
+    client, prev_text: str, next_text: str, *, model: str, on_usage=None
 ) -> dict:
     """Judge whether the story flows across an unknown page from PREV to NEXT.
 
@@ -261,6 +264,11 @@ def check_narrative_continuity(
     JSON) it returns a safe verdict (``flows_continuously=False,
     text_appears_missing=True``) so :func:`should_skip_ocr` yields ``False`` and
     the caller OCRs — a judge failure never causes a silent skip.
+
+    ``on_usage`` (optional) is a callback invoked with the call's
+    ``response.usage`` (or ``None``) so a caller can meter token cost without this
+    module taking any pricing/accounting dependency (kept Streamlit-free and
+    dependency-light).
     """
     context = (
         "PREV PAGE TEXT:\n"
@@ -273,7 +281,9 @@ def check_narrative_continuity(
         {"type": "text", "text": context},
     ]
     try:
-        data = _continuity_call(client, model=model, content_blocks=content)
+        data = _continuity_call(
+            client, model=model, content_blocks=content, on_usage=on_usage
+        )
     except Exception as exc:  # noqa: BLE001 - network/parse; degrade to OCR-forcing verdict
         return _safe_verdict(f"continuity judge call failed: {type(exc).__name__}")
     if not isinstance(data, dict):
