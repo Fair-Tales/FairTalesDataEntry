@@ -142,6 +142,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from ai_continuity import check_narrative_continuity, should_skip_ocr  # noqa: E402
+from ai_pricing import UsageAccumulator, format_cost_report  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Configuration.
@@ -1263,8 +1264,19 @@ def _strip_cache_control(blocks: list) -> list:
     return out
 
 
+def _record_usage(usage_cb, response) -> None:
+    """Feed one response's usage to an optional accumulator callback (#73 cost).
+
+    ``usage_cb`` (when set) is called with ``response.usage`` — guarded with
+    ``getattr`` so a missing/oddly-shaped usage object never crashes a run.
+    """
+    if usage_cb is not None:
+        usage_cb(getattr(response, "usage", None))
+
+
 def _ai_json_call(
-    client, *, model: str, max_tokens: int, content_blocks: list, schema: dict
+    client, *, model: str, max_tokens: int, content_blocks: list, schema: dict,
+    usage_cb=None,
 ) -> tuple[Optional[dict], str]:
     """Make a Claude call expecting a JSON object; return ``(parsed_or_None, raw)``.
 
@@ -1302,6 +1314,7 @@ def _ai_json_call(
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": _strip_cache_control(content_blocks)}],
         )
+    _record_usage(usage_cb, response)
     raw = "".join(
         block.text for block in response.content if getattr(block, "type", None) == "text"
     ).strip()
@@ -1314,7 +1327,8 @@ def _ai_json_call(
     return _extract_json_object(raw), raw
 
 
-def ai_lookup_book_metadata(client, title: str, author: str, model: str) -> dict:
+def ai_lookup_book_metadata(client, title: str, author: str, model: str,
+                            usage_cb=None) -> dict:
     """Look up illustrator / publisher / year for a book via Claude + web search.
 
     Returns ``{"illustrator": str, "publisher": str, "year": Optional[int]}``,
@@ -1355,12 +1369,14 @@ def ai_lookup_book_metadata(client, title: str, author: str, model: str) -> dict
         response = client.messages.create(
             model=model, max_tokens=1024, tools=tools, messages=messages
         )
+        _record_usage(usage_cb, response)
         continuations = 0
         while getattr(response, "stop_reason", None) == "pause_turn" and continuations < 3:
             messages.append({"role": "assistant", "content": response.content})
             response = client.messages.create(
                 model=model, max_tokens=1024, tools=tools, messages=messages
             )
+            _record_usage(usage_cb, response)
             continuations += 1
         text = "".join(
             block.text for block in response.content if getattr(block, "type", None) == "text"
@@ -1376,7 +1392,8 @@ def ai_lookup_book_metadata(client, title: str, author: str, model: str) -> dict
     return {"illustrator": illustrator, "publisher": publisher, "year": year}
 
 
-def ai_ocr_page(client, jpeg_bytes: bytes, model: str) -> tuple[str, Optional[str]]:
+def ai_ocr_page(client, jpeg_bytes: bytes, model: str,
+                usage_cb=None) -> tuple[str, Optional[str]]:
     """OCR a rendered page image with Claude vision.
 
     Returns ``(text, error)``: ``error`` is ``None`` on success (``text`` may be
@@ -1402,7 +1419,8 @@ def ai_ocr_page(client, jpeg_bytes: bytes, model: str) -> tuple[str, Optional[st
     ]
     try:
         data, raw = _ai_json_call(
-            client, model=model, max_tokens=2048, content_blocks=content, schema=OCR_SCHEMA
+            client, model=model, max_tokens=2048, content_blocks=content, schema=OCR_SCHEMA,
+            usage_cb=usage_cb,
         )
     except Exception as exc:  # noqa: BLE001 - network/parse; RECORD the failure (M1)
         print(f"    [ai-ocr] failed: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -1446,7 +1464,8 @@ def derive_review(makes_sense: bool, fits_context: bool, has_text: bool = True) 
 
 
 def ai_clean_and_judge(
-    client, text: str, prev_context: str, next_context: str, model: str
+    client, text: str, prev_context: str, next_context: str, model: str,
+    usage_cb=None,
 ) -> tuple[str, str, bool, str, str]:
     """Clean junk from page text AND judge it in context, in one call.
 
@@ -1482,7 +1501,8 @@ def ai_clean_and_judge(
     ]
     try:
         data, _raw = _ai_json_call(
-            client, model=model, max_tokens=2048, content_blocks=content, schema=CLEAN_SCHEMA
+            client, model=model, max_tokens=2048, content_blocks=content, schema=CLEAN_SCHEMA,
+            usage_cb=usage_cb,
         )
     except Exception as exc:  # noqa: BLE001 - network/parse; RECORD the failure (M1)
         print(f"    [ai-clean] failed: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -1868,6 +1888,20 @@ def plan_and_run(args) -> int:
     now = datetime.now(timezone.utc)
     totals = Totals()
 
+    # Token/cost accounting across the whole run (#73 cost tracking). Every AI
+    # call feeds its ``response.usage`` here, tagged by operation, via a small
+    # per-operation sink callback; cost is computed from the shared ai_pricing
+    # table so the pricing recipe is never duplicated (#129).
+    usage = UsageAccumulator()
+
+    def usage_sink(operation: str, model: str):
+        """Return a callback that records one call's usage under ``operation``.
+
+        Guarded end-to-end: a ``None`` usage is a no-op, so a missing/oddly-shaped
+        usage object never crashes a run.
+        """
+        return lambda u: usage.record(operation, model, u)
+
     # Local result cache (#73 S9): reuse OCR / clean+judge results across runs.
     cache = ResultCache(args.cache_dir, enabled=not args.no_cache)
     if args.execute and cache.enabled:
@@ -1914,7 +1948,10 @@ def plan_and_run(args) -> int:
         # small sample is actually called; the rest are planned as 'Unknown'.
         do_lookup = ai_client is not None and (args.execute or sample_ai_done < sample_ai_budget)
         if do_lookup:
-            meta = ai_lookup_book_metadata(ai_client, book.title, book.author, args.lookup_model)
+            meta = ai_lookup_book_metadata(
+                ai_client, book.title, book.author, args.lookup_model,
+                usage_cb=usage_sink("lookup", args.lookup_model),
+            )
             if not args.execute:
                 sample_ai_done += 1
         else:
@@ -2109,6 +2146,9 @@ def plan_and_run(args) -> int:
                                         verdict = check_narrative_continuity(
                                             ai_client, prev_layer, next_layer,
                                             model=args.continuity_model,
+                                            on_usage=usage_sink(
+                                                "continuity", args.continuity_model
+                                            ),
                                         )
                                         cache.put(cont_key, verdict)
                                     if should_skip_ocr(verdict):
@@ -2128,7 +2168,8 @@ def plan_and_run(args) -> int:
                                         raw = str(cached.get("text") or "")
                                     else:
                                         raw, ocr_error = ai_ocr_page(
-                                            ai_client, jpeg, args.ocr_model
+                                            ai_client, jpeg, args.ocr_model,
+                                            usage_cb=usage_sink("ocr", args.ocr_model),
                                         )
                                         if ocr_error is None:
                                             consecutive_ai_failures = 0
@@ -2192,7 +2233,8 @@ def plan_and_run(args) -> int:
                             note = cached.get("note", "")
                         else:
                             text, status, needs_review, priority, note = ai_clean_and_judge(
-                                ai_client, row["raw"], prev_ctx, next_ctx, args.clean_model
+                                ai_client, row["raw"], prev_ctx, next_ctx, args.clean_model,
+                                usage_cb=usage_sink("clean_judge", args.clean_model),
                             )
                             if status == "failed":
                                 totals.judge_failed += 1
@@ -2362,12 +2404,23 @@ def plan_and_run(args) -> int:
         if sample_page_text and not args.execute:
             print(f"    sample text : page {sample_page_text[0]}: {sample_page_text[1]!r}")
         print()
+
+        # Running spend snapshot every ~10 books so a long import reports cost as
+        # it goes, not only at the end (#73 cost tracking).
+        if totals.books and totals.books % 10 == 0 and usage.total_calls:
+            print(f"    ...running AI spend after {totals.books} books: "
+                  f"${usage.total_cost:.2f} ({usage.total_calls} calls)")
+            print()
     except AICircuitBreakerError as exc:
         aborted = True
         print()
         print("=" * 78)
         print(f"RUN ABORTED (circuit breaker): {exc}")
         print("=" * 78)
+        print()
+        # Report the spend even on a partial run (#73 cost tracking): an aborted
+        # import has already paid for every AI call it made.
+        print(format_cost_report(usage, books=totals.books, title="API COST (partial run)"))
         print()
 
     # --- Corpus totals ----------------------------------------------------
@@ -2405,6 +2458,12 @@ def plan_and_run(args) -> int:
         print(f"  OCR calls failed            : {totals.ocr_failed}")
         print(f"  clean/judge calls failed    : {totals.judge_failed}")
     print()
+
+    # AI token + $ cost report (#73 cost tracking). On an aborted run this was
+    # already printed under the abort banner above, so skip the duplicate.
+    if not aborted:
+        print(format_cost_report(usage, books=totals.books))
+        print()
 
     if args.execute and totals.books_flagged:
         print("FLAGGED FOR REVIEW (fails coherence and/or context-fit)")

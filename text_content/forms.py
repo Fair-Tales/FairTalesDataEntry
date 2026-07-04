@@ -989,6 +989,37 @@ class AdminSettings:
     save_success = "AI pipeline settings saved. They now apply to every user."
     save_error = "Could not save the AI settings: {error}"
 
+    # Read-only API usage & cost dashboard (bottom of the page). Tokens and an
+    # estimated $ spend, recorded per Claude call and rolled up per day.
+    usage_header = "API usage & cost"
+    usage_caption = (
+        "Read-only. Token usage and estimated Claude API spend, recorded on every "
+        "call. Estimated $ uses the current pricing table (introductory Sonnet 5 "
+        "pricing applies until ~Sep 2026); treat it as a close guide, not a bill."
+    )
+    usage_no_data = "No API usage has been recorded yet."
+    usage_load_error = "Could not load API usage: {error}"
+    usage_today_header = "Today (UTC)"
+    usage_window_header = "Last {days} days"
+    usage_metric_cost = "Estimated cost"
+    usage_metric_calls = "API calls"
+    usage_metric_input = "Input tokens"
+    usage_metric_output = "Output tokens"
+    usage_by_model_header = "By model (last {days} days)"
+    usage_by_flow_header = "By flow (last {days} days)"
+    usage_daily_header = "Daily spend (last {days} days)"
+    usage_refresh_button = "Refresh usage"
+    # Breakdown-table column headers.
+    usage_col_model = "Model"
+    usage_col_flow = "Flow"
+    usage_col_date = "Date"
+    usage_col_calls = "Calls"
+    usage_col_cost = "Est. $"
+    usage_col_input = "Input"
+    usage_col_output = "Output"
+    usage_col_cache_read = "Cache read"
+    usage_col_cache_write = "Cache write"
+
 
 class RegisterUser:
     """Strings for the registration form (pages/register_user.py and
