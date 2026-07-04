@@ -6,13 +6,19 @@ Firestore / S3 / Anthropic / openpyxl / pypdf installed. The live import path is
 NOT tested here — it must never write during CI.
 """
 
+import json
 import os
 import sys
+import types
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import import_pilot_data as mod  # noqa: E402
+
+# ``import_pilot_data`` adds the repo root to ``sys.path`` on import, so the
+# Streamlit-free continuity module is importable here without network/anthropic.
+import ai_continuity  # noqa: E402
 
 
 # --- title normalisation ----------------------------------------------------
@@ -486,3 +492,152 @@ def test_build_book_doc_no_photos_for_empty_book():
     assert doc["review_note"] == "no PDF / page images for this book"
     # Normal complete books still keep validated=True.
     assert doc["validated"] is True
+
+
+# --- neighbour-continuity OCR skip (DECISIONS 010) --------------------------
+
+def test_default_ocr_model_is_sonnet_5():
+    # The validated cost optimisation switches the default OCR model to Sonnet 5.
+    assert mod.DEFAULT_OCR_MODEL == "claude-sonnet-5"
+    # The continuity judge defaults to a Sonnet model (as validated).
+    assert mod.DEFAULT_CONTINUITY_MODEL == "claude-sonnet-4-6"
+
+
+def test_flanked_by_text_layer_flanked_edge_and_run():
+    # A run of 5 story pages, positions 0..4; only interior pages with text-layer
+    # neighbours on BOTH sides qualify for a continuity OCR skip.
+    all_text = [True, True, True, True, True]
+    # Interior page flanked by text-layer pages on both sides -> candidate.
+    assert mod.flanked_by_text_layer(2, 5, all_text) is True
+    # Story-range EDGES never qualify (no neighbour on one side).
+    assert mod.flanked_by_text_layer(0, 5, all_text) is False
+    assert mod.flanked_by_text_layer(4, 5, all_text) is False
+    # An image-only NEIGHBOUR disqualifies (covers consecutive image-only runs):
+    #   page 2's previous neighbour (pos 1) is image-only.
+    run = [True, False, False, False, True]
+    assert mod.flanked_by_text_layer(2, 5, run) is False
+    # page 1's next neighbour (pos 2) is image-only, and pos 3 too -> no skip.
+    assert mod.flanked_by_text_layer(1, 5, run) is False
+    assert mod.flanked_by_text_layer(3, 5, run) is False
+    # Single-page and two-page ranges have no interior page -> never skip.
+    assert mod.flanked_by_text_layer(0, 1, [True]) is False
+    assert mod.flanked_by_text_layer(0, 2, [True, True]) is False
+    assert mod.flanked_by_text_layer(1, 2, [True, True]) is False
+
+
+def test_should_skip_ocr_pure_rule():
+    # Skip ONLY when the story flows AND no text appears missing.
+    assert ai_continuity.should_skip_ocr(
+        {"flows_continuously": True, "text_appears_missing": False}
+    ) is True
+    # A narrative gap -> OCR.
+    assert ai_continuity.should_skip_ocr(
+        {"flows_continuously": False, "text_appears_missing": True}
+    ) is False
+    # Flows, but text still looks missing -> OCR (never skip on doubt).
+    assert ai_continuity.should_skip_ocr(
+        {"flows_continuously": True, "text_appears_missing": True}
+    ) is False
+    # Malformed / empty verdicts -> OCR.
+    assert ai_continuity.should_skip_ocr({}) is False
+    assert ai_continuity.should_skip_ocr(None) is False
+    assert ai_continuity.should_skip_ocr("nope") is False
+
+
+class _FakeMessages:
+    """Minimal stand-in for ``client.messages`` with an ``output_config`` kwarg
+    (so structured outputs are used) that returns a canned reply or raises."""
+
+    def __init__(self, raw=None, exc=None):
+        self._raw = raw
+        self._exc = exc
+
+    def create(self, *, model, max_tokens, messages, output_config=None):
+        if self._exc is not None:
+            raise self._exc
+        block = types.SimpleNamespace(type="text", text=self._raw)
+        return types.SimpleNamespace(content=[block])
+
+
+class _FakeClient:
+    def __init__(self, raw=None, exc=None):
+        self.messages = _FakeMessages(raw, exc)
+
+
+def test_check_narrative_continuity_skip_verdict():
+    reply = json.dumps({
+        "flows_continuously": True,
+        "text_appears_missing": False,
+        "confidence": "high",
+        "expected_middle": "wordless illustration",
+        "reason": "PREV reads straight into NEXT",
+    })
+    verdict = ai_continuity.check_narrative_continuity(
+        _FakeClient(raw=reply), "prev text", "next text", model="claude-sonnet-4-6"
+    )
+    assert verdict["flows_continuously"] is True
+    assert verdict["text_appears_missing"] is False
+    assert verdict["confidence"] == "high"
+    assert ai_continuity.should_skip_ocr(verdict) is True
+
+
+def test_check_narrative_continuity_missing_text_forces_ocr():
+    reply = json.dumps({
+        "flows_continuously": False,
+        "text_appears_missing": True,
+        "confidence": "high",
+        "expected_middle": "the wolf's reply",
+        "reason": "a reply is clearly skipped",
+    })
+    verdict = ai_continuity.check_narrative_continuity(
+        _FakeClient(raw=reply), "prev", "next", model="m"
+    )
+    assert ai_continuity.should_skip_ocr(verdict) is False
+
+
+def test_check_narrative_continuity_judge_error_forces_ocr():
+    # Fail-safe: any API error degrades to an OCR-forcing verdict (never a skip).
+    verdict = ai_continuity.check_narrative_continuity(
+        _FakeClient(exc=RuntimeError("boom")), "prev", "next", model="m"
+    )
+    assert verdict["flows_continuously"] is False
+    assert verdict["text_appears_missing"] is True
+    assert "failed" in verdict["reason"].lower()
+    assert ai_continuity.should_skip_ocr(verdict) is False
+
+
+def test_check_narrative_continuity_non_json_forces_ocr():
+    # An unparseable reply also degrades safely to OCR.
+    verdict = ai_continuity.check_narrative_continuity(
+        _FakeClient(raw="I cannot answer that."), "prev", "next", model="m"
+    )
+    assert ai_continuity.should_skip_ocr(verdict) is False
+
+
+def test_build_page_doc_records_continuity_verdict():
+    verdict = {
+        "flows_continuously": True,
+        "text_appears_missing": False,
+        "confidence": "high",
+        "reason": "flows through",
+    }
+    doc = mod.build_page_doc(
+        book_ref=mod.Ref("books", "owl_babies"),
+        page_number=8,
+        contains_story=True,
+        text="",
+        now=_now(),
+        text_source="skipped_wordless",
+        continuity=verdict,
+    )
+    assert doc["text_source"] == "skipped_wordless"
+    assert doc["continuity"] == verdict
+    # A normal page carries no continuity verdict.
+    plain = mod.build_page_doc(
+        book_ref=mod.Ref("books", "owl_babies"),
+        page_number=6,
+        contains_story=True,
+        text="Once there were three baby owls",
+        now=_now(),
+    )
+    assert plain["continuity"] is None

@@ -46,7 +46,7 @@ The dry run works from an isolated git worktree (no secrets needed — pass
 | `--execute` | Perform the real import. **Omit for a dry run.** |
 | `--limit N` | Only process the first N matched books (useful for a small test run). |
 | `--sample-ai N` | Dry-run only: run N real AI lookups as a sample (default 1; `0` disables). |
-| `--lookup-model` / `--ocr-model` / `--clean-model` | Claude model ids (OCR/lookup default `claude-opus-4-8`; clean/judge `claude-sonnet-4-6`). |
+| `--lookup-model` / `--ocr-model` / `--clean-model` / `--continuity-model` | Claude model ids (lookup default `claude-opus-4-8`; **OCR default `claude-sonnet-5`**; clean/judge and neighbour-continuity default `claude-sonnet-4-6`). |
 | `--containment-threshold` | **Primary** cross-check: flag books capturing less than this fraction of the validated reference's words (default `0.85`). |
 | `--compare-threshold` | Secondary Jaccard threshold (reported only, default `0.60`). |
 | `--cache-dir` / `--no-cache` | Local result cache for OCR/clean+judge calls (skips re-paying on a re-run); `--no-cache` disables it. |
@@ -95,13 +95,43 @@ a **hybrid, accuracy-first** per-page strategy:
 * For each **story page** (see page range below), if the `pypdf` text layer has
   ≥ `TEXT_LAYER_MIN_CHARS` (20) characters, use it verbatim for `Page.text`.
 * Otherwise fall back to **Claude vision OCR** (`--ocr-model`, default
-  `claude-opus-4-8`) on the rendered JPEG.
+  `claude-sonnet-5`) on the rendered JPEG.
 * **Non-story pages** (front matter, endpapers, copyright) still get a rendered
   image in S3 but an empty `Page.text` and `contains_story=False`.
 
 The dry-run report prints, per book and in the totals, how many story pages have
 a usable text layer vs. how many will need AI OCR, so the OCR cost is visible
 before `--execute`.
+
+### Neighbour-continuity OCR skip (DECISIONS 010)
+
+Most image-only story pages are genuinely **wordless full illustrations**, so
+OCR'ing them just to confirm they are blank is wasted cost. Before OCR, an
+image-only story page that is **flanked on BOTH sides by text-layer story pages**
+is put through a cheap, text-only **neighbour-continuity judge** — the reusable,
+Streamlit-free `ai_continuity.check_narrative_continuity` (`--continuity-model`,
+default `claude-sonnet-4-6`). Given only the previous and next pages' **text-layer**
+text (never OCR'd text), it decides whether the story reads continuously straight
+across the middle page. If it flows and no text appears missing
+(`should_skip_ocr`), the page is a genuine wordless spread: its OCR is **skipped**,
+`Page.text` is stored empty, `text_source="skipped_wordless"`, and the judge
+verdict is recorded on the page's `continuity` field for auditability.
+
+Guards (a page is OCR'd unconditionally in all of these):
+
+* **Story-range edges** — the first/last story page has no neighbour on one side.
+* **Image-only neighbour / runs** — if either adjacent story page is itself
+  image-only (covers a run of consecutive wordless pages), OCR rather than infer.
+* **Judge failure is fail-safe** — any error in the continuity call degrades to
+  an OCR-forcing verdict, so a failure never causes a silent skip, and it does
+  **not** count toward the OCR circuit-breaker.
+
+Pass 2 (`ai_clean_and_judge`) still runs on a skipped page exactly like a real
+wordless page (empty text), so its `fits_context` check and the per-book
+containment cross-check remain independent backstops. On the pilot corpus this
+avoided ~81% of the image-only-page OCR calls with ~zero data loss (validated).
+The totals line **"story pages OCR SKIPPED"** reports the count and the share of
+image-only story pages whose OCR was avoided.
 
 ---
 
@@ -191,8 +221,13 @@ with references stored as real Firestore `DocumentReference`s on `--execute`:
   the `"Unknown"` guard is case-insensitive and also treats `""`/`"n/a"` as
   unknown. Any API/parse failure degrades to all-`Unknown` (logged) — never fatal.
 * **Per-page OCR fallback:** `ai_ocr_page` sends the rendered page JPEG to Claude
-  vision (`--ocr-model`, default `claude-opus-4-8`) to transcribe story text,
-  used only when a page lacks a usable text layer.
+  vision (`--ocr-model`, default `claude-sonnet-5` — validated equal-quality at
+  ~-60% cost vs Opus, DECISIONS 010) to transcribe story text, used only when a
+  page lacks a usable text layer **and** the neighbour-continuity skip above did
+  not apply.
+* **Neighbour-continuity skip:** `ai_continuity.check_narrative_continuity`
+  (`--continuity-model`, default `claude-sonnet-4-6`) decides, from the text-layer
+  neighbours alone, whether a flanked image-only page can skip OCR (see above).
 * **Per-page clean + judge:** `ai_clean_and_judge` (`--clean-model`, default
   `claude-sonnet-4-6`) strips extraction/OCR junk + print artefacts and judges
   `makes_sense` / `fits_context`.
@@ -202,19 +237,24 @@ with references stored as real Firestore `DocumentReference`s on `--execute`:
   cached locally under `--cache-dir` keyed by content hash, so a crash or
   `--overwrite` re-run reuses them instead of re-paying.
 
-Model ids default to `claude-opus-4-8` to prioritise accuracy on a bounded
-corpus. In a **dry run**, only `--sample-ai` lookups are actually performed
-(default 1); every other book is planned as `Unknown`. `--execute` runs the AI
-passes for every non-skipped book.
+The **lookup** model defaults to `claude-opus-4-8` (accuracy on a bounded corpus);
+**OCR** defaults to `claude-sonnet-5` and the **clean/judge** and
+**neighbour-continuity** judges to `claude-sonnet-4-6` (validated equal-quality at
+lower cost, DECISIONS 010). In a **dry run**, only `--sample-ai` lookups are
+actually performed (default 1); every other book is planned as `Unknown`, and the
+OCR / continuity passes (which require `--execute`) do not run. `--execute` runs
+the AI passes for every non-skipped book.
 
 ---
 
 ## Review flags & robustness (issue #73)
 
 * **Per page** (`pages` doc): `needs_review` / `review_priority` / `review_note`,
-  plus provenance — `text_source` (`layer`/`ocr`/`none`), `clean_status`,
-  `ocr_model`, `clean_model`. A failed OCR call → high-priority flag; a failed
-  clean/judge call → normal flag; an empty page that breaks context → high.
+  plus provenance — `text_source` (`layer`/`ocr`/`skipped_wordless`/`none`),
+  `clean_status`, `ocr_model`, `clean_model`, and `continuity` (the neighbour-
+  continuity verdict when OCR was skipped). A failed OCR call → high-priority
+  flag; a failed clean/judge call → normal flag; an empty page that breaks
+  context → high.
 * **Per book** (`books` doc): `needs_review` / `review_pages` /
   `high_priority_review` / `review_note`. Books with **no PDF** or **no
   characters** are flagged and do **not** claim `photos_uploaded`; ambiguous
