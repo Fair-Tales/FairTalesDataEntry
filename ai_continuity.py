@@ -249,7 +249,7 @@ def _continuity_call(client, *, model: str, content_blocks: list,
 
 
 def check_narrative_continuity(
-    client, prev_text: str, next_text: str, *, model: str, on_usage=None
+    client, prev_text: str, next_text: str, *, model: str, on_usage=None, chat_json_fn=None
 ) -> dict:
     """Judge whether the story flows across an unknown page from PREV to NEXT.
 
@@ -259,9 +259,16 @@ def check_narrative_continuity(
     was validated on text-layer neighbours only). ``model`` should be a Sonnet
     model (the validated judge used ``claude-sonnet-4-6``).
 
+    ``chat_json_fn`` OPTIONALLY offloads the (text-only) judge to a local model:
+    when given it is called as ``chat_json_fn(system, user)`` and must return the
+    reply as a parsed JSON dict (raising on failure). It keeps this module
+    dependency-light — the local-model client is *injected*, never imported here
+    (mirrors how ``client`` is passed in). When ``None`` (the default) the
+    Anthropic ``client`` is used exactly as before, so behaviour is unchanged.
+
     Returns ``{"flows_continuously": bool, "text_appears_missing": bool,
-    "confidence": str, "reason": str}``. On ANY error (API failure, no usable
-    JSON) it returns a safe verdict (``flows_continuously=False,
+    "confidence": str, "reason": str}``. On ANY error (API/local failure, no
+    usable JSON) it returns a safe verdict (``flows_continuously=False,
     text_appears_missing=True``) so :func:`should_skip_ocr` yields ``False`` and
     the caller OCRs — a judge failure never causes a silent skip.
 
@@ -276,14 +283,19 @@ def check_narrative_continuity(
         + "\n\nNEXT PAGE TEXT:\n"
         + (next_text or "(empty)")
     )
-    content = [
-        {"type": "text", "text": CONTINUITY_PROMPT, "cache_control": {"type": "ephemeral"}},
-        {"type": "text", "text": context},
-    ]
     try:
-        data = _continuity_call(
-            client, model=model, content_blocks=content, on_usage=on_usage
-        )
+        if chat_json_fn is not None:
+            # Local backend: reuse the SAME validated prompt as the Claude path
+            # (static instructions as the system turn, PREV/NEXT as the user turn).
+            data = chat_json_fn(CONTINUITY_PROMPT, context)
+        else:
+            content = [
+                {"type": "text", "text": CONTINUITY_PROMPT, "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": context},
+            ]
+            data = _continuity_call(
+                client, model=model, content_blocks=content, on_usage=on_usage
+            )
     except Exception as exc:  # noqa: BLE001 - network/parse; degrade to OCR-forcing verdict
         return _safe_verdict(f"continuity judge call failed: {type(exc).__name__}")
     if not isinstance(data, dict):
