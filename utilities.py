@@ -546,20 +546,84 @@ _HIDE_DEFAULT_NAV_CSS = """
     </style>
 """
 
+# Fair Tales brand yellow, sampled as the dominant opaque colour of
+# resources/logo_temp.png (RGB 253,201,25 / #FDC919). Reused as a soft, low-alpha
+# tint for the home/login header bar and the navigation sidebar so the whole app
+# stays on-brand from a single source of truth.
+LOGO_YELLOW_RGB = (253, 201, 25)
+_LOGO_PATH = "resources/logo_temp.png"
+
+
+def _yellow_rgba(alpha):
+    """Return the brand yellow as a CSS ``rgba(...)`` string at the given alpha."""
+    r, g, b = LOGO_YELLOW_RGB
+    return f"rgba({r}, {g}, {b}, {alpha})"
+
+
+# Soft yellow tint on the whole navigation sidebar (kept light so the dark
+# page-link text stays legible).
+_BRAND_SIDEBAR_CSS = f"""
+    <style>
+    [data-testid="stSidebar"] {{
+        background-color: {_yellow_rgba(0.18)};
+    }}
+    </style>
+"""
+
+
+@st.cache_data(show_spinner=False)
+def _logo_data_uri():
+    """Return the app logo as a base64 ``data:`` URI for embedding in inline HTML.
+
+    Cached per server process so the file is read and encoded once rather than on
+    every page render.
+    """
+    with open(_LOGO_PATH, "rb") as fh:
+        encoded = base64.b64encode(fh.read()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+def render_header_bar():
+    """Render the Fair Tales header bar: logo + app title on a soft yellow tint.
+
+    Used ONLY on the landing/home page and the login page (not app-wide). The logo
+    is embedded as a base64 ``data:`` URI so it renders inside the inline HTML.
+    Title text is sourced from ``text_content`` (Instructions.app_title).
+    """
+    from text_content import Instructions
+
+    header_html = f"""
+        <div style="display: flex; align-items: center; gap: 1.25rem;
+                    background: {_yellow_rgba(0.30)};
+                    padding: 1rem 1.5rem; border-radius: 0.75rem;
+                    margin-bottom: 1.5rem;">
+            <img src="{_logo_data_uri()}" alt="Fair Tales logo"
+                 style="height: 5rem; width: auto; flex: 0 0 auto;" />
+            <span style="font-size: 2.1rem; font-weight: 700; line-height: 1.15;">
+                {Instructions.app_title}
+            </span>
+        </div>
+    """
+    st.markdown(header_html, unsafe_allow_html=True)
+
 
 def page_layout(current_page=None):
     st.set_page_config(
         initial_sidebar_state="collapsed",
         layout="wide"
     )
-    # App-wide Fair Tales logo, shown at the top of the app and sidebar on every
-    # page via Streamlit's dedicated logo API (st.logo has its own sizing params).
-    st.logo("resources/logo_temp.png", size="large")
     # Force-hide the default multipage nav to defeat the intermittent flash (#116)
-    # before any sidebar content is rendered.
+    # before any sidebar content is rendered, and apply the soft yellow brand tint
+    # to the navigation sidebar.
     st.markdown(_HIDE_DEFAULT_NAV_CSS, unsafe_allow_html=True)
+    st.markdown(_BRAND_SIDEBAR_CSS, unsafe_allow_html=True)
     if current_page:
         st.session_state['_current_page'] = current_page
+
+    # App-wide Fair Tales logo at the top of the navigation sidebar, rendered large
+    # so it is clearly legible in the nav bar (st.logo's own sizes were too small).
+    # width is an explicit pixel integer per the st.image convention.
+    st.sidebar.image(_LOGO_PATH, width=200)
 
     # Sidebar labels live in text_content (Nav); the Ko-fi URL in text_content
     # (Donate). Imported lazily to match this module's text_content usage and

@@ -101,9 +101,9 @@ class Instructions:
     """
 
     landing_blurb = """
-        Fair Tales explores how gender and diversity are portrayed in children's
-        picture books. Every book and character you enter helps power that research —
-        thank you for being part of it!
+        FairTales uses AI to explore how gender and diversity are portrayed in
+        children's picture books. Every book and character you enter helps power
+        that research — thank you for being part of it!
     """
 
     landing_intro = """

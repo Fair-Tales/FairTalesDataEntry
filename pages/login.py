@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from utilities import (
     page_layout, clear_page_history, authenticate_user, is_authenticated,
     get_role, get_user, send_confirmation_email, send_password_reset_email,
-    FirestoreWrapper, ROLE_ARCHIVIST, ROLE_ADMIN,
+    FirestoreWrapper, ROLE_ARCHIVIST, ROLE_ADMIN, render_header_bar,
 )
 from text_content import Terms, Alerts, PasswordReset, Login
 from data_structures import Book, Author, Publisher, Illustrator
@@ -160,6 +160,7 @@ def logout():
 
 
 page_layout()
+render_header_bar()
 
 if is_authenticated():
     # If the user was just re-authenticated from a remember-me cookie on a hard

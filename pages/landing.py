@@ -1,5 +1,11 @@
 import streamlit as st
-from utilities import check_authentication_status, page_layout, clear_page_history, navigate_to
+from utilities import (
+    check_authentication_status,
+    page_layout,
+    clear_page_history,
+    navigate_to,
+    render_header_bar,
+)
 from text_content import Instructions
 
 check_authentication_status()
@@ -7,8 +13,7 @@ check_authentication_status()
 clear_page_history()
 page_layout(current_page="./pages/landing.py")
 
-st.image("resources/logo_temp.png", width=180)
-st.title(Instructions.app_title)
+render_header_bar()
 st.write(Instructions.landing_blurb)
 st.write(Instructions.landing_intro)
 
