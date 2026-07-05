@@ -345,6 +345,13 @@ expected. Set has_text to true only if the page carries real story/narrative \
 text; set it to false for a wordless illustration.
 3. Transcribe ALL story text visible on the page exactly as written. Include speech \
 bubbles and captions. Do not include page numbers.
+   - If the photo shows a double-page spread (two facing pages captured together in \
+one image), decide the reading order before transcribing. By default, treat the two \
+pages as separate text blocks and transcribe the LEFT-hand page fully before the \
+RIGHT-hand page. However, if the text visibly flows as a single continuous block \
+across the whole spread — with no separate left/right split — do NOT force a \
+left-then-right split; instead follow the natural reading flow of the text as it is \
+actually laid out. Use your judgement based on how the text appears in the photo.
    - Text may use a variety of fonts, stylised or decorative lettering, or handwriting — \
 transcribe it as accurately as possible regardless of style.
    - Text within the page may appear in different orientations (rotated, vertical, curved, \
