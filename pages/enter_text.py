@@ -178,15 +178,17 @@ def reextract_current_page(page_number):
 
 
 @st.dialog(" ", width="large")
-def enlarged_image_dialog(use_cropped):
-    st.image(
-        load_image(
-            st.session_state['current_book'].title,
-            st.session_state.current_page_number,
-            use_cropped=use_cropped,
-        ),
-        width="stretch"
-    )
+def enlarged_image_dialog(image):
+    """Show the already-loaded page image at full width (#167).
+
+    Takes the in-memory image the main view has ALREADY loaded rather than
+    re-opening it from S3. On a slow/mobile connection a fresh S3 fetch inside the
+    dialog could stall the script run long enough for the websocket to drop and
+    reconnect with an empty session_state, which then bounces the user to login.
+    Streamlit re-invokes the dialog with the same argument on subsequent reruns,
+    so the image object is reused and the dialog performs no network I/O.
+    """
+    st.image(image, width="stretch")
 
 
 @st.dialog(EnterText.image_edit_dialog_title, width="large")
@@ -292,7 +294,9 @@ def display_image():
             manual_correction_dialog()
 
     if col1.button(EnterText.enlarge_button, width="stretch", key="enter_text_enlarge_button"):
-        enlarged_image_dialog(use_cropped=use_cropped)
+        # Reuse the image already loaded above rather than re-fetching from S3 in
+        # the dialog, so opening Enlarge does no network I/O (#167).
+        enlarged_image_dialog(page_image)
 
     dimensions = st_dimensions(key="main")
     col_width = int(dimensions['width'] * 3 / 5) if dimensions else 500

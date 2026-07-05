@@ -663,6 +663,19 @@ def check_authentication_status():
         st.session_state['authentication_status'] = False
 
     if not is_authenticated():
+        # A transient session loss — a websocket reconnect or a fresh script run
+        # after the server dropped the session — empties session_state and would
+        # otherwise eject an authenticated user to the login page mid-workflow
+        # (#167). Before redirecting, transparently re-establish the session from a
+        # valid signed remember-me cookie (#111/#125). restore_session_from_cookie()
+        # re-resolves role/admin from Firestore and never trusts the cookie, so it
+        # cannot escalate privileges; it is a no-op when remember-me is not
+        # configured or no valid cookie is present. Imported lazily because
+        # cookie_auth imports from this module (avoids a circular import).
+        from cookie_auth import restore_session_from_cookie
+        restore_session_from_cookie()
+
+    if not is_authenticated():
         st.switch_page("./pages/login.py")
 
     # Consume the remember-me restore flag (#111) on any normally-reached
