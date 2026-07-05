@@ -459,6 +459,24 @@ class EnterText:
     back_to_menu_button = "Back to menu"
     finish_submit_button = "Finish and submit book"
 
+    # --- Re-extract a single page's text on demand (#165) ---
+    reextract_button = "🔄 Re-extract this page (AI)"
+    reextract_help = """
+        Re-run automatic text recognition for just this page. Use this if the text
+        above is blank, wrong, or the extraction failed. Any edits you have made to
+        this page are saved first, then this makes a single AI request and
+        overwrites this page's text and 'Does this page contain story text?' with
+        the fresh result.
+    """
+    reextract_no_api_key = "Re-extracting text requires an Anthropic API key, which is not configured."
+    reextract_spinner = "Re-reading this page..."
+    reextract_success = "Re-extracted this page's text."
+    reextract_failed = (
+        "Could not re-extract this page — the AI request failed. "
+        "Please try again, or enter the text manually."
+    )
+    reextract_image_missing = "Could not find this page's photo to re-extract from."
+
     # --- Detected-character review form ---
     review_character_heading = "**Character {n}**"
     review_name_label = "Name"

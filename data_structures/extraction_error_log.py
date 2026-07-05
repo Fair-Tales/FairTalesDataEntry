@@ -35,7 +35,7 @@ Schema of an ``extraction_errors`` document
                                          exception class name (e.g. ``OSError``)
   error_message (str)                 — the real exception / parse-failure text
   username      (str|None)            — who triggered the upload (entered_by)
-  flow          (str|None)            — 'single' | 'batch' | 'reconstruction'
+  flow          (str|None)            — 'single' | 'batch' | 'reconstruction' | 'reextract'
   model         (str|None)            — the extraction model configured for this
                                          run, when known (admin-configurable, #135)
   timestamp     (datetime, UTC)       — when the failure was recorded
@@ -57,6 +57,9 @@ class ExtractionErrorLog:
     FLOW_SINGLE = 'single'
     FLOW_BATCH = 'batch'
     FLOW_RECONSTRUCTION = 'reconstruction'
+    # A single-page on-demand re-extract triggered from the enter-text page (#165),
+    # distinct from FLOW_SINGLE (the initial single-book upload pipeline).
+    FLOW_REEXTRACT = 'reextract'
 
     # A reply that came back but could not be parsed as usable JSON. Genuine
     # Anthropic API errors are recorded with the exception class name as the type.
