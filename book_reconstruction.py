@@ -67,6 +67,7 @@ from utilities import (
     load_character_dict,
     databot_entered_by,
     get_s3_filesystem,
+    get_ai_settings,
 )
 # Pure S3 path constants/helpers shared with the cleanup CLI (#129): keep ONE
 # definition so the app and scripts/data_cleanup.py classify book folders /
@@ -80,14 +81,17 @@ from s3_constants import (
 from image_processing import exif_transpose_bytes
 from data_structures import (
     Book, Page, Character, Alias, Author, Illustrator, Publisher,
-    ExtractionErrorLog,
+    ExtractionErrorLog, log_extraction_error,
 )
 
 # Reuse the per-page orientation-correct/crop/OCR helpers that drive the manual
 # upload pipeline rather than reimplementing them. ``pages`` has no __init__.py;
 # it is imported here as a PEP 420 namespace package (importing the module does
 # not run its page body, which is guarded by ``if __name__ == "__main__"``).
-from pages.uploader import extract_page_info, _process_page, PageExtractionError
+from pages.uploader import (
+    extract_page_info, _process_page, PageExtractionError,
+    _register_placeholder_page,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -349,32 +353,73 @@ def _process_pages(book, pages, client, fs, progress):
     for index, raw_bytes in enumerate(corrected):
         page_number = index + 1
         _report(progress, Reconstruction.processing_page.format(page=page_number, total=total))
-        bytes_for_extraction, _method = _process_page(
-            raw_bytes, page_number, photos_url, fs, client
-        )
 
         # Set fields on the unregistered Page, then register() once (audit item 8
         # — one write instead of register()+per-field write-throughs).
         page = Page(page_number=page_number, book=book_ref)
 
+        # --- Per-page isolation boundary (mirrors pages.uploader.
+        # _process_photo_batch, harden-page-loop-error-logging / #171) ---
+        #
+        # Everything below — _process_page's OpenCV/PIL correction + S3 write,
+        # the extraction call, and the register() write(s) — previously ran
+        # completely unguarded here: an uncaught exception ANYWHERE in this
+        # block (a corrupt photo crashing OpenCV/PIL, a transient S3 write
+        # failure, a Firestore register() error) would propagate straight out
+        # of this loop and abort the WHOLE reconstruction (including the
+        # character/alias detection pass and the book's completion below) —
+        # not just the one bad page.
+        #
+        # The broad ``except Exception`` below is the documented exception to
+        # the narrow-except rule (see CLAUDE.md): its whole job is to be an
+        # isolation boundary around ONE page so a single failure can never
+        # abort the rest of the reconstruction. It is NOT a silent swallow —
+        # every failure is (a) logged to the ``extraction_errors`` Firestore
+        # collection via the shared ``log_extraction_error`` helper (#129),
+        # (b) recorded in ``failed_pages`` so the caller can surface a "N
+        # pages couldn't be processed" warning, and (c) the page is still
+        # registered blank (best-effort, via the shared
+        # ``_register_placeholder_page`` helper) so page numbering for every
+        # later page stays correct. The narrower ``except
+        # PageExtractionError`` nested inside it is the pre-existing (#132)
+        # extraction-failure path, whose detail is already logged by
+        # ``extract_page_info`` itself.
         try:
-            text, is_story, _page_type = extract_page_info(
-                bytes_for_extraction, client,
-                book=book, page_number=page_number,
-                page_name=f"page_{page_number}.jpg",
-                flow=ExtractionErrorLog.FLOW_RECONSTRUCTION,
+            bytes_for_extraction, _method = _process_page(
+                raw_bytes, page_number, photos_url, fs, client
             )
-        except PageExtractionError:
-            # Detail already logged to extraction_errors; keep the blank page in
-            # the sequence and record it for the caller to surface (#132). A single
-            # failed page no longer aborts the whole reconstruction.
-            page.register()
+
+            try:
+                text, is_story, _page_type = extract_page_info(
+                    bytes_for_extraction, client,
+                    book=book, page_number=page_number,
+                    page_name=f"page_{page_number}.jpg",
+                    flow=ExtractionErrorLog.FLOW_RECONSTRUCTION,
+                )
+            except PageExtractionError:
+                # Detail already logged to extraction_errors; keep the blank page in
+                # the sequence and record it for the caller to surface (#132). A single
+                # failed page no longer aborts the whole reconstruction.
+                page.register()
+                failed_pages.append(page_number)
+            else:
+                if text:
+                    page.text = text
+                page.contains_story = is_story
+                page.register()
+        except Exception as exc:  # noqa: BLE001 - isolation boundary, see comment above
+            log_extraction_error(
+                book=book,
+                page_number=page_number,
+                page_name=f"page_{page_number}.jpg",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+                flow=ExtractionErrorLog.FLOW_RECONSTRUCTION,
+                model=get_ai_settings()['extraction_model'],
+            )
+            _register_placeholder_page(page, page_number)
             failed_pages.append(page_number)
-        else:
-            if text:
-                page.text = text
-            page.contains_story = is_story
-            page.register()
+
         page_objs[page_number] = page
 
     return page_objs, failed_pages
