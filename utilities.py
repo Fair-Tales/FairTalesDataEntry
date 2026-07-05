@@ -2003,10 +2003,11 @@ class FirestoreWrapper:
 #
 # FRESHNESS / INVALIDATION — IMPORTANT:
 #   The TTL is a safety net only. Whenever a write *adds* an entry to one of
-#   these collections (the FormConfirmation.confirm_new_* methods and
-#   Character.register), the caller MUST call the matching ``load_*_dict.clear()``
-#   so the next session re-reads from Firestore. The current session continues
-#   to see its own newly added entry because the entry is also written into the
+#   these collections (``register_and_link_book_entity``, ``FormConfirmation.
+#   confirm_new_book``/``confirm_new_character``, and ``Character.register``),
+#   the caller MUST call the matching ``load_*_dict.clear()`` so the next
+#   session re-reads from Firestore. The current session continues to see its
+#   own newly added entry because the entry is also written into the
 #   session_state copy in place (unchanged existing behaviour). This preserves
 #   the write-through freshness guarantee while removing the per-session full
 #   re-read.
@@ -2058,19 +2059,57 @@ def load_character_dict():
     }
 
 
+def register_and_link_book_entity(entity, dict_key, cache_clear, book_field):
+    """Register a newly-submitted author/illustrator/publisher and link it to
+    the book in progress, then return to the book form.
+
+    Author, illustrator, and publisher forms are simple enough (single name,
+    or forename/surname/gender) that the form itself IS the single review
+    step — the user sees and edits the value before submitting. A separate
+    ``confirm_entry.py`` re-confirmation page after that was pure friction, so
+    each entity's ``to_form()`` submit branch calls straight into this shared
+    helper instead of routing to ``confirm_entry.py`` (#168). This collapses
+    the "register + update the shared lookup dict + invalidate its cache +
+    link to the book + return to add_book.py" steps that used to live,
+    duplicated three times, in ``FormConfirmation.confirm_new_author`` /
+    ``confirm_new_illustrator`` / ``confirm_new_publisher`` (#129).
+
+    Args:
+        entity: the freshly-submitted, unregistered Author/Illustrator/
+            Publisher instance (already validated by the caller).
+        dict_key: session_state key of the shared lookup dict to update,
+            e.g. ``'author_dict'``.
+        cache_clear: the bound ``.clear`` method of the matching
+            ``load_*_dict`` cache_resource, called so other/new sessions
+            re-read the newly registered entry.
+        book_field: attribute name on ``current_book`` to set to the new
+            entity's name, e.g. ``'author'``.
+    """
+    entity.register()
+    st.session_state[dict_key][entity.name] = entity.get_ref()
+    # Invalidate the shared cache so other/new sessions re-read the newly
+    # registered entity (this session already sees it via the in-place
+    # session_state update above).
+    cache_clear()
+    setattr(st.session_state['current_book'], book_field, entity.name)
+    st.switch_page("./pages/add_book.py")
+
+
 # TODO: check that required fields (e.g. book title) are not blank
 # TODO: fix warnings in table display (arrows?)
 class FormConfirmation:
     """
     Class with helper methods to handle form confirmation and routing
     based on form type.
+
+    Author, illustrator, and publisher no longer route through here — their
+    single-step forms register inline via ``register_and_link_book_entity``
+    (#168). Book and character still have a genuinely separate multi-field
+    review step, so they keep the two-stage form -> confirm_entry.py flow.
     """
 
     forms = {
         'new_book': 'confirm_new_book',
-        'new_author': 'confirm_new_author',
-        'new_illustrator': 'confirm_new_illustrator',
-        'new_publisher': 'confirm_new_publisher',
         'new_character': 'confirm_new_character'
     }
 
@@ -2121,81 +2160,6 @@ class FormConfirmation:
 
         if edit_button:
             st.switch_page("./pages/add_book.py")
-
-    @classmethod
-    def confirm_new_author(cls):
-        confirm_button, edit_button = cls.display_confirmation(
-            st.session_state['current_author'].to_dict(
-                form_fields_only=True,
-                convert_ref_fields_to_ids=True
-            )
-        )
-
-        if confirm_button:
-            st.session_state['current_author'].register()
-            st.session_state['author_dict'][
-                st.session_state['current_author'].name
-            ] = st.session_state['current_author'].get_ref()
-            # Invalidate shared cache so new/other sessions re-read this author.
-            load_author_dict.clear()
-
-            st.session_state['current_book'].author = (
-                st.session_state['current_author'].name
-            )
-            st.switch_page("./pages/add_book.py")
-
-        if edit_button:
-            st.switch_page("./pages/add_author.py")
-
-    @classmethod
-    def confirm_new_illustrator(cls):
-        confirm_button, edit_button = cls.display_confirmation(
-            st.session_state['current_illustrator'].to_dict(
-                form_fields_only=True,
-                convert_ref_fields_to_ids=True
-            )
-        )
-
-        if confirm_button:
-            st.session_state['current_illustrator'].register()
-            st.session_state['illustrator_dict'][
-                st.session_state['current_illustrator'].name
-            ] = st.session_state['current_illustrator'].get_ref()
-            # Invalidate shared cache so new/other sessions re-read this illustrator.
-            load_illustrator_dict.clear()
-
-            st.session_state['current_book'].illustrator = (
-                st.session_state['current_illustrator'].name
-            )
-            st.switch_page("./pages/add_book.py")
-
-        if edit_button:
-            st.switch_page("./pages/add_illustrator.py")
-
-    @classmethod
-    def confirm_new_publisher(cls):
-        confirm_button, edit_button = cls.display_confirmation(
-            st.session_state['current_publisher'].to_dict(
-                form_fields_only=True,
-                convert_ref_fields_to_ids=True
-            )
-        )
-
-        if confirm_button:
-            st.session_state['current_publisher'].register()
-            st.session_state['publisher_dict'][
-                st.session_state['current_publisher'].name
-            ] = st.session_state['current_publisher'].get_ref()
-            # Invalidate shared cache so new/other sessions re-read this publisher.
-            load_publisher_dict.clear()
-
-            st.session_state['current_book'].publisher = (
-                st.session_state['current_publisher'].name
-            )
-            st.switch_page("./pages/add_book.py")
-
-        if edit_button:
-            st.switch_page("./pages/add_publisher.py")
 
     @classmethod
     def confirm_new_character(cls):

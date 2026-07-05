@@ -1,5 +1,6 @@
 import streamlit as st
 from text_content import AuthorForm
+from utilities import register_and_link_book_entity, load_author_dict
 from .base_structure import DataStructureBase, Field
 
 
@@ -121,6 +122,9 @@ class Author(DataStructureBase):
             ):
                 st.warning(AuthorForm.author_exists)
             else:
-                st.session_state['current_author'] = self
-                st.session_state['active_form_to_confirm'] = 'new_author'
-                st.switch_page("./pages/confirm_entry.py")
+                # The form above is itself the single review step, so register
+                # and return to the book form directly instead of routing
+                # through a second confirm_entry.py confirmation (#168).
+                register_and_link_book_entity(
+                    self, 'author_dict', load_author_dict.clear, 'author'
+                )
