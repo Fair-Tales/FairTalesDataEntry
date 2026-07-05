@@ -1380,7 +1380,12 @@ def ai_lookup_book_metadata(client, title: str, author: str, model: str,
         {"type": "text", "text": static_instructions, "cache_control": {"type": "ephemeral"}},
         {"type": "text", "text": variable_block},
     ]
-    tools = [{"type": "web_search_20260209", "name": "web_search"}]
+    # Use the BASIC web-search tool, not the newer web_search_20260209: the
+    # dynamic-filtering variant spins up a code-execution container whose
+    # container_id must be threaded back on every pause_turn continuation, which
+    # sporadically 400s ("container_id is required..."). The basic variant needs
+    # no container and is amply sufficient for this illustrator/publisher lookup.
+    tools = [{"type": "web_search_20250305", "name": "web_search"}]
     try:
         messages = [{"role": "user", "content": content}]
         response = client.messages.create(
