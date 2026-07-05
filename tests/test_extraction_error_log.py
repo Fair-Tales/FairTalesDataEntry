@@ -195,6 +195,45 @@ def test_extract_page_info_api_error_logs_and_raises(session, captured_log, monk
     assert excinfo.value.error_type == "AnthropicError"
 
 
+def test_extract_page_info_null_text_on_wordless_page_returns_empty_string(
+    session, captured_log, monkeypatch
+):
+    """Regression test for the "Clean Up!" bug: a wordless-page reply with
+    ``"text": null`` (JSON null / Python ``None``) must not crash. Previously
+    ``data.get("text", "").strip()`` raised an uncaught ``AttributeError`` here
+    (``dict.get``'s default only applies when the key is ABSENT, not when its
+    value is ``None``), which escaped both this function's own
+    ``except anthropic.AnthropicError`` and the caller's
+    ``except PageExtractionError`` and aborted the whole per-page upload loop —
+    every later page in the batch was left with no extraction attempt and no
+    ``pages`` Firestore doc at all (first half of the book fine, second half
+    missing entirely, with no matching ``extraction_errors`` entry)."""
+    monkeypatch.setattr(
+        uploader, "vision_json",
+        lambda *a, **k: ({"has_text": False, "text": None,
+                          "is_story_page": True, "page_type": "story"}, "raw"),
+    )
+    result = extract_page_info(b"img", client=object(), book=_FakeBook(),
+                               page_number=13, flow="single")
+    assert result == ("", True, "story")
+    assert captured_log == []  # a wordless page is not an extraction failure
+
+
+def test_extract_page_info_non_string_text_normalises_to_empty_string(
+    session, captured_log, monkeypatch
+):
+    """A non-string ``text`` (e.g. the model emitting a number/list by mistake)
+    must be normalised to ``""`` rather than crashing on ``.strip()``."""
+    monkeypatch.setattr(
+        uploader, "vision_json",
+        lambda *a, **k: ({"has_text": True, "text": 123,
+                          "is_story_page": False, "page_type": "blank"}, "raw"),
+    )
+    result = extract_page_info(b"img", client=object(), book=_FakeBook(),
+                               page_number=4, flow="single")
+    assert result == ("", False, "blank")
+
+
 def test_extract_page_info_parse_failure_logs_and_raises(session, captured_log, monkeypatch):
     # vision_json returns (None, raw) when the reply couldn't be parsed as JSON.
     monkeypatch.setattr(
