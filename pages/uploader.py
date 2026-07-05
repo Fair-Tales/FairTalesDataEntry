@@ -117,7 +117,26 @@ def extract_page_info(image_bytes, client, *, book=None, page_number=None,
     # ``text`` (e.g. a description of the illustration). ``has_text`` defaults to
     # true when absent so a model reply that predates the field still behaves as
     # before.
-    text = data.get("text", "").strip()
+    #
+    # Bug fix: a "wordless page" reply sometimes carries ``"text": null`` (JSON
+    # null / Python ``None``) rather than the requested ``""`` — the model is
+    # prompted, not schema-constrained, so it does not always follow the "text
+    # must be a string" instruction to the letter. ``dict.get(key, default)``
+    # only substitutes ``default`` when the key is ABSENT, not when its value is
+    # ``None``, so the previous unconditional ``.strip()`` raised an uncaught
+    # ``AttributeError`` on such a reply. That escaped both this function's own
+    # ``except anthropic.AnthropicError`` (it happens after the API call, parsing
+    # the reply locally) and the caller's ``except PageExtractionError``, so it
+    # crashed the whole per-page upload loop — every page after the wordless one
+    # was left with neither an extraction attempt nor a Firestore ``pages`` doc,
+    # which read as "OCR worked for the first half, then went blank" (see the
+    # "Clean Up!" bug report: pages 1-12 fully extracted, 13-19 missing entirely,
+    # with no matching ``extraction_errors`` entry — consistent with an
+    # exception that skipped the existing error-logging path rather than a
+    # genuine OCR failure). Any non-string ``text`` (``None`` or otherwise) is
+    # now normalised to ``""`` instead of raising.
+    raw_text = data.get("text")
+    text = raw_text.strip() if isinstance(raw_text, str) else ""
     if not bool(data.get("has_text", True)):
         text = ""
 
