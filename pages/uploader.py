@@ -152,7 +152,7 @@ def _process_page(raw_bytes, page_number, photos_url, fs, ai_client, report=None
     Run the staged correction pipeline for one page.
 
     Stage 1: OpenCV perspective correction + Haiku quality check.
-    Stage 2: Rotation-only Sonnet fallback + Haiku quality check.
+    Stage 2: Rotation-only Sonnet fallback (unconditional — see below).
 
     ``report`` is an optional per-sub-step progress callback (see
     ``_make_reporter``) invoked before each model call so the frontend keeps
@@ -165,11 +165,13 @@ def _process_page(raw_bytes, page_number, photos_url, fs, ai_client, report=None
     matches large, clearly upright single pages, where the Haiku verification
     almost always agrees — and it never touches the text-extraction step, so
     extraction accuracy is unchanged. Sideways/landscape/low-confidence crops
-    still get the full Haiku check and the Sonnet rotation fallback.
+    still get the full Haiku check; Stage 2's rotation-only fallback does not
+    (see the comment at that stage for why).
 
     Returns (image_bytes_for_extraction, method) where method is
     'opencv', 'rotation', or None (no correction applied).
-    Saves page_{n}_cropped.jpg to S3 when a stage succeeds.
+    Saves page_{n}_cropped.jpg to S3 whenever a stage produces a corrected
+    image — including a rotation-only result with no crop (see Stage 2).
     """
     report = report or (lambda _template: None)
 
@@ -210,23 +212,33 @@ def _process_page(raw_bytes, page_number, photos_url, fs, ai_client, report=None
     #
     # Rotation fix (audit item 3): when the model detects a non-zero rotation the
     # rotated bytes are the CORRECT orientation for OCR and must be used
-    # unconditionally. Previously the rotated bytes were only used if
-    # ``check_crop_quality`` passed — but that prompt requires the page to fill
-    # the frame / not be cropped, which a rotation-only raw phone photo (still
-    # showing table/hands/background) routinely fails, so the UPSIDE-DOWN original
-    # was silently sent to OCR instead. The crop-quality check now only gates the
-    # OPTIONAL saving of the ``_cropped`` artifact, never which bytes go to OCR.
+    # unconditionally.
+    #
+    # Second rotation fix: this stage no longer calls ``check_crop_quality``
+    # at all. It previously called it on the rotated-but-uncropped frame and used
+    # the result only to decide whether to *save* ``page_{n}_cropped.jpg`` — never
+    # to gate which bytes went to OCR (that part was already fixed). But
+    # ``check_crop_quality``'s prompt requires the page to fill the frame / not be
+    # cropped, which a rotation-only raw phone photo (still showing table/hands/
+    # background) routinely fails, so the save was routinely skipped. With no
+    # ``_cropped`` file on S3, ``pages/enter_text.py``'s ``load_image``/
+    # ``cropped_exists`` falls back to the raw, un-rotated ``page_{n}.jpg`` and
+    # shows "Auto-correction unavailable — showing original photo" — silently
+    # reverting the image the USER sees back to raw even though OCR had already
+    # used the correctly-rotated bytes. A crop failure must only ever cost the
+    # CROP, never the rotation, for the display as well as for OCR: since Stage 1
+    # already rejected/failed the geometric crop, there is no cropped alternative
+    # left for the Haiku check to approve here, so it has nothing useful left to
+    # gate and is dropped rather than called-and-ignored — one fewer model call on
+    # this path, not an added one. The rotated frame is now always persisted as
+    # the ``_cropped`` artifact, giving the fallback chain: rotated+cropped ->
+    # (crop rejected/failed) rotated-only -> (rotation also not detected) raw.
     if rotation_on:
         report(Uploader.substep_detecting_rotation)
         angle = get_rotation_angle(raw_bytes, ai_client, model=rotation_model)
         if angle != 0:
             rotated_bytes = rotate_image(raw_bytes, angle)
-            if _crop_ok(rotated_bytes):
-                # Well-framed after rotation — save the corrected artifact too.
-                return _save_and_return(rotated_bytes, 'rotation')
-            # Not well-framed (background/cropping), but the orientation is now
-            # correct — use the rotated bytes for extraction regardless.
-            return rotated_bytes, 'rotation'
+            return _save_and_return(rotated_bytes, 'rotation')
 
     return raw_bytes, None
 
