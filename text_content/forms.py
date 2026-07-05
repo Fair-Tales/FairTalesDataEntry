@@ -405,6 +405,16 @@ class EnterText:
     )
     detect_failed = "Character detection failed: {error}"
     detect_none_found = "The AI did not find any characters in the text. You can add characters manually."
+    rerun_detect_button = "Re-run character detection"
+    rerun_detect_help = """
+        Re-run AI character detection now, using the current page text (e.g. after you have edited it).
+        Discards any previously suggested (not yet created) characters and suggests a fresh list. Nothing
+        is saved until you review and confirm.
+    """
+    auto_detect_banner = (
+        "These characters were detected automatically now that this book's pages have been read. "
+        "Review, correct or skip each one below, then confirm."
+    )
     review_instruction = """
         Review the suggested characters below. Correct any names, genders or other details,
         edit the comma-separated aliases, and choose an action for each one. To merge a duplicate,

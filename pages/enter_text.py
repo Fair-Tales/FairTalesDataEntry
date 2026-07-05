@@ -8,6 +8,8 @@ from utilities import (
     page_layout, confirm_submit, check_authentication_status,
     detect_book_characters, clear_entity_form_state,
     get_s3_filesystem, get_anthropic_client,
+    consume_pending_character_autodetect, stage_character_redetect,
+    CHARACTER_AUTODETECT_SOURCE_AUTO, CHARACTER_AUTODETECT_SOURCE_MANUAL,
 )
 from data_structures import Page, Character, Alias
 from text_content import EnterText, ManageCharacters, AliasForm, CharacterForm
@@ -271,7 +273,22 @@ def adding_detect():
     _save_current_page_text()
     # Start a fresh detection run; discard any previous suggestions.
     st.session_state.pop('_detected_characters', None)
+    st.session_state.pop('_detected_characters_source', None)
     st.session_state.now_entering = 'detect'
+
+
+def rerun_detect():
+    """On-click handler for the "Re-run character detection" button (#170).
+
+    Unlike ``adding_detect`` (which opens the blank detect screen and waits
+    for the separate "Run detection" click), this stages an IMMEDIATE re-run
+    via ``stage_character_redetect`` — the same staging used by the
+    auto-run-after-OCR hook below — so detect_entry() executes the AI call as
+    soon as it renders. Reuses the existing detection + review pipeline
+    (#129); does not write any Character/Alias itself.
+    """
+    _save_current_page_text()
+    stage_character_redetect(st.session_state, source=CHARACTER_AUTODETECT_SOURCE_MANUAL)
 
 
 def text_entry(element, image_height, delta=50):
@@ -304,6 +321,13 @@ def text_entry(element, image_height, delta=50):
         on_click=adding_detect,
         help=EnterText.detect_help,
         key="enter_text_detect_button",
+    )
+    element.button(
+        EnterText.rerun_detect_button,
+        width="stretch",
+        on_click=rerun_detect,
+        help=EnterText.rerun_detect_help,
+        key="enter_text_rerun_detect_button",
     )
 
     height = max(image_height - delta, 200)
@@ -590,6 +614,7 @@ def commit_detected_characters(rows):
 
     st.session_state['_detected_characters_result'] = messages
     st.session_state.pop('_detected_characters', None)
+    st.session_state.pop('_detected_characters_source', None)
     st.session_state['now_entering'] = 'text'
     st.rerun()
 
@@ -603,6 +628,8 @@ def character_review_form(element):
         )
         return
 
+    if st.session_state.get('_detected_characters_source') == CHARACTER_AUTODETECT_SOURCE_AUTO:
+        element.info(EnterText.auto_detect_banner)
     element.write(EnterText.review_instruction)
     names = [s['name'] for s in suggestions]
     # Characters already defined for this book are also valid merge targets, so a
@@ -671,6 +698,17 @@ def character_review_form(element):
 
 def detect_entry(element):
     if '_detected_characters' not in st.session_state:
+        # Staged by the auto-run-after-OCR hook or the "Re-run character
+        # detection" button (#170, see stage_character_redetect): run the AI
+        # call immediately instead of waiting for the separate "Run
+        # detection" click below. Popped so it only fires once per staging.
+        # On failure (e.g. no API key / no story text yet — already
+        # surfaced via st.warning/st.error inside run_character_detection),
+        # fall through to the normal manual controls rather than stranding
+        # the user on a blank screen.
+        if st.session_state.pop('_auto_run_detection', False) and run_character_detection():
+            st.rerun()
+            return
         element.info(EnterText.detect_intro)
         if element.button(EnterText.run_detection_button, width="stretch", key="run_detect"):
             if run_character_detection():
@@ -723,6 +761,17 @@ if (
     st.session_state['book_character_dict'] = (
         st.session_state.current_book.get_character_dict()
     )
+    # Auto-run character detection right after OCR completes (#170):
+    # pages.uploader._process_photo_batch flags this once its per-page OCR
+    # loop finishes; consume it here (once, per book load) and land straight
+    # on the existing detection review UI instead of requiring the user to
+    # find/click "Detect characters (AI)" themselves. This only stages a run —
+    # nothing is written until the human reviews and submits "Create selected
+    # characters" below.
+    if consume_pending_character_autodetect(st.session_state):
+        stage_character_redetect(
+            st.session_state, source=CHARACTER_AUTODETECT_SOURCE_AUTO, discard_previous=False
+        )
 
 if 'current_page_number' not in st.session_state:
     st.session_state['current_page_number'] = 1
