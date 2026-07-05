@@ -1329,6 +1329,61 @@ def detect_book_characters(pages, client, progress_callback=None):
     return suggestions
 
 
+# --- #170: auto-run character detection after OCR + on-demand re-run ------
+#
+# These are plain session-state helpers (no Streamlit widgets, no network) so
+# both call sites in ``pages/enter_text.py`` — the automatic hook fired right
+# after the OCR/text-extraction loop completes, and the manual "Re-run
+# character detection" button — stay tiny and share ONE place that decides
+# how to stage a (re-)run, rather than duplicating the session-state
+# bookkeeping in the page module itself (#129: one path, not a parallel one).
+# The actual AI call and the review UI are untouched — this only arranges for
+# ``pages/enter_text.py``'s existing ``detect_entry()``/``run_character_detection()``
+# to run automatically instead of waiting for an extra "Run detection" click;
+# nothing here writes a ``Character``/``Alias`` record. Idempotency against
+# duplicate characters is guaranteed downstream by the existing
+# ``commit_detected_characters()`` document_exists() checks, which run
+# regardless of how many times detection itself is (re-)triggered.
+
+CHARACTER_AUTODETECT_SOURCE_AUTO = "auto"
+CHARACTER_AUTODETECT_SOURCE_MANUAL = "manual"
+
+
+def mark_character_autodetect_pending(session_state):
+    """Flag that character detection should auto-run the next time the book's
+    enter-text page loads. Called once by ``pages.uploader._process_photo_batch``
+    right after its per-page OCR loop finishes."""
+    session_state['_pending_character_autodetect'] = True
+
+
+def consume_pending_character_autodetect(session_state):
+    """Pop and return the OCR-completion auto-detect flag (see
+    ``mark_character_autodetect_pending``). Returns True at most ONCE per OCR
+    run — ``pages/enter_text.py``'s per-book init block calls this exactly
+    once when it (re)builds the page cache for a book, so re-rendering the
+    same page (e.g. paging through the book afterwards) never re-fires it."""
+    return bool(session_state.pop('_pending_character_autodetect', False))
+
+
+def stage_character_redetect(session_state, *, source, discard_previous=True):
+    """Arrange for the NEXT render of ``pages/enter_text.py``'s ``detect_entry()``
+    to execute character detection immediately — one click/hook, not the
+    separate "Run detection" confirmation — and land on the existing
+    review/"Create selected characters" UI (#129).
+
+    ``source`` (``CHARACTER_AUTODETECT_SOURCE_AUTO``/``_MANUAL``) is recorded
+    purely so the review form can tell the user *why* suggestions appeared
+    (auto-run-after-OCR vs an on-demand re-run); it has no effect on what gets
+    created. ``discard_previous`` drops any already-staged suggestions so a
+    re-run reflects the latest page text rather than mixing runs.
+    """
+    if discard_previous:
+        session_state.pop('_detected_characters', None)
+    session_state['now_entering'] = 'detect'
+    session_state['_auto_run_detection'] = True
+    session_state['_detected_characters_source'] = source
+
+
 def lookup_isbn(isbn):
     """
     Look up book metadata via the Google Books API (free, no auth required).

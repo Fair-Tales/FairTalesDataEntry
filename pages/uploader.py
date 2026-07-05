@@ -11,6 +11,7 @@ from text_content import Instructions, AIPrompts, BookPhotoEntry, Uploader, Phot
 from utilities import (
     page_layout, check_authentication_status, extract_isbn, lookup_isbn,
     get_s3_filesystem, get_anthropic_client, vision_json, get_ai_settings,
+    mark_character_autodetect_pending,
 )
 from photo_upload import (
     get_upload_session_id,
@@ -428,6 +429,14 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
                 progress.progress((i + 1) / total)
 
             status.update(label=Uploader.processing_complete, state="complete")
+            # Flag character detection to auto-run the next time this book's
+            # enter-text page loads (#170): only when OCR actually ran, since
+            # with no story text there is nothing yet for detection to find.
+            # pages/enter_text.py consumes this flag once (per book) and lands
+            # the user straight on the existing detection review UI rather
+            # than requiring them to find/click "Detect characters (AI)"
+            # themselves; nothing is written without human confirmation there.
+            mark_character_autodetect_pending(st.session_state)
         else:
             # No API key — register pages without extraction. Guarded the same
             # way as the AI-extraction branch above (harden-page-loop-error-
