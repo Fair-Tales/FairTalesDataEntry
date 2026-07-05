@@ -1,12 +1,16 @@
 import streamlit as st
-from utilities import page_layout, FirestoreWrapper, check_authentication_status
+from utilities import page_layout, FirestoreWrapper
 from pages.uploader import upload_widget
 from Home import ensure_session
 from data_structures import Book
 from text_content import Instructions, Alerts, QrLanding
 from photo_upload import generate_put_urls, build_uploader_html
 
-check_authentication_status()
+# NB: this is a PUBLIC, token-authenticated deep-link reached from the phone QR —
+# it must NOT call check_authentication_status()/redirect to login. It does its
+# OWN auth below from the ?user=&token= query params (the phone has no session
+# cookie), then shows the seamless upload UI. A stray login gate here bounced the
+# phone to the login page before the token could authenticate it.
 page_layout()
 
 # Auth params are always present; ``flow``/``session`` (new generic mode, #143)
@@ -31,9 +35,6 @@ authorised = bool(
 
 if not authorised:
     st.warning(Alerts.invalid_credentials)
-    st.write(user)
-    st.write(token)
-    st.write(book)
 else:
     # Home.py's ensure_session() has already populated firestore + lookup dicts
     # before this page ran; this call is an idempotent no-op kept for the case
