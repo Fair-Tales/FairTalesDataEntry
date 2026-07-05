@@ -1,5 +1,6 @@
 import streamlit as st
 from text_content import IllustratorForm
+from utilities import register_and_link_book_entity, load_illustrator_dict
 from .base_structure import DataStructureBase, Field
 
 
@@ -63,6 +64,9 @@ class Illustrator(DataStructureBase):
             ):
                 st.warning(IllustratorForm.illustrator_exists)
             else:
-                st.session_state['current_illustrator'] = self
-                st.session_state['active_form_to_confirm'] = 'new_illustrator'
-                st.switch_page("./pages/confirm_entry.py")
+                # The form above is itself the single review step, so register
+                # and return to the book form directly instead of routing
+                # through a second confirm_entry.py confirmation (#168).
+                register_and_link_book_entity(
+                    self, 'illustrator_dict', load_illustrator_dict.clear, 'illustrator'
+                )

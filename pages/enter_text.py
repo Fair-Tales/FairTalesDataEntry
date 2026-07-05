@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 import streamlit as st
 import anthropic
 from PIL import Image, ImageOps
@@ -8,9 +9,14 @@ from utilities import (
     page_layout, confirm_submit, check_authentication_status,
     detect_book_characters, clear_entity_form_state,
     get_s3_filesystem, get_anthropic_client,
+    consume_pending_character_autodetect, stage_character_redetect,
+    CHARACTER_AUTODETECT_SOURCE_AUTO, CHARACTER_AUTODETECT_SOURCE_MANUAL,
 )
-from data_structures import Page, Character, Alias
+from data_structures import Page, Character, Alias, ExtractionErrorLog
+from pages.uploader import extract_page_info, PageExtractionError
 from text_content import EnterText, ManageCharacters, AliasForm, CharacterForm
+
+logger = logging.getLogger(__name__)
 
 check_authentication_status()
 
@@ -87,16 +93,102 @@ def cropped_exists(book, page_number):
         return False
 
 
+def _load_page_bytes_for_extraction(book, page_number):
+    """Return the raw JPEG bytes for a page, preferring the corrected _cropped
+    version — matching what load_image()/display_image() show the user, so a
+    re-extract (#165) reads the same image the archivist is looking at.
+
+    Returns raw file bytes (not a decoded PIL image) since that is what
+    ``pages.uploader.extract_page_info``/``vision_json`` expect.
+    """
+    try:
+        with fs.open(f"sawimages/{book}/page_{page_number}_cropped.jpg", mode='rb') as f:
+            return f.read()
+    except FileNotFoundError:
+        with fs.open(f"sawimages/{book}/page_{page_number}.jpg", mode='rb') as f:
+            return f.read()
+
+
+def reextract_current_page(page_number):
+    """Re-run OCR for exactly the current page on demand (#165).
+
+    Reuses ``pages.uploader.extract_page_info`` + ``utilities.get_anthropic_client``
+    (#129) — one user-initiated vision call, never automatic/looping. Auto-saves
+    any in-progress text edit first (so it is not clobbered by a failed or
+    unwanted re-extract), then on success writes the result through
+    ``Page.text``/``Page.contains_story`` (write-through persists to Firestore,
+    per the ``DataStructureBase`` convention) and reruns so the page re-renders
+    with the fresh text.
+
+    Both the text area and the "contains story" checkbox are keyed per-page
+    (``enter_text_page_text_<n>``/``enter_text_contains_story_<n>``, see #80).
+    Because THIS re-extract targets the page already on screen, those keys are
+    already present in session_state from the current render, so simply
+    updating ``current_page``'s fields and rerunning would NOT change what the
+    widgets display — Streamlit ignores a widget's ``value=`` once its key is
+    already populated. The widgets' own session_state entries are overwritten
+    directly below so the fresh result is visible immediately.
+    """
+    _save_current_page_text()
+
+    client = get_anthropic_client()
+    if client is None:
+        st.warning(EnterText.reextract_no_api_key)
+        return
+
+    book = st.session_state.current_book
+
+    try:
+        image_bytes = _load_page_bytes_for_extraction(book.title, page_number)
+    except FileNotFoundError as exc:
+        st.error(EnterText.reextract_image_missing)
+        logger.warning(
+            "Re-extract: no page image found for book=%s page=%s: %s",
+            book.title, page_number, exc,
+        )
+        return
+
+    with st.spinner(EnterText.reextract_spinner):
+        try:
+            text, is_story, _page_type = extract_page_info(
+                image_bytes, client,
+                book=book,
+                page_number=page_number,
+                page_name=f"page_{page_number}.jpg",
+                flow=ExtractionErrorLog.FLOW_REEXTRACT,
+            )
+        except PageExtractionError:
+            # The failure detail is already logged to extraction_errors by
+            # extract_page_info itself (#132) — surface a friendly message here
+            # rather than the raw error, and don't touch the existing text.
+            st.error(EnterText.reextract_failed)
+            return
+
+    st.session_state.current_page.text = text
+    st.session_state.current_page.contains_story = is_story
+    st.session_state.book_pages_dict[page_number] = st.session_state.current_page
+
+    # Overwrite the widgets' own state (see docstring above) so the page shows
+    # the fresh result as soon as it reruns.
+    st.session_state[f"enter_text_page_text_{page_number}"] = text
+    st.session_state[f"enter_text_contains_story_{page_number}"] = is_story
+
+    st.success(EnterText.reextract_success)
+    st.rerun()
+
+
 @st.dialog(" ", width="large")
-def enlarged_image_dialog(use_cropped):
-    st.image(
-        load_image(
-            st.session_state['current_book'].title,
-            st.session_state.current_page_number,
-            use_cropped=use_cropped,
-        ),
-        width="stretch"
-    )
+def enlarged_image_dialog(image):
+    """Show the already-loaded page image at full width (#167).
+
+    Takes the in-memory image the main view has ALREADY loaded rather than
+    re-opening it from S3. On a slow/mobile connection a fresh S3 fetch inside the
+    dialog could stall the script run long enough for the websocket to drop and
+    reconnect with an empty session_state, which then bounces the user to login.
+    Streamlit re-invokes the dialog with the same argument on subsequent reruns,
+    so the image object is reused and the dialog performs no network I/O.
+    """
+    st.image(image, width="stretch")
 
 
 @st.dialog(EnterText.image_edit_dialog_title, width="large")
@@ -179,6 +271,17 @@ def display_image():
             col1.caption(EnterText.auto_corrected_caption)
     else:
         col1.caption(EnterText.auto_correction_unavailable_caption)
+
+    page_image = load_image(book, page_number, use_cropped=use_cropped)
+    w, h = page_image.size
+
+    col1.image(page_image, width="stretch")
+
+    # Crop/rotate (#169): rendered below the photo, consistently with Enlarge
+    # below, rather than above it. Only shown in the no-auto-corrected-version
+    # case (unchanged behaviour) — when a cropped version exists, the toggle
+    # above is shown instead.
+    if not has_cropped:
         if col1.button(EnterText.edit_image_button, width="stretch", key="enter_text_edit_image_button"):
             # Start each editing session from a clean slate: clear any rotation/
             # crop state left from a previous open (including closing via the
@@ -190,12 +293,10 @@ def display_image():
                 st.session_state.pop(_k, None)
             manual_correction_dialog()
 
-    page_image = load_image(book, page_number, use_cropped=use_cropped)
-    w, h = page_image.size
-
-    col1.image(page_image, width="stretch")
     if col1.button(EnterText.enlarge_button, width="stretch", key="enter_text_enlarge_button"):
-        enlarged_image_dialog(use_cropped=use_cropped)
+        # Reuse the image already loaded above rather than re-fetching from S3 in
+        # the dialog, so opening Enlarge does no network I/O (#167).
+        enlarged_image_dialog(page_image)
 
     dimensions = st_dimensions(key="main")
     col_width = int(dimensions['width'] * 3 / 5) if dimensions else 500
@@ -271,7 +372,22 @@ def adding_detect():
     _save_current_page_text()
     # Start a fresh detection run; discard any previous suggestions.
     st.session_state.pop('_detected_characters', None)
+    st.session_state.pop('_detected_characters_source', None)
     st.session_state.now_entering = 'detect'
+
+
+def rerun_detect():
+    """On-click handler for the "Re-run character detection" button (#170).
+
+    Unlike ``adding_detect`` (which opens the blank detect screen and waits
+    for the separate "Run detection" click), this stages an IMMEDIATE re-run
+    via ``stage_character_redetect`` — the same staging used by the
+    auto-run-after-OCR hook below — so detect_entry() executes the AI call as
+    soon as it renders. Reuses the existing detection + review pipeline
+    (#129); does not write any Character/Alias itself.
+    """
+    _save_current_page_text()
+    stage_character_redetect(st.session_state, source=CHARACTER_AUTODETECT_SOURCE_MANUAL)
 
 
 def text_entry(element, image_height, delta=50):
@@ -288,6 +404,18 @@ def text_entry(element, image_height, delta=50):
         value=st.session_state.current_page.contains_story,
         key=f"enter_text_contains_story_{page_number}"
     )
+
+    # Re-extract this page's text on demand (#165): a dedicated button rather
+    # than a side effect of the checkbox above, so a paid AI call is always an
+    # explicit, user-initiated action.
+    if element.button(
+        EnterText.reextract_button,
+        width="stretch",
+        help=EnterText.reextract_help,
+        key=f"enter_text_reextract_button_{page_number}",
+    ):
+        reextract_current_page(page_number)
+
     subcol1, subcol2 = element.columns(2)
     subcol1.button(EnterText.add_character_button, width="stretch", on_click=adding_character, help=EnterText.character_help, key="enter_text_add_character_button")
     subcol2.button(EnterText.add_alias_button, width="stretch", on_click=adding_alias, help=EnterText.alias_help, key="enter_text_add_alias_button")
@@ -305,6 +433,13 @@ def text_entry(element, image_height, delta=50):
         help=EnterText.detect_help,
         key="enter_text_detect_button",
     )
+    element.button(
+        EnterText.rerun_detect_button,
+        width="stretch",
+        on_click=rerun_detect,
+        help=EnterText.rerun_detect_help,
+        key="enter_text_rerun_detect_button",
+    )
 
     height = max(image_height - delta, 200)
 
@@ -320,6 +455,19 @@ def text_entry(element, image_height, delta=50):
         value=st.session_state.current_page.text,
         disabled=not st.session_state.current_page.contains_story,
         key=f"enter_text_page_text_{page_number}"
+    )
+
+    # A second "Next page" control at the bottom of the text column, directly
+    # above the Finish/Submit row rendered further down the page (#169) — a
+    # natural continuation once the user has finished this page's text. Reuses
+    # the same auto-saving on_click handler as the top nav button; only the key
+    # differs (#80).
+    element.button(
+        EnterText.next_page_button,
+        width="stretch",
+        on_click=page_change,
+        args=(1,),
+        key="enter_text_next_page_bottom_button",
     )
 
 
@@ -590,6 +738,7 @@ def commit_detected_characters(rows):
 
     st.session_state['_detected_characters_result'] = messages
     st.session_state.pop('_detected_characters', None)
+    st.session_state.pop('_detected_characters_source', None)
     st.session_state['now_entering'] = 'text'
     st.rerun()
 
@@ -603,6 +752,8 @@ def character_review_form(element):
         )
         return
 
+    if st.session_state.get('_detected_characters_source') == CHARACTER_AUTODETECT_SOURCE_AUTO:
+        element.info(EnterText.auto_detect_banner)
     element.write(EnterText.review_instruction)
     names = [s['name'] for s in suggestions]
     # Characters already defined for this book are also valid merge targets, so a
@@ -671,6 +822,17 @@ def character_review_form(element):
 
 def detect_entry(element):
     if '_detected_characters' not in st.session_state:
+        # Staged by the auto-run-after-OCR hook or the "Re-run character
+        # detection" button (#170, see stage_character_redetect): run the AI
+        # call immediately instead of waiting for the separate "Run
+        # detection" click below. Popped so it only fires once per staging.
+        # On failure (e.g. no API key / no story text yet — already
+        # surfaced via st.warning/st.error inside run_character_detection),
+        # fall through to the normal manual controls rather than stranding
+        # the user on a blank screen.
+        if st.session_state.pop('_auto_run_detection', False) and run_character_detection():
+            st.rerun()
+            return
         element.info(EnterText.detect_intro)
         if element.button(EnterText.run_detection_button, width="stretch", key="run_detect"):
             if run_character_detection():
@@ -723,6 +885,17 @@ if (
     st.session_state['book_character_dict'] = (
         st.session_state.current_book.get_character_dict()
     )
+    # Auto-run character detection right after OCR completes (#170):
+    # pages.uploader._process_photo_batch flags this once its per-page OCR
+    # loop finishes; consume it here (once, per book load) and land straight
+    # on the existing detection review UI instead of requiring the user to
+    # find/click "Detect characters (AI)" themselves. This only stages a run —
+    # nothing is written until the human reviews and submits "Create selected
+    # characters" below.
+    if consume_pending_character_autodetect(st.session_state):
+        stage_character_redetect(
+            st.session_state, source=CHARACTER_AUTODETECT_SOURCE_AUTO, discard_previous=False
+        )
 
 if 'current_page_number' not in st.session_state:
     st.session_state['current_page_number'] = 1
@@ -760,9 +933,21 @@ if '_page_text_editing' not in st.session_state:
 
 user_entry_box(col2, image_height)
 
-butcol1, butcol2 = st.columns(2)
-return_button = butcol1.button(EnterText.back_to_menu_button, width="stretch", key="enter_text_back_to_menu_button")
-save_button = butcol2.button(EnterText.finish_submit_button, help=EnterText.save_help, width="stretch", key="enter_text_finish_submit_button")
+# Finish/Submit sits directly below the text-entry column (#169); "Back to
+# menu" is deliberately separated from it below by a visible gap so it is not
+# adjacent/easy to mis-click.
+save_button = st.button(
+    EnterText.finish_submit_button, help=EnterText.save_help, width="stretch",
+    key="enter_text_finish_submit_button",
+)
+
+st.write("")
+st.write("")
+st.divider()
+
+return_button = st.button(
+    EnterText.back_to_menu_button, width="stretch", key="enter_text_back_to_menu_button"
+)
 
 if return_button:
     # Auto-save the current page text before leaving for the menu (#152).

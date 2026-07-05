@@ -141,7 +141,13 @@ from typing import Optional
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
-from ai_continuity import check_narrative_continuity, should_skip_ocr  # noqa: E402
+import local_models  # noqa: E402
+from ai_continuity import (  # noqa: E402
+    CONTINUITY_SCHEMA,
+    check_narrative_continuity,
+    should_skip_ocr,
+)
+from ai_pricing import UsageAccumulator, format_cost_report  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Configuration.
@@ -181,6 +187,18 @@ DEFAULT_CONTINUITY_MODEL = "claude-sonnet-4-6"
 #: reasoning task, so this defaults to a mid-tier model. Overridable via
 #: --clean-model.
 DEFAULT_CLEAN_MODEL = "claude-sonnet-4-6"
+
+#: OPTIONAL local-model (Ollama) offload for the TEXT stages (clean+judge and,
+#: optionally, the neighbour-continuity judge). These are strictly opt-in via
+#: ``--clean-backend ollama`` / ``--continuity-backend ollama``; the defaults
+#: below only take effect when a local backend is selected. The clean+judge pass
+#: is ~67% of the run's API cost and is a pure text task, so a free local Gemma 3
+#: 27B on the user's GPU can do it — with an automatic Claude fallback on ANY
+#: local failure (see ``ai_clean_and_judge``). OCR stays on Claude. The user runs
+#: ``ollama pull`` themselves; this tool never downloads a model.
+DEFAULT_OLLAMA_URL = local_models.DEFAULT_OLLAMA_URL  # http://localhost:11434/v1
+DEFAULT_OLLAMA_CLEAN_MODEL = "gemma3:27b"
+DEFAULT_OLLAMA_CONTINUITY_MODEL = "gemma3:27b"
 
 #: Per-book cross-check (secondary, "excess text" signal): symmetric Jaccard
 #: word-overlap of extracted vs validated text. Books below this ratio are noted
@@ -1263,8 +1281,19 @@ def _strip_cache_control(blocks: list) -> list:
     return out
 
 
+def _record_usage(usage_cb, response) -> None:
+    """Feed one response's usage to an optional accumulator callback (#73 cost).
+
+    ``usage_cb`` (when set) is called with ``response.usage`` — guarded with
+    ``getattr`` so a missing/oddly-shaped usage object never crashes a run.
+    """
+    if usage_cb is not None:
+        usage_cb(getattr(response, "usage", None))
+
+
 def _ai_json_call(
-    client, *, model: str, max_tokens: int, content_blocks: list, schema: dict
+    client, *, model: str, max_tokens: int, content_blocks: list, schema: dict,
+    usage_cb=None,
 ) -> tuple[Optional[dict], str]:
     """Make a Claude call expecting a JSON object; return ``(parsed_or_None, raw)``.
 
@@ -1302,6 +1331,7 @@ def _ai_json_call(
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": _strip_cache_control(content_blocks)}],
         )
+    _record_usage(usage_cb, response)
     raw = "".join(
         block.text for block in response.content if getattr(block, "type", None) == "text"
     ).strip()
@@ -1314,7 +1344,8 @@ def _ai_json_call(
     return _extract_json_object(raw), raw
 
 
-def ai_lookup_book_metadata(client, title: str, author: str, model: str) -> dict:
+def ai_lookup_book_metadata(client, title: str, author: str, model: str,
+                            usage_cb=None) -> dict:
     """Look up illustrator / publisher / year for a book via Claude + web search.
 
     Returns ``{"illustrator": str, "publisher": str, "year": Optional[int]}``,
@@ -1349,18 +1380,25 @@ def ai_lookup_book_metadata(client, title: str, author: str, model: str) -> dict
         {"type": "text", "text": static_instructions, "cache_control": {"type": "ephemeral"}},
         {"type": "text", "text": variable_block},
     ]
-    tools = [{"type": "web_search_20260209", "name": "web_search"}]
+    # Use the BASIC web-search tool, not the newer web_search_20260209: the
+    # dynamic-filtering variant spins up a code-execution container whose
+    # container_id must be threaded back on every pause_turn continuation, which
+    # sporadically 400s ("container_id is required..."). The basic variant needs
+    # no container and is amply sufficient for this illustrator/publisher lookup.
+    tools = [{"type": "web_search_20250305", "name": "web_search"}]
     try:
         messages = [{"role": "user", "content": content}]
         response = client.messages.create(
             model=model, max_tokens=1024, tools=tools, messages=messages
         )
+        _record_usage(usage_cb, response)
         continuations = 0
         while getattr(response, "stop_reason", None) == "pause_turn" and continuations < 3:
             messages.append({"role": "assistant", "content": response.content})
             response = client.messages.create(
                 model=model, max_tokens=1024, tools=tools, messages=messages
             )
+            _record_usage(usage_cb, response)
             continuations += 1
         text = "".join(
             block.text for block in response.content if getattr(block, "type", None) == "text"
@@ -1376,7 +1414,8 @@ def ai_lookup_book_metadata(client, title: str, author: str, model: str) -> dict
     return {"illustrator": illustrator, "publisher": publisher, "year": year}
 
 
-def ai_ocr_page(client, jpeg_bytes: bytes, model: str) -> tuple[str, Optional[str]]:
+def ai_ocr_page(client, jpeg_bytes: bytes, model: str,
+                usage_cb=None) -> tuple[str, Optional[str]]:
     """OCR a rendered page image with Claude vision.
 
     Returns ``(text, error)``: ``error`` is ``None`` on success (``text`` may be
@@ -1402,7 +1441,8 @@ def ai_ocr_page(client, jpeg_bytes: bytes, model: str) -> tuple[str, Optional[st
     ]
     try:
         data, raw = _ai_json_call(
-            client, model=model, max_tokens=2048, content_blocks=content, schema=OCR_SCHEMA
+            client, model=model, max_tokens=2048, content_blocks=content, schema=OCR_SCHEMA,
+            usage_cb=usage_cb,
         )
     except Exception as exc:  # noqa: BLE001 - network/parse; RECORD the failure (M1)
         print(f"    [ai-ocr] failed: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -1445,30 +1485,13 @@ def derive_review(makes_sense: bool, fits_context: bool, has_text: bool = True) 
     return True, "normal"
 
 
-def ai_clean_and_judge(
-    client, text: str, prev_context: str, next_context: str, model: str
-) -> tuple[str, str, bool, str, str]:
-    """Clean junk from page text AND judge it in context, in one call.
+def _build_clean_context_block(text: str, prev_context: str, next_context: str) -> str:
+    """The variable clean/judge user block (neighbour context + this page's text).
 
-    One Claude call does three jobs for a single story page: (1) strip
-    extraction/OCR noise and print artefacts (page numbers, running heads,
-    copyright boilerplate) without altering any real story word; (2) judge
-    ``makes_sense`` (coherent on its own); (3) judge ``fits_context`` given the
-    neighbouring pages.
-
-    ``prev_context`` / ``next_context`` are the already-resolved neighbour
-    descriptors (see :func:`neighbour_context`, #73 M4): a real page's text, or a
-    position-derived boundary/​missing-text note. Returns
-    ``(result_text, status, needs_review, priority, review_note)`` where
-    ``status`` is ``"cleaned"`` / ``"unchanged"`` / ``"rejected"`` / ``"failed"``.
-
-    Failure handling (#73 M1/M5): an API error or unparseable reply is stored as
-    ``needs_review=True`` (note "clean/judge call failed", normal priority) rather
-    than silently unflagged; a clean rejected by the divergence guard forces
-    ``needs_review=True`` (priority at least normal) because the ORIGINAL (possibly
-    garbage) text is kept.
+    Shared by both backends so the Claude and Ollama paths send byte-identical
+    prompt wording (only the transport differs).
     """
-    context_block = (
+    return (
         "PREVIOUS PAGE TEXT (for context only, do not clean or return it):\n"
         f"{prev_context}\n\n"
         "NEXT PAGE TEXT (for context only, do not clean or return it):\n"
@@ -1476,21 +1499,19 @@ def ai_clean_and_judge(
         "THIS PAGE TEXT:\n"
         + (text or "(this page has no extracted text)")
     )
-    content = [
-        {"type": "text", "text": CLEAN_STATIC_PROMPT, "cache_control": {"type": "ephemeral"}},
-        {"type": "text", "text": context_block},
-    ]
-    try:
-        data, _raw = _ai_json_call(
-            client, model=model, max_tokens=2048, content_blocks=content, schema=CLEAN_SCHEMA
-        )
-    except Exception as exc:  # noqa: BLE001 - network/parse; RECORD the failure (M1)
-        print(f"    [ai-clean] failed: {type(exc).__name__}: {exc}", file=sys.stderr)
-        return text, "failed", True, "normal", "clean/judge call failed"
 
+
+def _finalise_clean_judge(data: Optional[dict], text: str) -> tuple[str, str, bool, str, str]:
+    """Apply the token-subset guard + review derivation to a parsed clean reply.
+
+    Backend-agnostic: identical guards run on Claude and local output (#73 S4).
+    ``data`` is the parsed ``{cleaned_text, makes_sense, fits_context,
+    review_note}`` dict (or None for an unparseable reply). Returns
+    ``(result_text, status, needs_review, priority, review_note)`` where
+    ``status`` is ``"cleaned"`` / ``"unchanged"`` / ``"rejected"`` / ``"failed"``.
+    """
     if data is None:
         # No usable JSON came back; flag it rather than silently passing (M1).
-        print("    [ai-clean] non-JSON reply; keeping original text", file=sys.stderr)
         return text, "failed", True, "normal", "clean/judge call failed"
 
     makes_sense = _as_bool(data.get("makes_sense", True), True)
@@ -1518,6 +1539,115 @@ def ai_clean_and_judge(
         review_note = "AI clean diverged from original and was discarded; original kept"
 
     return final_text, status, needs_review, priority, review_note
+
+
+def _clean_and_judge_claude(
+    client, text: str, context_block: str, model: str, usage_cb=None
+) -> tuple[str, str, bool, str, str]:
+    """The original Claude clean+judge call (unchanged behaviour)."""
+    content = [
+        {"type": "text", "text": CLEAN_STATIC_PROMPT, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": context_block},
+    ]
+    try:
+        data, _raw = _ai_json_call(
+            client, model=model, max_tokens=2048, content_blocks=content, schema=CLEAN_SCHEMA,
+            usage_cb=usage_cb,
+        )
+    except Exception as exc:  # noqa: BLE001 - network/parse; RECORD the failure (M1)
+        print(f"    [ai-clean] failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return text, "failed", True, "normal", "clean/judge call failed"
+    if data is None:
+        print("    [ai-clean] non-JSON reply; keeping original text", file=sys.stderr)
+    return _finalise_clean_judge(data, text)
+
+
+def ai_clean_and_judge(
+    client,
+    text: str,
+    prev_context: str,
+    next_context: str,
+    model: str,
+    *,
+    backend: str = "claude",
+    ollama_url: str = DEFAULT_OLLAMA_URL,
+    ollama_model: str = DEFAULT_OLLAMA_CLEAN_MODEL,
+    usage_cb=None,
+) -> tuple[str, str, bool, str, str]:
+    """Clean junk from page text AND judge it in context, in one call.
+
+    One call does three jobs for a single story page: (1) strip extraction/OCR
+    noise and print artefacts (page numbers, running heads, copyright
+    boilerplate) without altering any real story word; (2) judge ``makes_sense``
+    (coherent on its own); (3) judge ``fits_context`` given the neighbouring
+    pages.
+
+    ``prev_context`` / ``next_context`` are the already-resolved neighbour
+    descriptors (see :func:`neighbour_context`, #73 M4): a real page's text, or a
+    position-derived boundary/​missing-text note. Returns
+    ``(result_text, status, needs_review, priority, review_note)`` where
+    ``status`` is ``"cleaned"`` / ``"unchanged"`` / ``"rejected"`` / ``"failed"``.
+
+    ``backend`` selects the model. ``"claude"`` (the DEFAULT) preserves today's
+    exact behaviour. ``"ollama"`` offloads this text task to a free local model
+    (this pass is ~67% of the run's API cost) using the SAME prompt and the SAME
+    token-subset / review guards. Because a local model is less reliable, ANY
+    local failure — a :class:`local_models.LocalModelError` OR a clean that fails
+    the token-subset guard (``status == "rejected"``) — FALLS BACK to the Claude
+    path for that page and logs it, so the local backend never degrades quality;
+    at worst it costs one Claude call, exactly as if it had been Claude all along.
+
+    Failure handling (#73 M1/M5): an API error or unparseable reply is stored as
+    ``needs_review=True`` (note "clean/judge call failed", normal priority) rather
+    than silently unflagged; a Claude clean rejected by the divergence guard
+    forces ``needs_review=True`` because the ORIGINAL (possibly garbage) text is
+    kept.
+    """
+    context_block = _build_clean_context_block(text, prev_context, next_context)
+
+    if backend == "ollama":
+        try:
+            data = local_models.chat_json(
+                ollama_url, ollama_model, CLEAN_STATIC_PROMPT, context_block,
+                schema=CLEAN_SCHEMA, max_tokens=2048,
+            )
+        except local_models.LocalModelError as exc:
+            print(
+                f"    [ai-clean] local model failed ({exc}); falling back to Claude",
+                file=sys.stderr,
+            )
+        else:
+            result = _finalise_clean_judge(data, text)
+            # A local clean that only removed content (or left it unchanged) is
+            # trusted; one that failed the token-subset guard is discarded and
+            # RE-DONE on Claude rather than kept, so the local backend can only
+            # ever match Claude's quality, never undercut it.
+            if result[1] != "rejected":
+                return result
+            print(
+                "    [ai-clean] local clean failed the token-subset guard; "
+                "falling back to Claude",
+                file=sys.stderr,
+            )
+        # Fall through to the Claude path (fallback).
+
+    return _clean_and_judge_claude(client, text, context_block, model, usage_cb=usage_cb)
+
+
+def make_continuity_chat_json(url: str, model: str):
+    """Build a ``chat_json_fn`` for the local neighbour-continuity judge.
+
+    Returned callable has the ``(system, user) -> dict`` shape that
+    ``ai_continuity.check_narrative_continuity`` injects when its
+    ``chat_json_fn`` is supplied — reusing the validated CONTINUITY prompt and
+    schema over the local (Ollama) transport. It raises
+    ``local_models.LocalModelError`` on failure, which the judge catches and
+    degrades to a safe OCR-forcing verdict (never a false skip).
+    """
+    def _fn(system: str, user: str) -> dict:
+        return local_models.chat_json(url, model, system, user, schema=CONTINUITY_SCHEMA)
+
+    return _fn
 
 
 # ---------------------------------------------------------------------------
@@ -1868,10 +1998,40 @@ def plan_and_run(args) -> int:
     now = datetime.now(timezone.utc)
     totals = Totals()
 
+    # Token/cost accounting across the whole run (#73 cost tracking). Every AI
+    # call feeds its ``response.usage`` here, tagged by operation, via a small
+    # per-operation sink callback; cost is computed from the shared ai_pricing
+    # table so the pricing recipe is never duplicated (#129).
+    usage = UsageAccumulator()
+
+    def usage_sink(operation: str, model: str):
+        """Return a callback that records one call's usage under ``operation``.
+
+        Guarded end-to-end: a ``None`` usage is a no-op, so a missing/oddly-shaped
+        usage object never crashes a run.
+        """
+        return lambda u: usage.record(operation, model, u)
+
     # Local result cache (#73 S9): reuse OCR / clean+judge results across runs.
     cache = ResultCache(args.cache_dir, enabled=not args.no_cache)
     if args.execute and cache.enabled:
         print(f"  result cache: {args.cache_dir}")
+
+    # OPTIONAL local-model (Ollama) offload for the text stages (strictly opt-in;
+    # Claude is the default everywhere). The continuity judge is injected with a
+    # local chat callable when selected; the clean pass takes a backend arg.
+    continuity_chat_json = (
+        make_continuity_chat_json(args.ollama_url, args.ollama_continuity_model)
+        if args.continuity_backend == "ollama"
+        else None
+    )
+    if args.execute and ai_client is not None:
+        if args.clean_backend == "ollama":
+            print(f"  clean+judge backend: ollama ({args.ollama_clean_model} @ "
+                  f"{args.ollama_url}) — Claude fallback on any local failure")
+        if args.continuity_backend == "ollama":
+            print(f"  continuity backend : ollama ({args.ollama_continuity_model} @ "
+                  f"{args.ollama_url}) — forces OCR on any local failure")
     # Circuit-breaker state (#73 M1): consecutive AI failures.
     consecutive_ai_failures = 0
     aborted = False
@@ -1914,7 +2074,10 @@ def plan_and_run(args) -> int:
         # small sample is actually called; the rest are planned as 'Unknown'.
         do_lookup = ai_client is not None and (args.execute or sample_ai_done < sample_ai_budget)
         if do_lookup:
-            meta = ai_lookup_book_metadata(ai_client, book.title, book.author, args.lookup_model)
+            meta = ai_lookup_book_metadata(
+                ai_client, book.title, book.author, args.lookup_model,
+                usage_cb=usage_sink("lookup", args.lookup_model),
+            )
             if not args.execute:
                 sample_ai_done += 1
         else:
@@ -2097,18 +2260,22 @@ def plan_and_run(args) -> int:
                                     prev_layer = page_texts[story_indices[pos - 1]]
                                     next_layer = page_texts[story_indices[pos + 1]]
                                     cont_key = (
-                                        "continuity:"
+                                        f"continuity:{args.continuity_backend}:"
                                         + sha1_hex(prev_layer + chr(0) + next_layer)
                                     )
                                     verdict = cache.get(cont_key)
                                     if verdict is None:
                                         # Fail-safe: check_narrative_continuity degrades
-                                        # to an OCR-forcing verdict on any error, so a
-                                        # judge failure never skips and never counts
-                                        # toward the OCR circuit-breaker.
+                                        # to an OCR-forcing verdict on any error (Claude
+                                        # OR local), so a judge failure never skips and
+                                        # never counts toward the OCR circuit-breaker.
                                         verdict = check_narrative_continuity(
                                             ai_client, prev_layer, next_layer,
                                             model=args.continuity_model,
+                                            on_usage=usage_sink(
+                                                "continuity", args.continuity_model
+                                            ),
+                                            chat_json_fn=continuity_chat_json,
                                         )
                                         cache.put(cont_key, verdict)
                                     if should_skip_ocr(verdict):
@@ -2128,7 +2295,8 @@ def plan_and_run(args) -> int:
                                         raw = str(cached.get("text") or "")
                                     else:
                                         raw, ocr_error = ai_ocr_page(
-                                            ai_client, jpeg, args.ocr_model
+                                            ai_client, jpeg, args.ocr_model,
+                                            usage_cb=usage_sink("ocr", args.ocr_model),
                                         )
                                         if ocr_error is None:
                                             consecutive_ai_failures = 0
@@ -2180,7 +2348,7 @@ def plan_and_run(args) -> int:
                             next_raw, is_previous=False, at_book_edge=(sp == last_sp)
                         )
                         clean_key = (
-                            f"clean:{book_id}:{row['page_number']}:"
+                            f"clean:{args.clean_backend}:{book_id}:{row['page_number']}:"
                             f"{sha1_hex(text + chr(0) + prev_ctx + chr(0) + next_ctx)}"
                         )
                         cached = cache.get(clean_key)
@@ -2192,7 +2360,11 @@ def plan_and_run(args) -> int:
                             note = cached.get("note", "")
                         else:
                             text, status, needs_review, priority, note = ai_clean_and_judge(
-                                ai_client, row["raw"], prev_ctx, next_ctx, args.clean_model
+                                ai_client, row["raw"], prev_ctx, next_ctx, args.clean_model,
+                                backend=args.clean_backend,
+                                ollama_url=args.ollama_url,
+                                ollama_model=args.ollama_clean_model,
+                                usage_cb=usage_sink("clean_judge", args.clean_model),
                             )
                             if status == "failed":
                                 totals.judge_failed += 1
@@ -2362,12 +2534,23 @@ def plan_and_run(args) -> int:
         if sample_page_text and not args.execute:
             print(f"    sample text : page {sample_page_text[0]}: {sample_page_text[1]!r}")
         print()
+
+        # Running spend snapshot every ~10 books so a long import reports cost as
+        # it goes, not only at the end (#73 cost tracking).
+        if totals.books and totals.books % 10 == 0 and usage.total_calls:
+            print(f"    ...running AI spend after {totals.books} books: "
+                  f"${usage.total_cost:.2f} ({usage.total_calls} calls)")
+            print()
     except AICircuitBreakerError as exc:
         aborted = True
         print()
         print("=" * 78)
         print(f"RUN ABORTED (circuit breaker): {exc}")
         print("=" * 78)
+        print()
+        # Report the spend even on a partial run (#73 cost tracking): an aborted
+        # import has already paid for every AI call it made.
+        print(format_cost_report(usage, books=totals.books, title="API COST (partial run)"))
         print()
 
     # --- Corpus totals ----------------------------------------------------
@@ -2405,6 +2588,12 @@ def plan_and_run(args) -> int:
         print(f"  OCR calls failed            : {totals.ocr_failed}")
         print(f"  clean/judge calls failed    : {totals.judge_failed}")
     print()
+
+    # AI token + $ cost report (#73 cost tracking). On an aborted run this was
+    # already printed under the abort banner above, so skip the duplicate.
+    if not aborted:
+        print(format_cost_report(usage, books=totals.books))
+        print()
 
     if args.execute and totals.books_flagged:
         print("FLAGGED FOR REVIEW (fails coherence and/or context-fit)")
@@ -2525,6 +2714,45 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--no-clean",
         action="store_true",
         help="Disable the AI junk-character clean-up pass (import raw extracted text).",
+    )
+    # --- OPTIONAL local-model (Ollama) offload for the TEXT stages -------------
+    # All default to the CURRENT Claude behaviour, so nothing changes unless
+    # opted in. The clean+judge pass is ~67% of the run's API cost and is a pure
+    # text task, so a free local Gemma 3 27B can do it with a Claude fallback.
+    p.add_argument(
+        "--clean-backend",
+        choices=("claude", "ollama"),
+        default="claude",
+        help="Backend for the per-page clean+judge pass. 'claude' (default) is "
+        "unchanged; 'ollama' offloads it to a local model and falls back to "
+        "Claude on ANY local failure or a clean that fails the token-subset guard.",
+    )
+    p.add_argument(
+        "--continuity-backend",
+        choices=("claude", "ollama"),
+        default="claude",
+        help="Backend for the text-only neighbour-continuity judge. 'claude' "
+        "(default) is unchanged; 'ollama' offloads it to a local model and forces "
+        "OCR (never a false skip) on any local failure.",
+    )
+    p.add_argument(
+        "--ollama-url",
+        default=DEFAULT_OLLAMA_URL,
+        help=f"Ollama OpenAI-compatible base URL for the local text backends "
+        f"(default: {DEFAULT_OLLAMA_URL}). Point at a remote GPU with e.g. "
+        f"http://<host>:11434/v1.",
+    )
+    p.add_argument(
+        "--ollama-clean-model",
+        default=DEFAULT_OLLAMA_CLEAN_MODEL,
+        help=f"Local model for --clean-backend ollama (default: "
+        f"{DEFAULT_OLLAMA_CLEAN_MODEL}). Run 'ollama pull' yourself first.",
+    )
+    p.add_argument(
+        "--ollama-continuity-model",
+        default=DEFAULT_OLLAMA_CONTINUITY_MODEL,
+        help=f"Local model for --continuity-backend ollama (default: "
+        f"{DEFAULT_OLLAMA_CONTINUITY_MODEL}).",
     )
     p.add_argument(
         "--compare-threshold",

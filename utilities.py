@@ -15,7 +15,9 @@ import urllib.error
 import bcrypt
 import smtplib
 from email.mime.text import MIMEText
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+from ai_pricing import usage_cost
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +98,15 @@ LOCATE_MAX_EDGE = 784
 
 AI_SETTINGS_COLLECTION = 'settings'
 AI_SETTINGS_DOCUMENT = 'ai_pipeline'
+
+#: Collection holding daily Claude API usage/cost rollups (one doc per UTC day,
+#: id ``YYYY-MM-DD``). Written cheaply with atomic ``firestore.Increment`` on
+#: every AI call (see ``record_api_usage``) and surfaced read-only in the admin
+#: AI-settings page. See ``record_api_usage`` for the document schema.
+AI_USAGE_COLLECTION = 'api_usage'
+
+#: How many recent daily usage docs the admin summary reads back.
+AI_USAGE_SUMMARY_DAYS = 30
 
 #: Allow-list of the real, generally-available Claude model ids that may be
 #: selected for any pipeline call. A stored/selected model NOT in this tuple is
@@ -363,6 +374,185 @@ def _log_usage(response, model, label=""):
         getattr(usage, "cache_creation_input_tokens", None),
         getattr(response, "stop_reason", None),
     )
+    # Persist the cost/token rollup for the admin usage dashboard (best-effort:
+    # a tracking failure must never break the user's actual request).
+    record_api_usage(response, model, label)
+
+
+def _usage_token_counts(usage):
+    """Read the four token counts off an SDK ``usage`` object (all guarded).
+
+    Returns ``(input, output, cache_read, cache_write)`` as ints; any missing
+    attribute counts as 0 so an SDK usage-shape change can't crash accounting.
+    """
+    return (
+        int(getattr(usage, "input_tokens", 0) or 0),
+        int(getattr(usage, "output_tokens", 0) or 0),
+        int(getattr(usage, "cache_read_input_tokens", 0) or 0),
+        int(getattr(usage, "cache_creation_input_tokens", 0) or 0),
+    )
+
+
+def _usage_flow_key(label):
+    """Sanitise a flow label into a Firestore-safe map key.
+
+    Firestore treats ``.`` as a field-path separator inside a map key, so it is
+    replaced (defensive — today's labels have none). Empty labels become
+    ``"unlabelled"`` so every call is attributed to some flow.
+    """
+    key = (label or "").strip() or "unlabelled"
+    return key.replace(".", "_")
+
+
+def record_api_usage(response, model, label=""):
+    """Accumulate one Claude call's tokens + USD cost into the daily usage doc.
+
+    Cost is computed from the shared ``ai_pricing`` table (#129 — never duplicate
+    the pricing recipe). The per-day document (``api_usage/YYYY-MM-DD``) is updated
+    with atomic ``firestore.Increment`` so this is a single cheap write with NO
+    read-modify-write, safe under concurrency. The schema is::
+
+        api_usage/2026-07-04:
+          date:                    "2026-07-04"
+          total_calls, total_cost_usd,
+          total_input_tokens, total_output_tokens,
+          total_cache_read_tokens, total_cache_write_tokens
+          by_model: { "<model>": { calls, cost_usd, input_tokens,
+                                   output_tokens, cache_read_tokens,
+                                   cache_write_tokens } }
+          by_flow:  { "<label>": { ...same shape... } }
+
+    Fully guarded per the error-handling convention: a missing usage is a no-op,
+    and any Firestore/other failure is LOGGED (never raised) so usage tracking can
+    never break a user's real request.
+    """
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return
+    try:
+        input_tokens, output_tokens, cache_read, cache_write = _usage_token_counts(usage)
+        cost = usage_cost(model, input_tokens, output_tokens, cache_read, cache_write)
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        def _bucket():
+            # Fresh Increment sentinels per bucket (a sentinel is single-use).
+            return {
+                "calls": firestore.Increment(1),
+                "cost_usd": firestore.Increment(cost),
+                "input_tokens": firestore.Increment(input_tokens),
+                "output_tokens": firestore.Increment(output_tokens),
+                "cache_read_tokens": firestore.Increment(cache_read),
+                "cache_write_tokens": firestore.Increment(cache_write),
+            }
+
+        data = {
+            "date": day,
+            "total_calls": firestore.Increment(1),
+            "total_cost_usd": firestore.Increment(cost),
+            "total_input_tokens": firestore.Increment(input_tokens),
+            "total_output_tokens": firestore.Increment(output_tokens),
+            "total_cache_read_tokens": firestore.Increment(cache_read),
+            "total_cache_write_tokens": firestore.Increment(cache_write),
+            "by_model": {model: _bucket()},
+            "by_flow": {_usage_flow_key(label): _bucket()},
+        }
+        # set(merge=True) creates the day doc on first write and applies the
+        # Increment transforms to nested maps without a prior read.
+        FirestoreWrapper(auth=False).set_document(
+            AI_USAGE_COLLECTION, day, data, merge=True
+        )
+    except (GoogleAPIError, ValueError, TypeError) as exc:
+        logger.warning("record_api_usage: could not record usage (flow=%s "
+                       "model=%s): %s", label or "-", model, exc)
+
+
+_USAGE_METRIC_KEYS = (
+    "calls", "cost_usd", "input_tokens", "output_tokens",
+    "cache_read_tokens", "cache_write_tokens",
+)
+
+
+def _empty_usage_bucket():
+    """Zeroed usage metrics dict (one per model / flow / total)."""
+    return {key: 0 for key in _USAGE_METRIC_KEYS}
+
+
+def _add_usage_breakdown(target, source):
+    """Merge a stored ``{name: metrics}`` breakdown map into ``target`` in place."""
+    if not isinstance(source, dict):
+        return
+    for name, metrics in source.items():
+        if not isinstance(metrics, dict):
+            continue
+        bucket = target.setdefault(name, _empty_usage_bucket())
+        for key in _USAGE_METRIC_KEYS:
+            bucket[key] += metrics.get(key, 0) or 0
+
+
+def _day_usage_totals(doc):
+    """Extract the flat per-day totals from a stored usage doc as a metrics dict."""
+    return {
+        "calls": doc.get("total_calls", 0) or 0,
+        "cost_usd": doc.get("total_cost_usd", 0) or 0,
+        "input_tokens": doc.get("total_input_tokens", 0) or 0,
+        "output_tokens": doc.get("total_output_tokens", 0) or 0,
+        "cache_read_tokens": doc.get("total_cache_read_tokens", 0) or 0,
+        "cache_write_tokens": doc.get("total_cache_write_tokens", 0) or 0,
+    }
+
+
+def get_api_usage_summary(days=AI_USAGE_SUMMARY_DAYS):
+    """Read the recent daily API-usage docs and aggregate them for the admin view.
+
+    Reads the last ``days`` daily docs (``api_usage/YYYY-MM-DD``) by explicit id —
+    no query/index needed — and returns a read-only summary::
+
+        {
+          "today":       <metrics dict or None>,   # today's flat totals
+          "window_days": days,
+          "window":      {"totals": <metrics>, "by_model": {...}, "by_flow": {...}},
+          "daily":       [ {"date": ..., <metrics>}, ... ]  # newest first
+        }
+
+    Guarded (#127): a read failure logs and yields empty totals rather than
+    raising, so the admin page degrades gracefully.
+    """
+    window_totals = _empty_usage_bucket()
+    by_model: dict = {}
+    by_flow: dict = {}
+    daily: list = []
+    today_metrics = None
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    wrapper = FirestoreWrapper(auth=False)
+    for offset in range(days):
+        day = (datetime.now(timezone.utc) - timedelta(days=offset)).strftime("%Y-%m-%d")
+        try:
+            snapshot = wrapper.get_by_reference(AI_USAGE_COLLECTION, day)
+        except GoogleAPIError as exc:
+            logger.warning("get_api_usage_summary: could not read %s/%s: %s",
+                           AI_USAGE_COLLECTION, day, exc)
+            continue
+        if not snapshot.exists:
+            continue
+        doc = snapshot.to_dict()
+        if not isinstance(doc, dict):
+            continue
+        totals = _day_usage_totals(doc)
+        for key in _USAGE_METRIC_KEYS:
+            window_totals[key] += totals[key]
+        _add_usage_breakdown(by_model, doc.get("by_model"))
+        _add_usage_breakdown(by_flow, doc.get("by_flow"))
+        daily.append(dict(date=day, **totals))
+        if day == today:
+            today_metrics = totals
+
+    return {
+        "today": today_metrics,
+        "window_days": days,
+        "window": {"totals": window_totals, "by_model": by_model, "by_flow": by_flow},
+        "daily": daily,
+    }
 
 
 def build_vision_content(images, prompt, *, downscale=True, max_edge=1568):
@@ -471,6 +661,19 @@ def is_authenticated():
 def check_authentication_status():
     if 'authentication_status' not in st.session_state:
         st.session_state['authentication_status'] = False
+
+    if not is_authenticated():
+        # A transient session loss — a websocket reconnect or a fresh script run
+        # after the server dropped the session — empties session_state and would
+        # otherwise eject an authenticated user to the login page mid-workflow
+        # (#167). Before redirecting, transparently re-establish the session from a
+        # valid signed remember-me cookie (#111/#125). restore_session_from_cookie()
+        # re-resolves role/admin from Firestore and never trusts the cookie, so it
+        # cannot escalate privileges; it is a no-op when remember-me is not
+        # configured or no valid cookie is present. Imported lazily because
+        # cookie_auth imports from this module (avoids a circular import).
+        from cookie_auth import restore_session_from_cookie
+        restore_session_from_cookie()
 
     if not is_authenticated():
         st.switch_page("./pages/login.py")
@@ -1137,6 +1340,61 @@ def detect_book_characters(pages, client, progress_callback=None):
     if progress_callback is not None:
         progress_callback(1, 1)
     return suggestions
+
+
+# --- #170: auto-run character detection after OCR + on-demand re-run ------
+#
+# These are plain session-state helpers (no Streamlit widgets, no network) so
+# both call sites in ``pages/enter_text.py`` — the automatic hook fired right
+# after the OCR/text-extraction loop completes, and the manual "Re-run
+# character detection" button — stay tiny and share ONE place that decides
+# how to stage a (re-)run, rather than duplicating the session-state
+# bookkeeping in the page module itself (#129: one path, not a parallel one).
+# The actual AI call and the review UI are untouched — this only arranges for
+# ``pages/enter_text.py``'s existing ``detect_entry()``/``run_character_detection()``
+# to run automatically instead of waiting for an extra "Run detection" click;
+# nothing here writes a ``Character``/``Alias`` record. Idempotency against
+# duplicate characters is guaranteed downstream by the existing
+# ``commit_detected_characters()`` document_exists() checks, which run
+# regardless of how many times detection itself is (re-)triggered.
+
+CHARACTER_AUTODETECT_SOURCE_AUTO = "auto"
+CHARACTER_AUTODETECT_SOURCE_MANUAL = "manual"
+
+
+def mark_character_autodetect_pending(session_state):
+    """Flag that character detection should auto-run the next time the book's
+    enter-text page loads. Called once by ``pages.uploader._process_photo_batch``
+    right after its per-page OCR loop finishes."""
+    session_state['_pending_character_autodetect'] = True
+
+
+def consume_pending_character_autodetect(session_state):
+    """Pop and return the OCR-completion auto-detect flag (see
+    ``mark_character_autodetect_pending``). Returns True at most ONCE per OCR
+    run — ``pages/enter_text.py``'s per-book init block calls this exactly
+    once when it (re)builds the page cache for a book, so re-rendering the
+    same page (e.g. paging through the book afterwards) never re-fires it."""
+    return bool(session_state.pop('_pending_character_autodetect', False))
+
+
+def stage_character_redetect(session_state, *, source, discard_previous=True):
+    """Arrange for the NEXT render of ``pages/enter_text.py``'s ``detect_entry()``
+    to execute character detection immediately — one click/hook, not the
+    separate "Run detection" confirmation — and land on the existing
+    review/"Create selected characters" UI (#129).
+
+    ``source`` (``CHARACTER_AUTODETECT_SOURCE_AUTO``/``_MANUAL``) is recorded
+    purely so the review form can tell the user *why* suggestions appeared
+    (auto-run-after-OCR vs an on-demand re-run); it has no effect on what gets
+    created. ``discard_previous`` drops any already-staged suggestions so a
+    re-run reflects the latest page text rather than mixing runs.
+    """
+    if discard_previous:
+        session_state.pop('_detected_characters', None)
+    session_state['now_entering'] = 'detect'
+    session_state['_auto_run_detection'] = True
+    session_state['_detected_characters_source'] = source
 
 
 def lookup_isbn(isbn):
@@ -1813,10 +2071,11 @@ class FirestoreWrapper:
 #
 # FRESHNESS / INVALIDATION — IMPORTANT:
 #   The TTL is a safety net only. Whenever a write *adds* an entry to one of
-#   these collections (the FormConfirmation.confirm_new_* methods and
-#   Character.register), the caller MUST call the matching ``load_*_dict.clear()``
-#   so the next session re-reads from Firestore. The current session continues
-#   to see its own newly added entry because the entry is also written into the
+#   these collections (``register_and_link_book_entity``, ``FormConfirmation.
+#   confirm_new_book``/``confirm_new_character``, and ``Character.register``),
+#   the caller MUST call the matching ``load_*_dict.clear()`` so the next
+#   session re-reads from Firestore. The current session continues to see its
+#   own newly added entry because the entry is also written into the
 #   session_state copy in place (unchanged existing behaviour). This preserves
 #   the write-through freshness guarantee while removing the per-session full
 #   re-read.
@@ -1868,19 +2127,57 @@ def load_character_dict():
     }
 
 
+def register_and_link_book_entity(entity, dict_key, cache_clear, book_field):
+    """Register a newly-submitted author/illustrator/publisher and link it to
+    the book in progress, then return to the book form.
+
+    Author, illustrator, and publisher forms are simple enough (single name,
+    or forename/surname/gender) that the form itself IS the single review
+    step — the user sees and edits the value before submitting. A separate
+    ``confirm_entry.py`` re-confirmation page after that was pure friction, so
+    each entity's ``to_form()`` submit branch calls straight into this shared
+    helper instead of routing to ``confirm_entry.py`` (#168). This collapses
+    the "register + update the shared lookup dict + invalidate its cache +
+    link to the book + return to add_book.py" steps that used to live,
+    duplicated three times, in ``FormConfirmation.confirm_new_author`` /
+    ``confirm_new_illustrator`` / ``confirm_new_publisher`` (#129).
+
+    Args:
+        entity: the freshly-submitted, unregistered Author/Illustrator/
+            Publisher instance (already validated by the caller).
+        dict_key: session_state key of the shared lookup dict to update,
+            e.g. ``'author_dict'``.
+        cache_clear: the bound ``.clear`` method of the matching
+            ``load_*_dict`` cache_resource, called so other/new sessions
+            re-read the newly registered entry.
+        book_field: attribute name on ``current_book`` to set to the new
+            entity's name, e.g. ``'author'``.
+    """
+    entity.register()
+    st.session_state[dict_key][entity.name] = entity.get_ref()
+    # Invalidate the shared cache so other/new sessions re-read the newly
+    # registered entity (this session already sees it via the in-place
+    # session_state update above).
+    cache_clear()
+    setattr(st.session_state['current_book'], book_field, entity.name)
+    st.switch_page("./pages/add_book.py")
+
+
 # TODO: check that required fields (e.g. book title) are not blank
 # TODO: fix warnings in table display (arrows?)
 class FormConfirmation:
     """
     Class with helper methods to handle form confirmation and routing
     based on form type.
+
+    Author, illustrator, and publisher no longer route through here — their
+    single-step forms register inline via ``register_and_link_book_entity``
+    (#168). Book and character still have a genuinely separate multi-field
+    review step, so they keep the two-stage form -> confirm_entry.py flow.
     """
 
     forms = {
         'new_book': 'confirm_new_book',
-        'new_author': 'confirm_new_author',
-        'new_illustrator': 'confirm_new_illustrator',
-        'new_publisher': 'confirm_new_publisher',
         'new_character': 'confirm_new_character'
     }
 
@@ -1931,81 +2228,6 @@ class FormConfirmation:
 
         if edit_button:
             st.switch_page("./pages/add_book.py")
-
-    @classmethod
-    def confirm_new_author(cls):
-        confirm_button, edit_button = cls.display_confirmation(
-            st.session_state['current_author'].to_dict(
-                form_fields_only=True,
-                convert_ref_fields_to_ids=True
-            )
-        )
-
-        if confirm_button:
-            st.session_state['current_author'].register()
-            st.session_state['author_dict'][
-                st.session_state['current_author'].name
-            ] = st.session_state['current_author'].get_ref()
-            # Invalidate shared cache so new/other sessions re-read this author.
-            load_author_dict.clear()
-
-            st.session_state['current_book'].author = (
-                st.session_state['current_author'].name
-            )
-            st.switch_page("./pages/add_book.py")
-
-        if edit_button:
-            st.switch_page("./pages/add_author.py")
-
-    @classmethod
-    def confirm_new_illustrator(cls):
-        confirm_button, edit_button = cls.display_confirmation(
-            st.session_state['current_illustrator'].to_dict(
-                form_fields_only=True,
-                convert_ref_fields_to_ids=True
-            )
-        )
-
-        if confirm_button:
-            st.session_state['current_illustrator'].register()
-            st.session_state['illustrator_dict'][
-                st.session_state['current_illustrator'].name
-            ] = st.session_state['current_illustrator'].get_ref()
-            # Invalidate shared cache so new/other sessions re-read this illustrator.
-            load_illustrator_dict.clear()
-
-            st.session_state['current_book'].illustrator = (
-                st.session_state['current_illustrator'].name
-            )
-            st.switch_page("./pages/add_book.py")
-
-        if edit_button:
-            st.switch_page("./pages/add_illustrator.py")
-
-    @classmethod
-    def confirm_new_publisher(cls):
-        confirm_button, edit_button = cls.display_confirmation(
-            st.session_state['current_publisher'].to_dict(
-                form_fields_only=True,
-                convert_ref_fields_to_ids=True
-            )
-        )
-
-        if confirm_button:
-            st.session_state['current_publisher'].register()
-            st.session_state['publisher_dict'][
-                st.session_state['current_publisher'].name
-            ] = st.session_state['current_publisher'].get_ref()
-            # Invalidate shared cache so new/other sessions re-read this publisher.
-            load_publisher_dict.clear()
-
-            st.session_state['current_book'].publisher = (
-                st.session_state['current_publisher'].name
-            )
-            st.switch_page("./pages/add_book.py")
-
-        if edit_button:
-            st.switch_page("./pages/add_publisher.py")
 
     @classmethod
     def confirm_new_character(cls):

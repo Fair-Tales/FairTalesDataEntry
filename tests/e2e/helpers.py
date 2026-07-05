@@ -61,8 +61,13 @@ ENTER_TEXT_MANAGE_CHARACTERS_BUTTON = "enter_text_manage_characters_button"
 # pages/collection_picker.py (#75) — landing "View results" now routes HERE first.
 COLLECTION_METHOD_MENU = "collection_method_menu"
 COLLECTION_SEARCH_KEYUP = "collection_search_keyup"
+# Single "View results" button (#163). It is always enabled: it scopes to the
+# built selection, or to ALL books when nothing is selected. The separate
+# "View all books" button was removed.
 COLLECTION_VIEW_RESULTS_BUTTON = "collection_view_results_button"
-COLLECTION_VIEW_ALL_BUTTON = "collection_view_all_button"
+# Left-hand quick add/remove dropdown + the "All books" predefined option (#163).
+COLLECTION_SEARCH_MULTISELECT = "collection_search_multiselect"
+COLLECTION_PREDEFINED_ALL_BOOKS_BUTTON = "collection_predefined_all_books_button"
 
 # pages/validation.py (#47/#83) — gated to team/admin.
 VALIDATION_SUBMITTED_TOGGLE = "validation_submitted_only_toggle"

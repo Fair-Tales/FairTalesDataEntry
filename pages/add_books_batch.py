@@ -30,10 +30,11 @@ import streamlit as st
 import anthropic
 from streamlit_option_menu import option_menu
 
-from data_structures import Book, Page, ExtractionErrorLog
+from data_structures import Book, Page, ExtractionErrorLog, log_extraction_error
 from image_processing import exif_transpose_bytes
 from pages.uploader import (
     _process_page, extract_page_info, _make_reporter, PageExtractionError,
+    _register_placeholder_page,
 )
 from text_content import BatchBookEntry, Uploader, PhotoUpload
 from utilities import (
@@ -45,6 +46,7 @@ from utilities import (
     load_book_dict,
     get_s3_filesystem,
     get_anthropic_client,
+    get_ai_settings,
 )
 from photo_upload import (
     get_upload_session_id,
@@ -201,35 +203,91 @@ def _process_group_pages(book, group_pages, fs, ai_client, status):
         for index, raw_bytes in enumerate(corrected):
             page_number = index + 1
             report = _make_reporter(status, page_number, total, prefix)
-            bytes_for_extraction, _method = _process_page(
-                raw_bytes, page_number, photos_url, fs, ai_client, report
-            )
+
             # Set fields on the unregistered Page, then register() once (audit
             # item 8 — one write instead of register()+per-field write-throughs).
             page = Page(page_number=page_number, book=book.title)
-            report(Uploader.substep_extracting)
+
+            # --- Per-page isolation boundary (mirrors pages.uploader.
+            # _process_photo_batch, harden-page-loop-error-logging / #171) ---
+            #
+            # Everything below — _process_page's OpenCV/PIL correction + S3
+            # write, the extraction call, and the register() write(s) —
+            # previously ran unguarded here too: a single bad photo in ANY
+            # book of this multi-book batch (a corrupt frame OpenCV/PIL can't
+            # decode, a transient S3 write failure, a Firestore register()
+            # error) would abort not just the rest of that book's pages but
+            # every LATER book in the batch as well.
+            #
+            # The broad ``except Exception`` below is the documented exception
+            # to the narrow-except rule (see CLAUDE.md): its whole job is to
+            # be an isolation boundary around ONE page so a single failure can
+            # never blank out the rest of this book (or batch). It is NOT a
+            # silent swallow — every failure is (a) logged to the
+            # ``extraction_errors`` Firestore collection via the shared
+            # ``log_extraction_error`` helper (#129), (b) recorded in
+            # ``failed_pages`` so the user gets a "N pages couldn't be
+            # processed" warning, and (c) the page is still registered blank
+            # (best-effort, via the shared ``_register_placeholder_page``
+            # helper) so page numbering for every later page stays correct.
+            # The narrower ``except PageExtractionError`` nested inside it is
+            # the pre-existing (#132) extraction-failure path, whose detail is
+            # already logged by ``extract_page_info`` itself.
             try:
-                text, is_story, _page_type = extract_page_info(
-                    bytes_for_extraction, ai_client,
-                    book=book, page_number=page_number,
+                bytes_for_extraction, _method = _process_page(
+                    raw_bytes, page_number, photos_url, fs, ai_client, report
+                )
+
+                report(Uploader.substep_extracting)
+                try:
+                    text, is_story, _page_type = extract_page_info(
+                        bytes_for_extraction, ai_client,
+                        book=book, page_number=page_number,
+                        page_name=f"page_{page_number}.jpg",
+                        flow=ExtractionErrorLog.FLOW_BATCH,
+                    )
+                except PageExtractionError:
+                    # Detail already logged to extraction_errors; keep the
+                    # blank page and record it for the user (#132).
+                    page.register()
+                    failed_pages.append(page_number)
+                else:
+                    if text:
+                        page.text = text
+                    page.contains_story = is_story
+                    page.register()
+            except Exception as exc:  # noqa: BLE001 - isolation boundary, see comment above
+                log_extraction_error(
+                    book=book,
+                    page_number=page_number,
                     page_name=f"page_{page_number}.jpg",
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                    flow=ExtractionErrorLog.FLOW_BATCH,
+                    model=get_ai_settings()['extraction_model'],
+                )
+                _register_placeholder_page(page, page_number)
+                failed_pages.append(page_number)
+    else:
+        # No API key — register pages without extraction. Guarded the same way
+        # (harden-page-loop-error-logging / #171): a single Firestore
+        # register() failure here must not abort the rest of this (much
+        # simpler) batch either.
+        for index in range(total):
+            page_number = index + 1
+            page = Page(page_number=page_number, book=book.title)
+            try:
+                page.register()
+            except Exception as exc:  # noqa: BLE001 - isolation boundary, see above
+                log_extraction_error(
+                    book=book,
+                    page_number=page_number,
+                    page_name=f"page_{page_number}.jpg",
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
                     flow=ExtractionErrorLog.FLOW_BATCH,
                 )
-            except PageExtractionError:
-                # Detail already logged to extraction_errors; keep the blank page
-                # and record it for the user (#132).
-                page.register()
                 failed_pages.append(page_number)
-            else:
-                if text:
-                    page.text = text
-                page.contains_story = is_story
-                page.register()
-    else:
-        # No API key — register pages without extraction.
-        for index in range(total):
-            page = Page(page_number=index + 1, book=book.title)
-            page.register()
 
     return failed_pages
 

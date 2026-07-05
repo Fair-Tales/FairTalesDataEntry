@@ -10,13 +10,13 @@ import helpers as h
 
 def _open_dashboard(page):
     # Wave B (#75): 'View results' now lands on the collection picker first; the
-    # dashboard is reached via its 'View results for all books' shortcut (no
-    # collection selected -> the dashboard scopes to ALL books).
+    # dashboard is reached via the single 'View results' button (#163). With no
+    # collection built, that empty selection scopes the dashboard to ALL books.
     page.locator(f"{h.key(h.LANDING_VIEW_RESULTS)} button").click()
     page.locator(h.key(h.COLLECTION_METHOD_MENU)).wait_for(
         state="visible", timeout=h.RERUN_TIMEOUT
     )
-    page.locator(f"{h.key(h.COLLECTION_VIEW_ALL_BUTTON)} button").click()
+    page.locator(f"{h.key(h.COLLECTION_VIEW_RESULTS_BUTTON)} button").click()
     page.get_by_text(h.RESULTS_PAGE_TITLE, exact=False).first.wait_for(
         state="visible", timeout=h.RERUN_TIMEOUT
     )

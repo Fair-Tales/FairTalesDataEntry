@@ -405,6 +405,16 @@ class EnterText:
     )
     detect_failed = "Character detection failed: {error}"
     detect_none_found = "The AI did not find any characters in the text. You can add characters manually."
+    rerun_detect_button = "Re-run character detection"
+    rerun_detect_help = """
+        Re-run AI character detection now, using the current page text (e.g. after you have edited it).
+        Discards any previously suggested (not yet created) characters and suggests a fresh list. Nothing
+        is saved until you review and confirm.
+    """
+    auto_detect_banner = (
+        "These characters were detected automatically now that this book's pages have been read. "
+        "Review, correct or skip each one below, then confirm."
+    )
     review_instruction = """
         Review the suggested characters below. Correct any names, genders or other details,
         edit the comma-separated aliases, and choose an action for each one. To merge a duplicate,
@@ -458,6 +468,24 @@ class EnterText:
     page_indicator = "Showing page %d of %d."
     back_to_menu_button = "Back to menu"
     finish_submit_button = "Finish and submit book"
+
+    # --- Re-extract a single page's text on demand (#165) ---
+    reextract_button = "🔄 Re-extract this page (AI)"
+    reextract_help = """
+        Re-run automatic text recognition for just this page. Use this if the text
+        above is blank, wrong, or the extraction failed. Any edits you have made to
+        this page are saved first, then this makes a single AI request and
+        overwrites this page's text and 'Does this page contain story text?' with
+        the fresh result.
+    """
+    reextract_no_api_key = "Re-extracting text requires an Anthropic API key, which is not configured."
+    reextract_spinner = "Re-reading this page..."
+    reextract_success = "Re-extracted this page's text."
+    reextract_failed = (
+        "Could not re-extract this page — the AI request failed. "
+        "Please try again, or enter the text manually."
+    )
+    reextract_image_missing = "Could not find this page's photo to re-extract from."
 
     # --- Detected-character review form ---
     review_character_heading = "**Character {n}**"
@@ -989,6 +1017,37 @@ class AdminSettings:
     save_success = "AI pipeline settings saved. They now apply to every user."
     save_error = "Could not save the AI settings: {error}"
 
+    # Read-only API usage & cost dashboard (bottom of the page). Tokens and an
+    # estimated $ spend, recorded per Claude call and rolled up per day.
+    usage_header = "API usage & cost"
+    usage_caption = (
+        "Read-only. Token usage and estimated Claude API spend, recorded on every "
+        "call. Estimated $ uses the current pricing table (introductory Sonnet 5 "
+        "pricing applies until ~Sep 2026); treat it as a close guide, not a bill."
+    )
+    usage_no_data = "No API usage has been recorded yet."
+    usage_load_error = "Could not load API usage: {error}"
+    usage_today_header = "Today (UTC)"
+    usage_window_header = "Last {days} days"
+    usage_metric_cost = "Estimated cost"
+    usage_metric_calls = "API calls"
+    usage_metric_input = "Input tokens"
+    usage_metric_output = "Output tokens"
+    usage_by_model_header = "By model (last {days} days)"
+    usage_by_flow_header = "By flow (last {days} days)"
+    usage_daily_header = "Daily spend (last {days} days)"
+    usage_refresh_button = "Refresh usage"
+    # Breakdown-table column headers.
+    usage_col_model = "Model"
+    usage_col_flow = "Flow"
+    usage_col_date = "Date"
+    usage_col_calls = "Calls"
+    usage_col_cost = "Est. $"
+    usage_col_input = "Input"
+    usage_col_output = "Output"
+    usage_col_cache_read = "Cache read"
+    usage_col_cache_write = "Cache write"
+
 
 class RegisterUser:
     """Strings for the registration form (pages/register_user.py and
@@ -1180,6 +1239,16 @@ class Validation:
     select_book_label = "Books:"
     open_review_button = "Open for review"
     submitted_only_toggle = "Show only books submitted for validation"
+    # Show-validated / flagged-pages toggles (imported books arrive pre-marked
+    # validated=True, which hid them from this list — these controls surface
+    # them, see pages/validation.py render_list).
+    show_validated_toggle = "Show already-validated books too"
+    only_flagged_toggle = "Only books with flagged pages"
+    # Flag indicator + count suffix shown next to a book's title in the list
+    # (built from the book-level needs_review/review_pages/high_priority_review
+    # fields set by the pilot import's clean+judge pass).
+    flagged_high_label = "🚩 HIGH — {title} ({count} page(s) flagged)"
+    flagged_label = "🚩 {title} ({count} page(s) flagged)"
     # Scope control (#131): validators see ALL books by default, with the option to
     # narrow to just the books they themselves entered.
     scope_label = "Show"
@@ -1264,29 +1333,45 @@ class CollectionPicker:
     selection_header = "Your selection"
     selection_empty = (
         "No books selected yet. Use one of the methods below to build a "
-        "collection, or view results across all books."
+        "collection, or just click **View results** to see all books."
     )
     selection_count = "{n} book(s) in your collection."
     remove_book_button = "Remove"
     clear_selection_button = "Clear selection"
-    view_results_button = "View results for this collection"
-    view_all_button = "View results for all books instead"
+    # A single button now handles both cases: with books selected it scopes to
+    # that collection; with nothing selected it scopes to ALL books (#163).
+    view_results_button = "View results"
+    view_results_all_hint = "Nothing selected — this will show results for all books."
 
     # --- Method 1: search & select ---
     search_header = "Search our database and tick the books you want"
     search_label = "Search book titles"
     search_results_found = "{count} matching book(s):"
     add_book_checkbox = "{title}"
+    # Left-hand quick add/remove dropdown (#163).
+    search_dropdown_label = "Quick add books"
+    search_dropdown_help = (
+        "Pick book titles here to add them to your selection; unpick to remove "
+        "them. Stays in sync with the search checkboxes on the right."
+    )
 
     # --- Method 2: predefined collections ---
     predefined_header = "Browse predefined collections"
-    predefined_none = "There are no predefined collections yet."
+    predefined_none = (
+        "There are no named collections yet, but you can still view results for "
+        "all books below."
+    )
     predefined_select_label = "Choose a collection"
     predefined_owner_label = "Scope: {owner}"
     predefined_books_label = "Books in this collection:"
     predefined_use_button = "Load this collection into my selection"
     predefined_view_button = "View results for this collection"
     predefined_empty_collection = "This collection has no books."
+    # Synthetic "All books" option (#163): a virtual collection scoping the
+    # dashboard to every book, not stored in Firestore.
+    predefined_all_books_option = "All books"
+    predefined_all_books_caption = "Scope results to every book in the database."
+    predefined_all_books_view_button = "View results for all books"
 
     create_header = "Save your current selection as a predefined collection"
     create_help = (

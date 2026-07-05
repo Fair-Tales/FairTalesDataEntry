@@ -21,11 +21,13 @@ from utilities import (
     is_admin,
     get_ai_settings,
     save_ai_settings,
+    get_api_usage_summary,
     AI_MODEL_ALLOWLIST,
     AI_EDGE_MIN,
     AI_EDGE_MAX,
     AI_TOKENS_MIN,
     AI_TOKENS_MAX,
+    AI_USAGE_SUMMARY_DAYS,
 )
 from text_content import AdminSettings
 
@@ -188,3 +190,92 @@ if st.button(AdminSettings.save_button, disabled=disabled,
     else:
         st.success(AdminSettings.save_success)
         st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Read-only API usage & cost dashboard. Every AI call is metered into a per-day
+# Firestore doc (utilities.record_api_usage); this surfaces today's and the
+# recent window's tokens + estimated $ by model and by flow.
+st.divider()
+st.header(AdminSettings.usage_header)
+st.caption(AdminSettings.usage_caption)
+
+if st.button(AdminSettings.usage_refresh_button, key="ai_settings_usage_refresh_button"):
+    st.rerun()
+
+
+def _fmt_cost(value):
+    """Format a USD cost, keeping small amounts legible."""
+    value = float(value or 0)
+    return f"${value:.2f}" if value >= 0.01 else f"${value:.4f}"
+
+
+def _fmt_int(value):
+    """Thousands-separated integer for token/call counts."""
+    return f"{int(value or 0):,}"
+
+
+def _breakdown_rows(name_column, breakdown):
+    """Turn a ``{name: metrics}`` map into display rows sorted by descending $."""
+    rows = []
+    for name, metrics in sorted(
+        breakdown.items(), key=lambda kv: kv[1].get("cost_usd", 0), reverse=True
+    ):
+        rows.append({
+            name_column: name,
+            AdminSettings.usage_col_calls: _fmt_int(metrics.get("calls")),
+            AdminSettings.usage_col_cost: _fmt_cost(metrics.get("cost_usd")),
+            AdminSettings.usage_col_input: _fmt_int(metrics.get("input_tokens")),
+            AdminSettings.usage_col_output: _fmt_int(metrics.get("output_tokens")),
+            AdminSettings.usage_col_cache_read: _fmt_int(metrics.get("cache_read_tokens")),
+            AdminSettings.usage_col_cache_write: _fmt_int(metrics.get("cache_write_tokens")),
+        })
+    return rows
+
+
+try:
+    usage_summary = get_api_usage_summary(days=AI_USAGE_SUMMARY_DAYS)
+except GoogleAPIError as exc:
+    st.error(AdminSettings.usage_load_error.format(error=exc))
+    usage_summary = None
+
+if usage_summary is not None:
+    window = usage_summary["window"]
+    window_totals = window["totals"]
+    days = usage_summary["window_days"]
+
+    if not usage_summary["daily"]:
+        st.info(AdminSettings.usage_no_data)
+    else:
+        today = usage_summary["today"] or {}
+        st.subheader(AdminSettings.usage_today_header)
+        t1, t2, t3, t4 = st.columns(4)
+        t1.metric(AdminSettings.usage_metric_cost, _fmt_cost(today.get("cost_usd")))
+        t2.metric(AdminSettings.usage_metric_calls, _fmt_int(today.get("calls")))
+        t3.metric(AdminSettings.usage_metric_input, _fmt_int(today.get("input_tokens")))
+        t4.metric(AdminSettings.usage_metric_output, _fmt_int(today.get("output_tokens")))
+
+        st.subheader(AdminSettings.usage_window_header.format(days=days))
+        w1, w2, w3, w4 = st.columns(4)
+        w1.metric(AdminSettings.usage_metric_cost, _fmt_cost(window_totals.get("cost_usd")))
+        w2.metric(AdminSettings.usage_metric_calls, _fmt_int(window_totals.get("calls")))
+        w3.metric(AdminSettings.usage_metric_input, _fmt_int(window_totals.get("input_tokens")))
+        w4.metric(AdminSettings.usage_metric_output, _fmt_int(window_totals.get("output_tokens")))
+
+        st.markdown(f"**{AdminSettings.usage_by_model_header.format(days=days)}**")
+        st.table(_breakdown_rows(AdminSettings.usage_col_model, window["by_model"]))
+
+        st.markdown(f"**{AdminSettings.usage_by_flow_header.format(days=days)}**")
+        st.table(_breakdown_rows(AdminSettings.usage_col_flow, window["by_flow"]))
+
+        st.markdown(f"**{AdminSettings.usage_daily_header.format(days=days)}**")
+        st.table([
+            {
+                AdminSettings.usage_col_date: entry["date"],
+                AdminSettings.usage_col_calls: _fmt_int(entry["calls"]),
+                AdminSettings.usage_col_cost: _fmt_cost(entry["cost_usd"]),
+                AdminSettings.usage_col_input: _fmt_int(entry["input_tokens"]),
+                AdminSettings.usage_col_output: _fmt_int(entry["output_tokens"]),
+            }
+            for entry in usage_summary["daily"]
+        ])

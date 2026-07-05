@@ -102,6 +102,22 @@ def _entered_by_name(entered_by):
 # ---------------------------------------------------------------------------
 # Awaiting-validation list (Part A)
 # ---------------------------------------------------------------------------
+def _book_flag_label(row):
+    """Title with a flag indicator + flagged-page count, for a book with
+    ``needs_review`` pages (set on the book doc by the pilot import's
+    clean+judge pass) — HIGH-priority books get a distinct label so a
+    validator can spot them in the dropdown. Books with no flagged pages just
+    show their plain title."""
+    title = row.get('title', '')
+    if not row.get('needs_review', False):
+        return title
+    review_pages = row.get('review_pages') or []
+    count = len(review_pages)
+    if row.get('high_priority_review', False):
+        return Validation.flagged_high_label.format(title=title, count=count)
+    return Validation.flagged_label.format(title=title, count=count)
+
+
 def render_list():
     st.header(Validation.list_header)
     st.write(Validation.list_intro)
@@ -111,6 +127,24 @@ def render_list():
     submitted_only = st.toggle(
         Validation.submitted_only_toggle, value=False,
         key="validation_submitted_only_toggle",
+    )
+
+    # Imported (pilot) books arrive with validated=True already set (they were
+    # never through the archivist submit/validate flow), so the default
+    # 'not validated' filter below hides them entirely. This toggle is additive
+    # and OFF by default so normal day-to-day validation is unaffected.
+    show_validated = st.toggle(
+        Validation.show_validated_toggle, value=False,
+        key="validation_show_validated_toggle",
+    )
+
+    # Surfaces books with clean+judge review flags (mostly the same imported
+    # books) so a validator can jump straight to them without a per-book pages
+    # subquery — the book-level needs_review/review_pages/high_priority_review
+    # fields already summarise this.
+    only_flagged = st.toggle(
+        Validation.only_flagged_toggle, value=False,
+        key="validation_only_flagged_toggle",
     )
 
     # Scope control (#131): default to ALL books (cross-user review is the point of
@@ -130,9 +164,12 @@ def render_list():
     pending = [
         data
         for data in (doc.to_dict() for doc in docs)
-        if not data.get('validated', False)
+        if (show_validated or not data.get('validated', False))
         and (not submitted_only or data.get('entry_status') == 'completed')
     ]
+
+    if only_flagged:
+        pending = [data for data in pending if data.get('needs_review', False)]
 
     # "Just mine": keep only books the current validator originally entered.
     # entered_by may be a DocumentReference or a plain string, so normalise both
@@ -144,19 +181,29 @@ def render_list():
             if _entered_by_name(data.get('entered_by')) == username
         ]
 
-    pending.sort(key=lambda d: (d.get('title') or '').lower())
+    # Flagged/high-priority books float to the top so a validator can prioritise
+    # them, then the rest fall back to the existing alphabetical order.
+    pending.sort(
+        key=lambda d: (
+            not d.get('high_priority_review', False),
+            not d.get('needs_review', False),
+            (d.get('title') or '').lower(),
+        )
+    )
 
     if not pending:
         st.info(Validation.none_pending)
         return
 
-    titles = [row.get('title', '') for row in pending]
-    selected_title = st.selectbox(
-        Validation.select_book_label, options=titles, key="validation_select_book"
+    selected_index = st.selectbox(
+        Validation.select_book_label,
+        options=list(range(len(pending))),
+        format_func=lambda i: _book_flag_label(pending[i]),
+        key="validation_select_book",
     )
 
     if st.button(Validation.open_review_button, key="validation_open_review_button"):
-        row = pending[titles.index(selected_title)]
+        row = pending[selected_index]
         book = Book(db_object=row)
         st.session_state['_validation_book_id'] = book.document_id
         st.session_state['current_book'] = book
