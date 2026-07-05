@@ -32,31 +32,33 @@ def confirm(username, password, remember=False):
         st.session_state['admin'] = (role == ROLE_ADMIN)
         # Route EVERY successful login through the top-of-page authenticated
         # redirect instead of switching pages here (#139).
-        #
-        # Root cause of the "Confirm needs two clicks" bug: this call site runs
-        # deep inside the form-submit handler, WHILE Home.py is executing this
-        # page via ``st.navigation(...).run()``. Calling ``st.switch_page()`` from
-        # there races with the form-submit rerun: the first click only reruns the
-        # login page (navigation had already committed it for this run) instead of
-        # switching, so a second click was needed. The already-working remember-me
-        # path (#111) avoids this by DEFERRING navigation to the top-of-page
-        # ``if is_authenticated()`` block — a redirect issued before any widget is
-        # rendered navigates cleanly in one interaction. We now use that same
-        # deferral for the non-remember path too.
         st.session_state['_post_login_redirect'] = True
         # Persist a signed, expiring (7-day) cookie so the session survives a page
         # reload or a server restart (#111). No-op when the box was unticked or no
         # cookie_signing_key secret is configured.
+        #
+        # TRUE root cause of the recurring "Confirm needs two clicks" bug (#174):
+        # this handler runs INSIDE ``with st.form('LoginForm')``. Writing the
+        # remember-me cookie here means the CookieManager ``set`` component renders
+        # inside the form — and Streamlit SUPPRESSES a component's value-change
+        # rerun until the form is next submitted. The remember path deliberately
+        # issues no ``st.rerun()`` (a rerun would abort the component's cookie
+        # write) and instead trusted the component write to trigger the redirect
+        # run. Inside a form that trigger never fires, so the deferred redirect sat
+        # idle until the user clicked Confirm a SECOND time. #139 fixed the
+        # non-remember path with an explicit ``st.rerun()`` but wrongly assumed the
+        # remember path "already worked"; #144 then made Remember-me the DEFAULT,
+        # exposing the always-broken path to every login — hence the regression.
+        #
+        # Fix: NEVER write the cookie from inside the form. Both paths now set
+        # session state and issue a single deterministic ``st.rerun()`` (safe — no
+        # cookie component is rendered in this run, so nothing is aborted). For the
+        # remember path we only stash the username; the actual cookie write is
+        # deferred to the top-of-page authenticated block below, OUTSIDE the form,
+        # where the ``set`` component's write DOES trigger the follow-on redirect
+        # run cleanly. Single click for both remember-on and remember-off.
         if remember:
-            set_remember_cookie(username)
-            # Do NOT st.rerun() here: the CookieManager only writes the cookie when
-            # its component renders at the END of this run, so a rerun would abort
-            # before the write (#111). The component write itself triggers the
-            # rerun, after which the authenticated branch below redirects home.
-            return
-        # Non-remember path: nothing else will trigger a rerun, so request one
-        # explicitly. On that rerun ``is_authenticated()`` is True at the top of
-        # the page and the authenticated branch switches to the landing page.
+            st.session_state['_pending_remember_cookie'] = username
         st.rerun()
     elif result == "not_confirmed":
         # Password was correct but account not yet confirmed.  Store the
@@ -163,6 +165,22 @@ page_layout()
 render_header_bar()
 
 if is_authenticated():
+    # Deferred remember-me cookie write (#174). A single-click login that ticked
+    # "Remember me" reaches here (authenticated, redirect pending) with the
+    # username stashed. Writing the cookie HERE — at the top of the page, OUTSIDE
+    # the login st.form — lets the CookieManager ``set`` component trigger its
+    # value-change rerun normally (a form would suppress it, which is what caused
+    # the two-click bug). We must NOT redirect on this same run: st.switch_page
+    # would abort the run before the component dispatches its write, so the cookie
+    # would never persist (#111). Write, show a brief notice, and st.stop(); the
+    # component write triggers the next run, on which (no pending cookie) the
+    # _post_login_redirect branch below sends the user home. Net: one Confirm
+    # click for both remember-on and remember-off.
+    pending_remember = st.session_state.pop('_pending_remember_cookie', None)
+    if pending_remember:
+        set_remember_cookie(pending_remember)
+        st.info(Login.signing_in)
+        st.stop()
     # If the user was just re-authenticated from a remember-me cookie on a hard
     # reload (#111), send them straight to their home page rather than showing the
     # sign-out prompt. A user who navigated here deliberately while logged in (no
