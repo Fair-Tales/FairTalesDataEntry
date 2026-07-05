@@ -1211,6 +1211,16 @@ class Validation:
     select_book_label = "Books:"
     open_review_button = "Open for review"
     submitted_only_toggle = "Show only books submitted for validation"
+    # Show-validated / flagged-pages toggles (imported books arrive pre-marked
+    # validated=True, which hid them from this list — these controls surface
+    # them, see pages/validation.py render_list).
+    show_validated_toggle = "Show already-validated books too"
+    only_flagged_toggle = "Only books with flagged pages"
+    # Flag indicator + count suffix shown next to a book's title in the list
+    # (built from the book-level needs_review/review_pages/high_priority_review
+    # fields set by the pilot import's clean+judge pass).
+    flagged_high_label = "🚩 HIGH — {title} ({count} page(s) flagged)"
+    flagged_label = "🚩 {title} ({count} page(s) flagged)"
     # Scope control (#131): validators see ALL books by default, with the option to
     # narrow to just the books they themselves entered.
     scope_label = "Show"
