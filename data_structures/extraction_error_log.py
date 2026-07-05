@@ -29,10 +29,15 @@ Schema of an ``extraction_errors`` document
   book_title    (str|None)            — denormalised for human-readable reports
   page_number   (int|None)            — the 1-based page that failed
   page_name     (str|None)            — the page image filename, when known
-  error_type    (str)                 — API error class name, or ``parse_error``
+  error_type    (str)                 — API error class name, ``parse_error``, or
+                                         (for a per-page isolation failure, see
+                                         ``log_extraction_error``) the raw Python
+                                         exception class name (e.g. ``OSError``)
   error_message (str)                 — the real exception / parse-failure text
   username      (str|None)            — who triggered the upload (entered_by)
   flow          (str|None)            — 'single' | 'batch' | 'reconstruction'
+  model         (str|None)            — the extraction model configured for this
+                                         run, when known (admin-configurable, #135)
   timestamp     (datetime, UTC)       — when the failure was recorded
 """
 
@@ -74,7 +79,8 @@ class ExtractionErrorLog:
 
     @classmethod
     def record(cls, *, book_id, book_title, page_number, error_type,
-               error_message, page_name=None, username=None, flow=None):
+               error_message, page_name=None, username=None, flow=None,
+               model=None):
         """Append one failure record to the ``extraction_errors`` collection.
 
         The write is fully guarded: a logging failure must NEVER break the upload
@@ -102,9 +108,49 @@ class ExtractionErrorLog:
                     'error_message': str(error_message),
                     'username': cls._coerce(username),
                     'flow': flow,
+                    'model': model,
                     'timestamp': datetime.now(timezone.utc),
                 },
             )
         except Exception as exc:  # noqa: BLE001 - see docstring: must not break upload
             logger.warning("ExtractionErrorLog.record failed to write: %s", exc)
             return None
+
+
+def log_extraction_error(*, book=None, page_number=None, page_name=None,
+                          error_type, error_message, flow=None, model=None,
+                          username=None):
+    """Shared entry point for logging ANY page-processing failure (#129, harden-
+    page-loop-error-logging).
+
+    Extracts ``book_id``/``book_title`` from a book-like object (mirroring the
+    ``getattr(book, 'document_id'/'title', None)`` pattern previously duplicated
+    at each call site) and defaults ``username`` from the session, then routes
+    through ``ExtractionErrorLog.record``. Two call sites share this:
+
+      * ``pages.uploader.extract_page_info`` — the pre-existing Anthropic-API /
+        JSON-parse failure path (#132).
+      * ``pages.uploader._process_photo_batch``'s per-page isolation boundary —
+        ANY other exception raised while processing one page (a corrupt photo
+        hitting OpenCV/PIL, an S3 write blip, a Firestore ``register()`` error),
+        so every kind of page failure ends up visible in the same
+        ``extraction_errors`` collection, not just API errors.
+
+    Inherits ``record``'s guarantee that a logging failure itself can never
+    raise — this function does no extra work that could throw before calling it.
+    """
+    book_id = getattr(book, 'document_id', None) if book is not None else None
+    book_title = getattr(book, 'title', None) if book is not None else None
+    if username is None:
+        username = st.session_state.get('username')
+    return ExtractionErrorLog.record(
+        book_id=book_id,
+        book_title=book_title,
+        page_number=page_number,
+        page_name=page_name,
+        error_type=error_type,
+        error_message=error_message,
+        username=username,
+        flow=flow,
+        model=model,
+    )
