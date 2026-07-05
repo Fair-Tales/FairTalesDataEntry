@@ -252,6 +252,32 @@ def uploads_settled(fs, flow_key, session_id, settle_seconds=UPLOAD_SETTLE_SECON
     return len(keys) <= len(first), keys
 
 
+def _app_base_url():
+    """Public base URL (trailing slash) for building the phone/QR deep-link.
+
+    The link must point at the PUBLIC deployment, not the server's internal
+    address. Prefer the live request's Origin/Host (correct on any deployment and
+    robust to a mis-set ``app_url`` secret — e.g. a leftover ``localhost`` value
+    copied into production); fall back to the configured ``st.secrets.app_url``.
+    """
+    try:
+        headers = getattr(st.context, "headers", None) or {}
+        origin = headers.get("Origin") or headers.get("origin")
+        if origin:
+            return origin.rstrip("/") + "/"
+        host = (
+            headers.get("X-Forwarded-Host")
+            or headers.get("Host")
+            or headers.get("host")
+        )
+        if host:
+            proto = headers.get("X-Forwarded-Proto") or "https"
+            return f"{proto}://{host.rstrip('/')}/"
+    except Exception:  # noqa: BLE001 - best-effort; degrade to the configured app_url
+        pass
+    return str(st.secrets.get("app_url", "") or "")
+
+
 def build_phone_upload_url(flow_key, session_id):
     """Build the ``qr_landing`` deep-link that points a phone at THIS surface's
     temp prefix ``uploads/{flow_key}/{session_id}/`` (#143).
@@ -262,7 +288,7 @@ def build_phone_upload_url(flow_key, session_id):
     only PUTs the photos; the computer surface does the processing when the user
     returns and taps its read button.
     """
-    url = f"{st.secrets.app_url}qr_landing"
+    url = f"{_app_base_url()}qr_landing"
     user = st.session_state.username
     token = (
         st.session_state.firestore.username_to_doc_ref(user)
@@ -301,7 +327,9 @@ def render_go_to_phone(flow_key, session_id):
     img = qr.make_image(fill_color="black", back_color="white")
     temp = BytesIO()
     img.save(temp)
-    st.image(temp.getvalue(), width="stretch")
+    # Fixed, phone-scannable size — width="stretch" blew the QR up so large it
+    # ran off small/zoomed screens and couldn't be scanned (hotfix).
+    st.image(temp.getvalue(), width=260)
     st.write(PhotoUpload.link_line % (target_url, target_url))
     st.write(PhotoUpload.qr_return_instruction)
 
