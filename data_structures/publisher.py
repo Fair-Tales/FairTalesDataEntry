@@ -1,5 +1,6 @@
 import streamlit as st
 from text_content import PublisherForm
+from utilities import register_and_link_book_entity, load_publisher_dict
 from .base_structure import DataStructureBase, Field
 
 
@@ -62,6 +63,9 @@ class Publisher(DataStructureBase):
             ):
                 st.warning(PublisherForm.publisher_exists)
             else:
-                st.session_state['current_publisher'] = self
-                st.session_state['active_form_to_confirm'] = 'new_publisher'
-                st.switch_page("./pages/confirm_entry.py")
+                # The form above is itself the single review step, so register
+                # and return to the book form directly instead of routing
+                # through a second confirm_entry.py confirmation (#168).
+                register_and_link_book_entity(
+                    self, 'publisher_dict', load_publisher_dict.clear, 'publisher'
+                )
