@@ -1038,6 +1038,33 @@ def hash_password(password):
     return hashed_password
 
 
+def public_base_url():
+    """Public base URL (trailing slash) for links embedded in emails.
+
+    Confirmation / password-reset emails are built during a live user request, so
+    prefer the request's Origin/Host (the ACTUAL public deployment host) and fall
+    back to the configured ``app_url`` secret. This makes the links correct even
+    if ``app_url`` is stale/misconfigured (e.g. a leftover ``localhost``), which
+    was producing dead reset links.
+    """
+    try:
+        headers = getattr(st.context, "headers", None) or {}
+        origin = headers.get("Origin") or headers.get("origin")
+        if origin:
+            return origin.rstrip("/") + "/"
+        host = (
+            headers.get("X-Forwarded-Host")
+            or headers.get("Host")
+            or headers.get("host")
+        )
+        if host:
+            proto = headers.get("X-Forwarded-Proto") or "https"
+            return f"{proto}://{host.rstrip('/')}/"
+    except Exception:  # noqa: BLE001 - best-effort; degrade to the configured app_url
+        pass
+    return str(st.secrets.get("app_url", "") or "")
+
+
 def send_confirmation_email(send_to, username, confirmation_token, name):
 
     smtpserver = smtplib.SMTP_SSL('smtp.gmail.com', 465)
@@ -1058,7 +1085,7 @@ def send_confirmation_email(send_to, username, confirmation_token, name):
         The Fair Tales team
         
     """ % name
-    confirmation_link = f"{st.secrets['app_url']}confirm?token={confirmation_token}&user={username}"
+    confirmation_link = f"{public_base_url()}confirm?token={confirmation_token}&user={username}"
     body += confirmation_link
     msg = MIMEText(body)
     msg['Subject'] = subject
@@ -1084,7 +1111,7 @@ def send_password_reset_email(send_to, username, reset_token, name):
     smtpserver.login(st.secrets["email_address"], st.secrets["gmail_app_password"])
 
     body = PasswordReset.email_body % name
-    reset_link = f"{st.secrets['app_url']}reset_password?token={reset_token}&user={username}"
+    reset_link = f"{public_base_url()}reset_password?token={reset_token}&user={username}"
     body += reset_link
     msg = MIMEText(body)
     msg['Subject'] = PasswordReset.email_subject
