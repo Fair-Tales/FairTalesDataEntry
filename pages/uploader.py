@@ -12,8 +12,10 @@ from utilities import (
     mark_character_autodetect_pending,
 )
 from background_pipeline import (
-    get_page_processing_job, clear_page_processing_job, wait_for_page_result,
-    wait_for_character_suggestions,
+    JOB_STATE_KEY as BACKGROUND_JOB_KEY,
+    get_active_job, ensure_worker_running, worker_alive_for, stamp_book_id,
+    wait_for_page_result, wait_for_character_suggestions, reconcile_s3_prefix,
+    finalize_job, clear_page_processing_job,
 )
 from photo_upload import (
     get_upload_session_id,
@@ -198,9 +200,11 @@ def _process_page(raw_bytes, page_number, photos_url, fs, ai_client, report=None
     return bytes_for_extraction, method
 
 
-def _consume_background_result(result, page_number, photos_url, fs, job):
-    """Apply one page's precomputed background result (#179) on the script
-    thread: persist the corrected image to S3 and return the extraction triple.
+def _consume_background_result(result, page_number, model):
+    """Turn one page's durable background result (#179) into the extraction
+    triple on the script thread. The page's raw + corrected images are ALREADY
+    in S3 at the (now reconciled) final prefix — the worker wrote them as it
+    processed, so there is no image write here.
 
     A failure the worker recorded for this page is logged to
     ``extraction_errors`` HERE (the worker thread has no session access) through
@@ -208,11 +212,7 @@ def _consume_background_result(result, page_number, photos_url, fs, job):
     re-raised as :class:`PageExtractionError` so the caller's existing
     blank-page/failed-pages handling applies unchanged (#132).
     """
-    corrected = result.get('corrected')
-    if corrected is not None:
-        with fs.open(f"{photos_url}/page_{page_number}_cropped.jpg", 'wb') as f:
-            f.write(corrected)
-    outcome, payload = result['extraction']
+    outcome, payload, _method, _corrected = result
     if outcome != 'ok':
         error_type, error_message = payload
         log_extraction_error(
@@ -222,10 +222,11 @@ def _consume_background_result(result, page_number, photos_url, fs, job):
             error_type=error_type,
             error_message=error_message,
             flow=ExtractionErrorLog.FLOW_SINGLE,
-            model=job['settings']['extraction_model'],
+            model=model,
         )
         raise PageExtractionError(error_type, error_message)
-    return payload
+    text, is_story, page_type = payload
+    return text, is_story, page_type
 
 
 def _register_placeholder_page(page, page_number):
@@ -256,6 +257,254 @@ def _register_placeholder_page(page, page_number):
         )
 
 
+def _register_processed_page(page_number, produce, model):
+    """Run the per-page isolation boundary ONCE and register the Page (#129 —
+    shared by the durable-job finalize path and the inline pipeline so the
+    identical error handling lives in one place).
+
+    ``produce`` is a zero-arg callable returning ``(text, is_story, page_type)``
+    or raising :class:`PageExtractionError`. Returns ``(status, copyright_text)``
+    where ``status`` is ``'ok'`` / ``'failed'`` and ``copyright_text`` is the
+    page's text when it is the copyright page (else ``None``). Never raises.
+
+    The broad ``except Exception`` is the documented exception to the
+    narrow-except rule (CLAUDE.md): its whole job is to be an isolation boundary
+    around ONE page so a single failure can never blank out the rest of the
+    book. It is NOT a silent swallow — every failure is logged to
+    ``extraction_errors`` via the shared helper, the page is still registered
+    blank (best-effort) so page numbering stays intact, and the caller records
+    it in ``failed_pages`` for the user-facing "page N couldn't be read"
+    warning (#132). The nested ``except PageExtractionError`` is the
+    pre-existing (#132) extraction-failure path, already logged by its source.
+    """
+    current_book = st.session_state['current_book']
+    # Set fields on the UNREGISTERED object first, then register() once (audit
+    # item 8 — write amplification): otherwise register() writes the doc and
+    # each field then write-throughs a separate Firestore update.
+    page = Page(page_number=page_number, book=current_book.title)
+    try:
+        try:
+            text, is_story, page_type = produce()
+        except PageExtractionError:
+            # Detail already logged to extraction_errors; keep the blank page in
+            # the sequence and record it for the user (#132).
+            page.register()
+            return 'failed', None
+        if text:
+            page.text = text
+        page.contains_story = is_story
+        page.register()
+        return 'ok', (text if (page_type == 'copyright' and text) else None)
+    except Exception as exc:  # noqa: BLE001 - per-page isolation boundary, see docstring
+        log_extraction_error(
+            book=current_book,
+            page_number=page_number,
+            page_name=f"page_{page_number}.jpg",
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+            flow=ExtractionErrorLog.FLOW_SINGLE,
+            model=model,
+        )
+        _register_placeholder_page(page, page_number)
+        return 'failed', None
+
+
+def _finalize_job_batch(job, raw_bytes_list, total, fs, db, ai_client, model,
+                        status, progress):
+    """Finalise a durable background job (#179): collect each page's persisted
+    result, reconcile the S3 folder to the final book title, register the Page
+    docs, and hand over the precomputed character suggestions.
+
+    The worker has been correcting/OCR-ing straight to S3 + Firestore, so there
+    is almost no work left here — this mostly waits (usually already done),
+    renames the S3 folder if the user edited the title, and does the
+    script-thread-only Firestore ``register()`` writes. Pages the worker could
+    not produce (it died before reaching them) fall back to inline processing.
+    Returns ``(copyright_text, failed_pages)``.
+    """
+    current_book = st.session_state['current_book']
+    copyright_text = None
+    failed_pages = []
+    settings = get_ai_settings()
+
+    # Make sure a worker is advancing this job in THIS process — resume it if the
+    # starting session's worker died or this is a later/other session — and link
+    # the now-known book id to the durable job for cross-session discovery.
+    ensure_worker_running(fs, db, ai_client, settings, job, raw_bytes_list)
+    stamp_book_id(db, job, current_book.document_id)
+    alive = worker_alive_for(job)
+
+    # Wait for EVERY page's durable result before touching the S3 layout, so the
+    # worker is guaranteed to have stopped writing into the working prefix by the
+    # time we reconcile it. Each result is (outcome, payload, method, corrected)
+    # or None (worker could not produce it -> inline fallback below).
+    results = {}
+    for page_number in range(1, total + 1):
+        status.update(label=Uploader.substep_collecting_result.format(page=page_number, total=total))
+        results[page_number] = wait_for_page_result(
+            db, job, page_number, worker_alive=alive,
+            on_wait=partial(
+                lambda p: status.update(
+                    label=Uploader.substep_collecting_result.format(page=p, total=total)),
+                page_number,
+            ),
+        )
+        progress.progress(page_number / total)
+
+    # Reconcile the S3 working folder to the final book-title folder (rename if
+    # the user edited the title on the metadata form, #179) BEFORE any register /
+    # inline write, so both worker-written and fallback pages land under it.
+    final_title = current_book.title
+    photos_url = reconcile_s3_prefix(fs, job, final_title)
+
+    current_book.photos_uploaded = True
+    current_book.photos_url = photos_url
+    current_book.page_count = total
+
+    for page_number in range(1, total + 1):
+        report = _make_reporter(status, page_number, total)
+        result = results[page_number]
+
+        def _produce(result=result, page_number=page_number, report=report):
+            if result is not None:
+                # Images already in S3 at the final prefix (worker wrote them,
+                # reconcile moved them) — just classify + return the result.
+                return _consume_background_result(result, page_number, model)
+            # Fallback: the worker never produced this page. Process it inline
+            # now, writing raw + corrected under the final prefix.
+            raw_bytes = exif_transpose_bytes(raw_bytes_list[page_number - 1])
+            with fs.open(f"{photos_url}/page_{page_number}.jpg", 'wb') as f:
+                f.write(raw_bytes)
+            bytes_for_extraction, _method = _process_page(
+                raw_bytes, page_number, photos_url, fs, ai_client, report
+            )
+            report(Uploader.substep_extracting)
+            return extract_page_info(
+                bytes_for_extraction, ai_client, book=current_book,
+                page_number=page_number, page_name=f"page_{page_number}.jpg",
+                flow=ExtractionErrorLog.FLOW_SINGLE,
+            )
+
+        page_status, cp = _register_processed_page(page_number, _produce, model)
+        if page_status == 'failed':
+            failed_pages.append(page_number)
+        elif cp and copyright_text is None:
+            copyright_text = cp
+        progress.progress(page_number / total)
+
+    # Precomputed whole-book character detection (#170/#182/#183): hand the
+    # worker's suggestions to enter-text so the review form appears instantly.
+    # ``None`` (detection failed / skipped / no worker left) leaves enter-text to
+    # run detection live, exactly as before. Keyed by book id so a stale stash
+    # can never surface for a different book.
+    status.update(label=Uploader.detecting_characters)
+    suggestions = wait_for_character_suggestions(db, job, worker_alive=alive)
+    if suggestions is not None:
+        st.session_state['_precomputed_character_suggestions'] = {
+            'book_id': current_book.document_id,
+            'suggestions': suggestions,
+        }
+    mark_character_autodetect_pending(st.session_state)
+
+    finalize_job(db, job, final_title)
+    clear_page_processing_job(st.session_state)
+    status.update(label=Uploader.processing_complete, state="complete")
+    return copyright_text, failed_pages
+
+
+def _inline_ai_batch(raw_bytes_list, total, fs, ai_client, model, status, progress):
+    """Inline (no background job) upload + per-page correction/OCR pipeline —
+    the path taken by QR / manual re-upload of an existing book, and the fallback
+    when no durable job exists. Returns ``(copyright_text, failed_pages)``.
+    """
+    current_book = st.session_state['current_book']
+    photos_url = f"sawimages/{current_book.title}"
+    copyright_text = None
+    failed_pages = []
+
+    # Phase 1 — upload raw photos to S3 (orientation-normalised, #51). Idempotent.
+    oriented_list = []
+    for fi, raw_bytes in enumerate(raw_bytes_list):
+        status.update(label=Uploader.saving_photo.format(current=fi + 1, total=total))
+        raw_bytes = exif_transpose_bytes(raw_bytes)
+        oriented_list.append(raw_bytes)
+        with fs.open(f"{photos_url}/page_{fi + 1}.jpg", 'wb') as f:
+            f.write(raw_bytes)
+        progress.progress((fi + 1) / total)
+    raw_bytes_list = oriented_list
+
+    current_book.photos_uploaded = True
+    current_book.photos_url = photos_url
+    current_book.page_count = total
+    status.update(label=Uploader.photos_saved)
+
+    # Phase 2 — image correction + text extraction per page.
+    for i, raw_bytes in enumerate(raw_bytes_list):
+        page_number = i + 1
+        report = _make_reporter(status, page_number, total)
+
+        def _produce(raw_bytes=raw_bytes, page_number=page_number, report=report):
+            bytes_for_extraction, _method = _process_page(
+                raw_bytes, page_number, photos_url, fs, ai_client, report
+            )
+            report(Uploader.substep_extracting)
+            return extract_page_info(
+                bytes_for_extraction, ai_client, book=current_book,
+                page_number=page_number, page_name=f"page_{page_number}.jpg",
+                flow=ExtractionErrorLog.FLOW_SINGLE,
+            )
+
+        page_status, cp = _register_processed_page(page_number, _produce, model)
+        if page_status == 'failed':
+            failed_pages.append(page_number)
+        elif cp and copyright_text is None:
+            copyright_text = cp
+        progress.progress((i + 1) / total)
+
+    # Auto-run character detection the next time this book's enter-text page
+    # loads (#170), now that OCR has run and there is story text to work with.
+    mark_character_autodetect_pending(st.session_state)
+    status.update(label=Uploader.processing_complete, state="complete")
+    return copyright_text, failed_pages
+
+
+def _blank_batch(raw_bytes_list, total, fs, status, progress):
+    """No-API-key path: upload raw photos and register blank pages (no OCR).
+    Returns ``failed_pages``.
+    """
+    current_book = st.session_state['current_book']
+    photos_url = f"sawimages/{current_book.title}"
+    failed_pages = []
+
+    # Upload raw photos (orientation-normalised, #51) so the pages still have
+    # images to enter text against even with no OCR.
+    for fi, raw_bytes in enumerate(raw_bytes_list):
+        status.update(label=Uploader.saving_photo.format(current=fi + 1, total=total))
+        with fs.open(f"{photos_url}/page_{fi + 1}.jpg", 'wb') as f:
+            f.write(exif_transpose_bytes(raw_bytes))
+        progress.progress((fi + 1) / total)
+
+    current_book.photos_uploaded = True
+    current_book.photos_url = photos_url
+    current_book.page_count = total
+    for page_number in range(1, total + 1):
+        page = Page(page_number=page_number, book=current_book.title)
+        try:
+            page.register()
+        except Exception as exc:  # noqa: BLE001 - isolation boundary, one bad register must not abort the batch
+            log_extraction_error(
+                book=current_book,
+                page_number=page_number,
+                page_name=f"page_{page_number}.jpg",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+                flow=ExtractionErrorLog.FLOW_SINGLE,
+            )
+            failed_pages.append(page_number)
+    status.update(label=Uploader.processing_complete, state="complete")
+    return failed_pages
+
+
 def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
     """Run the upload + correction + extraction pipeline for one batch of page
     photos (already read into memory, in page order).
@@ -264,207 +513,51 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
     performs the copyright-page ISBN lookup. Shared by both the manual file-upload
     path and the photo-first reuse path (#59). The caller guards against re-running
     via '_upload_pipeline_done', which this function sets on completion.
+
+    Three sub-paths (#179):
+      * a durable background JOB exists for these photos -> finalise it
+        (``_finalize_job_batch``): its worker already corrected/OCR'd them to S3
+        + Firestore while the user filled in metadata;
+      * no job but an API key -> the inline pipeline (``_inline_ai_batch``);
+      * no API key -> register blank pages (``_blank_batch``).
     """
     total = len(sort_file_names)
-    photos_url = f"sawimages/{st.session_state['current_book'].title}"
+    model = get_ai_settings()['extraction_model']
     copyright_text = None
-    # Page numbers whose AI text-extraction failed (#132): the pages stay in the
-    # sequence as blanks and are surfaced to the user for manual entry afterwards.
     failed_pages = []
 
-    # Background pre-processing (#179): the photo-first flow starts a worker on
-    # these exact photos the moment they finish uploading, so the slow crop/
-    # rotation/OCR work runs WHILE the user completes the metadata step. Matched
-    # here by a fingerprint of the ORIGINAL raw bytes — so this must be read
-    # before Phase 1 replaces the list with EXIF-transposed copies. ``None`` for
-    # the flows that never start a worker (QR/manual page upload for an existing
-    # book), which keep the inline pipeline below unchanged.
-    job = get_page_processing_job(st.session_state, raw_bytes_list)
+    ai_client = get_anthropic_client()
 
-    # One live st.status drives the whole pipeline. Updating its label at every
-    # sub-step (upload → correct → check → extract) sends the browser frequent
-    # messages, which keeps the websocket alive instead of dropping to
-    # 'Connecting…' on slow/mobile links during the long synchronous run (#110).
+    # Recognise this session's durable background job by a fingerprint of the
+    # ORIGINAL raw bytes (read before any orientation-normalisation). ``db`` is a
+    # raw firestore client obtained from the session wrapper on THIS (script)
+    # thread and handed to any resumed worker. ``None`` when there is no job /
+    # no API key -> inline path.
+    db = None
+    job = None
+    if (
+        ai_client is not None
+        and BACKGROUND_JOB_KEY in st.session_state
+        and 'firestore' in st.session_state
+    ):
+        db = st.session_state.firestore.connect_book()
+        job = get_active_job(st.session_state, db, raw_bytes_list)
+
+    # One live st.status drives the whole pipeline. Frequent label updates send
+    # the browser messages that keep the websocket alive during the run (#110).
     with st.status(Uploader.status_header, expanded=True) as status:
         progress = st.progress(0.0)
 
-        # Phase 1 — upload raw photos to S3
-        corrected_bytes_list = []
-        for fi, raw_bytes in enumerate(raw_bytes_list):
-            status.update(label=Uploader.saving_photo.format(current=fi + 1, total=total))
-            # Normalise orientation so the stored photo and every downstream stage
-            # (correction, extraction, display) work on correctly-oriented pixels
-            # (fixes portrait photos, #51). Idempotent — a no-op once the EXIF tag
-            # is baked in — so it's safe for both the manual-upload and photo-first
-            # reuse paths that share this function.
-            raw_bytes = exif_transpose_bytes(raw_bytes)
-            corrected_bytes_list.append(raw_bytes)
-            with fs.open(f"{photos_url}/page_{fi + 1}.jpg", 'wb') as f:
-                f.write(raw_bytes)
-            progress.progress((fi + 1) / total)
-        # Downstream correction/extraction should use the orientation-corrected bytes.
-        raw_bytes_list = corrected_bytes_list
-
-        st.session_state.current_book.photos_uploaded = True
-        st.session_state.current_book.photos_url = photos_url
-        st.session_state.current_book.page_count = total
-        status.update(label=Uploader.photos_saved)
-
-        # Phase 2 — image correction + text extraction per page
-        ai_client = get_anthropic_client()
-        if ai_client is not None:
-            for i, raw_bytes in enumerate(raw_bytes_list):
-                page_number = i + 1
-                report = _make_reporter(status, page_number, total)
-
-                # Set the page's fields on the UNREGISTERED object first, then
-                # register() once (audit item 8 — write amplification): otherwise
-                # register() writes the doc and each of ``text``/``contains_story``
-                # then write-throughs a separate Firestore update. Both branches
-                # register exactly once, so the stored result is identical with
-                # one write instead of several.
-                page = Page(
-                    page_number=page_number,
-                    book=st.session_state['current_book'].title
-                )
-
-                # --- Per-page isolation boundary (harden-page-loop-error-logging) ---
-                #
-                # Everything below — ``_process_page``'s OpenCV/PIL correction and
-                # S3 write, the extraction call, and both ``register()`` writes —
-                # previously ran completely unguarded. An uncaught exception
-                # ANYWHERE in this block (the ``None.strip()`` bug this branch is
-                # built on top of, but equally a corrupt photo crashing OpenCV/PIL,
-                # a transient S3 write failure, or a Firestore ``register()``
-                # error) propagated straight out of the loop and aborted every
-                # LATER page — "first half of the book worked, second half
-                # blank" — with nothing recorded to explain why.
-                #
-                # The broad ``except Exception`` below is the documented
-                # exception to the narrow-except rule (see CLAUDE.md): its whole
-                # job is to be an isolation boundary around ONE page so a single
-                # failure can never blank out the rest of the book. It is NOT a
-                # silent swallow — every failure is (a) logged to the
-                # ``extraction_errors`` Firestore collection via the shared
-                # ``log_extraction_error`` helper, (b) recorded in
-                # ``failed_pages`` so the user gets a "page N couldn't be
-                # processed" warning, and (c) the page is still registered blank
-                # (best-effort, via ``_register_placeholder_page``) so page
-                # numbering for every later page stays correct. The narrower
-                # ``except PageExtractionError`` nested inside it is the
-                # pre-existing (#132) extraction-failure path, whose detail is
-                # already logged by ``extract_page_info`` itself.
-                try:
-                    # Prefer the background worker's precomputed result for this
-                    # page (#179): wait for it if the worker is still ahead of
-                    # us, keep feeding the status label while waiting (#110),
-                    # and fall back to the inline pipeline when the worker never
-                    # reached this page (crash/cancel — ``result`` is None).
-                    result = None
-                    if job is not None:
-                        report(Uploader.substep_collecting_result)
-                        result = wait_for_page_result(
-                            job, page_number,
-                            on_wait=partial(report, Uploader.substep_collecting_result),
-                        )
-                    try:
-                        if result is not None:
-                            text, is_story, page_type = _consume_background_result(
-                                result, page_number, photos_url, fs, job
-                            )
-                        else:
-                            bytes_for_extraction, _method = _process_page(
-                                raw_bytes, page_number, photos_url, fs, ai_client, report
-                            )
-                            report(Uploader.substep_extracting)
-                            text, is_story, page_type = extract_page_info(
-                                bytes_for_extraction, ai_client,
-                                book=st.session_state['current_book'],
-                                page_number=page_number,
-                                page_name=f"page_{page_number}.jpg",
-                                flow=ExtractionErrorLog.FLOW_SINGLE,
-                            )
-                    except PageExtractionError:
-                        # Detail already logged to extraction_errors; keep the
-                        # blank page in the sequence and record it for the user
-                        # (#132).
-                        page.register()
-                        failed_pages.append(page_number)
-                    else:
-                        if text:
-                            page.text = text
-                        page.contains_story = is_story
-                        page.register()
-
-                        if page_type == 'copyright' and text and copyright_text is None:
-                            copyright_text = text
-                except Exception as exc:  # noqa: BLE001 - isolation boundary, see comment above
-                    log_extraction_error(
-                        book=st.session_state['current_book'],
-                        page_number=page_number,
-                        page_name=f"page_{page_number}.jpg",
-                        error_type=type(exc).__name__,
-                        error_message=str(exc),
-                        flow=ExtractionErrorLog.FLOW_SINGLE,
-                        model=get_ai_settings()['extraction_model'],
-                    )
-                    _register_placeholder_page(page, page_number)
-                    failed_pages.append(page_number)
-
-                progress.progress((i + 1) / total)
-
-            if job is not None:
-                # The worker runs whole-book character detection last (#179):
-                # wait for it (usually already done by now) and hand the
-                # precomputed suggestions to the enter-text page so its
-                # auto-review appears instantly, without a further AI call.
-                # ``None`` (detection failed / never reached) simply leaves the
-                # enter-text page to run detection live as before.
-                status.update(label=Uploader.detecting_characters)
-                suggestions = wait_for_character_suggestions(job)
-                if suggestions is not None:
-                    # Keyed by book id so a stale stash can never surface for a
-                    # DIFFERENT book's enter-text view (the consumer checks it).
-                    st.session_state['_precomputed_character_suggestions'] = {
-                        'book_id': st.session_state['current_book'].document_id,
-                        'suggestions': suggestions,
-                    }
-                clear_page_processing_job(st.session_state)
-
-            status.update(label=Uploader.processing_complete, state="complete")
-            # Flag character detection to auto-run the next time this book's
-            # enter-text page loads (#170): only when OCR actually ran, since
-            # with no story text there is nothing yet for detection to find.
-            # pages/enter_text.py consumes this flag once (per book) and lands
-            # the user straight on the existing detection review UI (fed by the
-            # precomputed suggestions above when available, otherwise by a live
-            # detection run); nothing is written without human confirmation
-            # there (#182).
-            mark_character_autodetect_pending(st.session_state)
+        if job is not None:
+            copyright_text, failed_pages = _finalize_job_batch(
+                job, raw_bytes_list, total, fs, db, ai_client, model, status, progress
+            )
+        elif ai_client is not None:
+            copyright_text, failed_pages = _inline_ai_batch(
+                raw_bytes_list, total, fs, ai_client, model, status, progress
+            )
         else:
-            # No API key — register pages without extraction. Guarded the same
-            # way as the AI-extraction branch above (harden-page-loop-error-
-            # logging): a single Firestore register() failure here must not
-            # abort the rest of this (much simpler) batch either.
-            for i in range(total):
-                page_number = i + 1
-                page = Page(
-                    page_number=page_number,
-                    book=st.session_state['current_book'].title
-                )
-                try:
-                    page.register()
-                except Exception as exc:  # noqa: BLE001 - isolation boundary, see above
-                    log_extraction_error(
-                        book=st.session_state['current_book'],
-                        page_number=page_number,
-                        page_name=f"page_{page_number}.jpg",
-                        error_type=type(exc).__name__,
-                        error_message=str(exc),
-                        flow=ExtractionErrorLog.FLOW_SINGLE,
-                    )
-                    failed_pages.append(page_number)
-            status.update(label=Uploader.processing_complete, state="complete")
+            failed_pages = _blank_batch(raw_bytes_list, total, fs, status, progress)
 
     # If OCR was skipped wholesale because no API key is configured, tell the user
     # explicitly rather than silently registering blank pages (#153) — the batch

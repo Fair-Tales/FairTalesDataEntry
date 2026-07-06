@@ -232,19 +232,6 @@ def _run_extraction(fs, *, check_settled):
 
     client = get_anthropic_client()
 
-    # Kick the slow per-page crop/rotation/OCR (+ character-detection) pipeline
-    # off NOW, in a background worker thread, so it runs while the metadata is
-    # extracted below and while the user checks/completes the Add-Book form
-    # (#179). ``uploader._process_photo_batch`` recognises the job by a
-    # fingerprint of these photo bytes and consumes its results instead of
-    # re-running the slow work; nothing is written to S3/Firestore until then.
-    # Idempotent per photo set, so a rerun of this page cannot double-process.
-    if client is not None:
-        start_page_processing_job(
-            st.session_state, [data for _name, data in pages],
-            client, get_ai_settings(),
-        )
-
     metadata = None
     try:
         with st.spinner(BookPhotoEntry.extracting):
@@ -260,6 +247,27 @@ def _run_extraction(fs, *, check_settled):
     if metadata is None:
         st.session_state.pop('photos_ready_auto', None)
         return
+
+    # Kick the slow per-page crop/rotation/OCR (+ character-detection) pipeline
+    # off NOW, as a DURABLE background job (#179), so it runs while the user
+    # checks the metadata below and fills in the Add-Book form. The worker writes
+    # each corrected page to S3 and each result to Firestore as it goes, so the
+    # work survives a websocket drop / reconnect / app restart and costs no extra
+    # RAM; ``uploader._process_photo_batch`` finalises whatever is done instead of
+    # redoing it. Started AFTER metadata extraction so the S3 working folder can
+    # be seeded with the extracted title (no rename needed if the user keeps it).
+    # ``fs``/``db`` are built on THIS (script) thread and handed to the worker.
+    if client is not None:
+        start_page_processing_job(
+            st.session_state,
+            get_s3_filesystem(),
+            st.session_state.firestore.connect_book(),
+            client,
+            get_ai_settings(),
+            [data for _name, data in pages],
+            entered_by=st.session_state.get('username'),
+            extracted_title=metadata.get('title'),
+        )
 
     has_any = bool(
         metadata.get('title')
@@ -398,8 +406,12 @@ if st.session_state.get('photo_extract_empty'):
 cancel_button = st.button(BookPhotoEntry.cancel_text, key="add_book_photos_cancel_button")
 if cancel_button:
     # Stop the background processing worker (if one was started for these
-    # photos) so a cancelled entry does not keep burning AI calls (#179).
-    cancel_page_processing_job(st.session_state)
+    # photos) so a cancelled entry does not keep burning AI calls, and mark the
+    # durable job cancelled so any resumed worker stops too (#179).
+    cancel_page_processing_job(
+        st.session_state,
+        st.session_state.firestore.connect_book() if 'firestore' in st.session_state else None,
+    )
     # Remove any photos already uploaded to the temp prefix so they don't orphan,
     # and drop the session id so the next entry mints a fresh prefix.
     _cleanup_uploads()

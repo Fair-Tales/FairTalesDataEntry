@@ -167,8 +167,12 @@ def add_book_from_photos():
     ):
         st.session_state.pop(_key, None)
     # Stop any background page-processing worker left from a previous
-    # (abandoned) photo-first entry so it does not keep burning AI calls (#179).
-    cancel_page_processing_job(st.session_state)
+    # (abandoned) photo-first entry so it does not keep burning AI calls, and
+    # mark the durable job cancelled so a resumed worker stops too (#179).
+    cancel_page_processing_job(
+        st.session_state,
+        st.session_state.firestore.connect_book() if 'firestore' in st.session_state else None,
+    )
     # Start a fresh direct-to-S3 upload session (#114) so the new entry mints its
     # own uploads/single/{session_id}/ prefix rather than reusing the previous one.
     reset_upload_session("single")
