@@ -2,7 +2,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from utilities import check_authentication_status, page_layout
+from utilities import check_authentication_status, page_layout, navigate_to
 from text_content import CharacterForm, ResultsDashboard
 
 check_authentication_status()
@@ -11,6 +11,12 @@ page_layout(current_page="./pages/results_dashboard.py")
 
 st.title(ResultsDashboard.page_title)
 st.write(ResultsDashboard.intro)
+
+# Results default to ALL books (#163); the collection picker's tools (search,
+# predefined collections, from-photos) remain one click away for anyone who
+# wants to scope down to a subset.
+if st.button(ResultsDashboard.change_selection_button, key="results_dashboard_change_selection_button"):
+    navigate_to("./pages/collection_picker.py")
 
 
 def _book_id(book_ref):
