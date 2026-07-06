@@ -625,6 +625,11 @@ class ResultsDashboard:
         "Showing results for the selected collection of {n} book(s)."
     )
 
+    # Link back to the collection picker (#75/#163): results default to ALL
+    # books, but the picker's search/predefined/photo tools stay one click away
+    # for anyone who wants to scope down to a subset.
+    change_selection_button = "Choose / change books"
+
     empty_message = """
         There are no characters in the current selection yet, so there is nothing
         to chart. Enter some character data (or choose a different collection) and
