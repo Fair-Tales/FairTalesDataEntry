@@ -28,6 +28,11 @@ from utilities import (
     fuzzy_match_name,
     get_s3_filesystem,
     get_anthropic_client,
+    get_ai_settings,
+)
+from background_pipeline import (
+    start_page_processing_job,
+    cancel_page_processing_job,
 )
 from photo_upload import (
     get_upload_session_id,
@@ -226,6 +231,20 @@ def _run_extraction(fs, *, check_settled):
     st.session_state['photo_first_pages'] = pages
 
     client = get_anthropic_client()
+
+    # Kick the slow per-page crop/rotation/OCR (+ character-detection) pipeline
+    # off NOW, in a background worker thread, so it runs while the metadata is
+    # extracted below and while the user checks/completes the Add-Book form
+    # (#179). ``uploader._process_photo_batch`` recognises the job by a
+    # fingerprint of these photo bytes and consumes its results instead of
+    # re-running the slow work; nothing is written to S3/Firestore until then.
+    # Idempotent per photo set, so a rerun of this page cannot double-process.
+    if client is not None:
+        start_page_processing_job(
+            st.session_state, [data for _name, data in pages],
+            client, get_ai_settings(),
+        )
+
     metadata = None
     try:
         with st.spinner(BookPhotoEntry.extracting):
@@ -378,6 +397,9 @@ if st.session_state.get('photo_extract_empty'):
 
 cancel_button = st.button(BookPhotoEntry.cancel_text, key="add_book_photos_cancel_button")
 if cancel_button:
+    # Stop the background processing worker (if one was started for these
+    # photos) so a cancelled entry does not keep burning AI calls (#179).
+    cancel_page_processing_job(st.session_state)
     # Remove any photos already uploaded to the temp prefix so they don't orphan,
     # and drop the session id so the next entry mints a fresh prefix.
     _cleanup_uploads()

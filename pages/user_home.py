@@ -5,6 +5,7 @@ from text_content import Alerts, Instructions, old_books, BookPhotoEntry, UserHo
 from utilities import check_authentication_status, page_layout, navigate_to, clear_page_history, clear_entity_form_state
 from data_structures import Book
 from photo_upload import reset_upload_session
+from background_pipeline import cancel_page_processing_job
 import pandas as pd
 
 check_authentication_status()
@@ -159,8 +160,15 @@ def add_book_from_photos():
         'ai_prefilled_publisher', 'ai_prefilled_year',
         'photos_ready_auto', 'photo_extract_empty', 'photo_extract_diag',
         '_auto_last_count', '_auto_polls',
+        # Stale character-autodetect staging from a previous book's pipeline
+        # run (#179/#182): must not fire for (or leak suggestions into) the
+        # new entry.
+        '_pending_character_autodetect', '_precomputed_character_suggestions',
     ):
         st.session_state.pop(_key, None)
+    # Stop any background page-processing worker left from a previous
+    # (abandoned) photo-first entry so it does not keep burning AI calls (#179).
+    cancel_page_processing_job(st.session_state)
     # Start a fresh direct-to-S3 upload session (#114) so the new entry mints its
     # own uploads/single/{session_id}/ prefix rather than reusing the previous one.
     reset_upload_session("single")

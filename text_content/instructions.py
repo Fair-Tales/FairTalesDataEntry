@@ -42,12 +42,21 @@ class Instructions:
         mixing photos from different devices in one upload can put them out of order.
     """
 
+    # Shown whenever a book already has processed photos — including the moment
+    # straight after the user's own upload finishes (#180), so it must read as a
+    # "here's what happened / what's next" status, NOT as a duplicate-upload
+    # warning. ``count_str`` is e.g. " (14 pages)" or "" when the count is
+    # unknown; the caller builds it (pages/page_photo_upload.py).
     photos_already_uploaded = """
-        You have already uploaded photos for this book.
+        This book's page photos are uploaded and processed{count_str}, and the
+        text has been read from them automatically wherever possible.
 
-        You can continue straight to entering the text, or replace the photos if
-        you need to re-take, re-order or add pages. Replacing will re-upload and
-        re-process the whole set of photos for this book.
+        **Next step:** continue to check and enter the text for each page — the
+        automatically-read text is already filled in for you to correct.
+
+        If any pages need re-taking, re-ordering, or adding, you can replace the
+        photos instead. Replacing re-uploads and re-processes the whole set of
+        photos for this book.
     """
 
     go_to_phone_instructions = """
