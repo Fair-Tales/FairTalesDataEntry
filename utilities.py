@@ -878,10 +878,32 @@ def page_layout(current_page=None):
 
 
 
+def normalize_username(value):
+    """Normalize an email/username identity string for case-insensitive auth.
+
+    Email addresses are this app's usernames, so the same address must always
+    resolve to the same account regardless of how it was capitalised at
+    registration, login, or in a query-param deep link (confirm / password
+    reset / QR upload). Every identity lookup or write — the register
+    duplicate-check, the stored ``username`` field / doc id, login,
+    ``get_user``/``username_to_doc_ref``, and the confirm/reset/QR ``user``
+    query params — MUST go through this single helper (#129 reuse) rather than
+    an ad hoc ``.lower()``/``.strip()`` chain at each call site.
+
+    Returns ``""`` for ``None``/blank input so callers can treat it the same
+    as an empty string. Never apply this to passwords, tokens, or display
+    names (book titles, author/illustrator names) — those are legitimately
+    case-sensitive.
+    """
+    return value.strip().lower() if value else ""
+
+
 def get_user(username):
     db = FirestoreWrapper().connect_user(auth=False)
     users_ref = db.collection("users")
-    query_ref = users_ref.where(filter=firestore.FieldFilter("username", "==", username))
+    query_ref = users_ref.where(
+        filter=firestore.FieldFilter("username", "==", normalize_username(username))
+    )
     docs = query_ref.get()
     if len(docs) == 1:
         return docs[0]
@@ -2039,7 +2061,17 @@ class FirestoreWrapper:
         db.collection(collection).document(doc_id).delete()
 
     def username_to_doc_ref(self, username):
-        return self.connect_user().collection('users').document(username)
+        # Normalize (case-insensitive email/username identity): this method is
+        # used ONLY for the ``users`` collection (unlike the generic
+        # ``document_exists``/``delete_document`` below, which take doc ids
+        # for any collection and must NOT be lowercased). Normalizing here
+        # hardens every caller (page_photo_upload/photo_upload QR params,
+        # review_my_books, validation, base_structure's ``entered_by`` stamp,
+        # report_feedback, account_settings) against a mismatched-case
+        # username.
+        return self.connect_user().collection('users').document(
+            normalize_username(username)
+        )
 
     def document_exists(self, collection, doc_id):
         db = self.connect_book()

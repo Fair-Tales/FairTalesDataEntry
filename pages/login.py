@@ -5,6 +5,7 @@ from utilities import (
     page_layout, clear_page_history, authenticate_user, is_authenticated,
     get_role, get_user, send_confirmation_email, send_password_reset_email,
     FirestoreWrapper, ROLE_ARCHIVIST, ROLE_ADMIN, render_header_bar,
+    normalize_username,
 )
 from text_content import Terms, Alerts, PasswordReset, Login
 from data_structures import Book, Author, Publisher, Illustrator
@@ -19,6 +20,11 @@ PASSWORD_RESET_VALIDITY = timedelta(hours=1)
 
 
 def confirm(username, password, remember=False):
+    # Normalize here too (defense in depth, #129 shared helper) so
+    # session_state['username'] — which every later doc-ref/lookup keys off —
+    # is always the canonical lowercase form, even if this is ever called with
+    # un-normalized input.
+    username = normalize_username(username)
     result = authenticate_user(username, password)
     if result == "ok":
         st.session_state['authentication_status'] = True
@@ -73,7 +79,7 @@ def confirm(username, password, remember=False):
 
 def _resend_confirmation(username):
     """Look up the user's stored token and re-send the confirmation email."""
-    user = get_user(username)
+    user = get_user(normalize_username(username))
     if user:
         user_data = user.to_dict()
         send_confirmation_email(
@@ -93,7 +99,7 @@ def _request_password_reset(email):
     URL-safe token is stored on the user document together with an expiry; the
     reset page validates both before allowing a password change.
     """
-    user = get_user(email)
+    user = get_user(normalize_username(email))
     if user is None:
         return
 
@@ -203,7 +209,7 @@ else:
     if selected == Login.menu_login:
         st.header(Login.login_header)
         with st.form('LoginForm'):
-            username = st.text_input(Login.email_label, value="", key='login_email').lower()
+            username = normalize_username(st.text_input(Login.email_label, value="", key='login_email'))
             password = st.text_input(Login.password_label, type="password", value="", key='login_password')
             # "Remember me" persistent login (#111). Only offered when a signing
             # key is configured; otherwise the feature is disabled and the box is
@@ -233,9 +239,9 @@ else:
                 _resend_confirmation(st.session_state['unconfirmed_username'])
 
         with st.expander(Login.forgot_password_expander):
-            reset_email = st.text_input(
+            reset_email = normalize_username(st.text_input(
                 PasswordReset.request_email_label, key='reset_email'
-            ).lower().strip()
+            ))
             if st.button(PasswordReset.request_button_text, key="login_reset_request_button"):
                 if reset_email:
                     _request_password_reset(reset_email)
