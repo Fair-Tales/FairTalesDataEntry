@@ -387,16 +387,7 @@ class EnterText:
     """
 
     # --- AI character + alias detection (issue #52) ---
-    detect_help = """
-        Use AI to read the text you have entered so far and suggest the characters and their aliases
-        across the whole book. Nothing is saved until you review and confirm the suggestions.
-    """
-    detect_intro = """
-        This will read the story text you have entered for every page and suggest a list of
-        characters and their aliases for you to review. Make sure you have entered (or auto-extracted)
-        the page text first. Nothing is saved until you confirm.
-    """
-    detect_spinner = "Reading the book text and detecting characters..."
+    detect_spinner = "Detecting characters..."
     detect_progress = "Detecting characters — step {done} of {total}..."
     detect_no_api_key = "AI character detection requires an Anthropic API key."
     detect_no_text = (
@@ -405,11 +396,21 @@ class EnterText:
     )
     detect_failed = "Character detection failed: {error}"
     detect_none_found = "The AI did not find any characters in the text. You can add characters manually."
+    # Explicit success line above the review form (#183) — detection must never
+    # finish silently.
+    detect_success = "Character detection finished — review the {count} suggestion(s) below."
+    # Additive-run note (#182): how many detected characters were dropped from
+    # the suggestions because they already exist in this book (left unchanged).
+    detect_existing_skipped = (
+        "{count} detected character(s) already exist in this book and were left "
+        "unchanged."
+    )
     rerun_detect_button = "Re-run character detection"
     rerun_detect_help = """
-        Re-run AI character detection now, using the current page text (e.g. after you have edited it).
-        Discards any previously suggested (not yet created) characters and suggests a fresh list. Nothing
-        is saved until you review and confirm.
+        Run AI character detection again now, using the current page text (e.g. after you have edited it).
+        Only NEW characters are suggested — anything you have already entered for this book is never
+        changed or duplicated (you can still merge new suggestions into existing characters as aliases).
+        Nothing is saved until you review and confirm.
     """
     auto_detect_banner = (
         "These characters were detected automatically now that this book's pages have been read. "
@@ -458,7 +459,6 @@ class EnterText:
     contains_story_label = "Does this page contain story text?"
     add_character_button = "Add character"
     add_alias_button = "Add alias"
-    detect_button = "Detect characters (AI)"
     page_text_label = "Enter page text"
     save_page_button = "Save page"
     cancel_character_button = "Cancel adding character"
@@ -498,7 +498,6 @@ class EnterText:
     review_action_label = "Action"
     back_to_text_button = "Back to text"
     cancel_button = "Cancel"
-    run_detection_button = "Run detection"
 
 
 class CharacterForm:
@@ -1184,6 +1183,13 @@ class Uploader:
     substep_checking_crop = "Page {page} of {total}: checking the crop..."
     substep_detecting_rotation = "Page {page} of {total}: checking the orientation..."
     substep_extracting = "Page {page} of {total}: reading the text..."
+    # Background pre-processing (#179): shown while collecting (or briefly
+    # waiting for) a page's result from the worker that started at upload time.
+    substep_collecting_result = (
+        "Page {page} of {total}: collecting the result (processing started "
+        "while you entered the book details)..."
+    )
+    detecting_characters = "Detecting the book's characters..."
     page_corrected = "✓ Page {page} of {total} — auto-corrected ({method})"
     page_correction_unavailable = "⚠ Page {page} of {total} — correction unavailable, using original"
     processing_complete = "Processing complete."

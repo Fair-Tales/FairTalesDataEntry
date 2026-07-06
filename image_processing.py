@@ -332,6 +332,90 @@ def rotate_image(image_bytes, angle_degrees):
     return buf.getvalue()
 
 
+def correct_page_image(raw_bytes, ai_client, ai_settings, report=None):
+    """Run the staged crop/rotation correction pipeline for one page — pure
+    compute + AI calls only, with NO S3, Firestore or Streamlit access, so it is
+    callable from the background page-processing worker (#179) as well as from
+    ``pages.uploader._process_page`` (which adds the S3 save).
+
+    Stage 1: OpenCV perspective correction (+ Haiku crop-quality check, unless
+    the crop is high-confidence) + orientation check on the accepted crop.
+    Stage 2: rotation-only fallback on the raw photo.
+
+    ``ai_settings`` is a plain validated settings dict (``get_ai_settings()``,
+    read by the CALLER — never here, so the Streamlit cache is not touched from
+    a worker thread). ``report`` is an optional callable taking one of the
+    ``Uploader.substep_*`` templates (see ``uploader._make_reporter``).
+
+    Model-call reduction (#110): a *high-confidence*, well-framed portrait crop
+    from OpenCV is trusted and the Haiku crop-quality check is skipped. That
+    skip previously bypassed the ORIENTATION check too, which is how upside-down
+    photos of single pages — which crop to exactly the same well-framed portrait
+    geometry as upright ones — sailed through and were saved rotated 180°
+    (#181). The crop verification stays skipped (cropping is best-effort), but
+    orientation is now ALWAYS checked: the high-confidence path runs the cheap
+    rotation call on the corrected crop and applies any returned quarter-turn
+    before the crop is accepted. Orientation is never skipped while rotation
+    correction is enabled.
+
+    Returns ``(bytes_for_extraction, corrected_bytes_or_None, method)`` where
+    ``method`` is ``'opencv'``, ``'rotation'`` or ``None`` (no correction).
+    ``corrected_bytes`` is the artifact to persist as ``page_{n}_cropped.jpg``
+    when not ``None``.
+    """
+    from text_content import Uploader
+
+    report = report or (lambda _template: None)
+
+    crop_gate_on = ai_settings['enable_crop_quality_gate']
+    rotation_on = ai_settings['enable_rotation_correction']
+    crop_model = ai_settings['crop_quality_model']
+    rotation_model = ai_settings['rotation_model']
+
+    # Stage 1 — OpenCV perspective correction
+    report(Uploader.substep_correcting)
+    corrected_bytes, opencv_ok, high_confidence = correct_book_page(raw_bytes)
+    if opencv_ok:
+        if high_confidence:
+            # Trust the geometry (skip the Haiku crop verification, #110) but
+            # never the orientation (#181): verify/fix the rotation of the crop.
+            if rotation_on:
+                report(Uploader.substep_detecting_rotation)
+                angle = get_rotation_angle(
+                    corrected_bytes, ai_client, model=rotation_model
+                )
+                if angle != 0:
+                    corrected_bytes = rotate_image(corrected_bytes, angle)
+            return corrected_bytes, corrected_bytes, 'opencv'
+        if crop_gate_on:
+            report(Uploader.substep_checking_crop)
+            crop_ok = check_crop_quality(corrected_bytes, ai_client, model=crop_model)
+        else:
+            # Gate disabled by the admin: trust the geometric result directly.
+            crop_ok = True
+        if crop_ok:
+            return corrected_bytes, corrected_bytes, 'opencv'
+
+    # Stage 2 — rotation-only fallback.
+    #
+    # Rotation fix (audit item 3): when the model detects a non-zero rotation the
+    # rotated bytes are the CORRECT orientation for OCR and must be used
+    # unconditionally. The rotated frame is always persisted as the ``_cropped``
+    # artifact (no crop-quality gate here — since Stage 1 already rejected or
+    # failed the geometric crop there is no cropped alternative left for the
+    # Haiku check to approve, and a crop failure must only ever cost the CROP,
+    # never the rotation). Fallback chain: rotated+cropped -> (crop rejected/
+    # failed) rotated-only -> (rotation also not detected) raw.
+    if rotation_on:
+        report(Uploader.substep_detecting_rotation)
+        angle = get_rotation_angle(raw_bytes, ai_client, model=rotation_model)
+        if angle != 0:
+            rotated_bytes = rotate_image(raw_bytes, angle)
+            return rotated_bytes, rotated_bytes, 'rotation'
+
+    return raw_bytes, None, None
+
+
 def check_crop_quality(image_bytes, client, model=None):
     """
     Ask Claude Haiku 4.5 whether the corrected image looks like a properly
