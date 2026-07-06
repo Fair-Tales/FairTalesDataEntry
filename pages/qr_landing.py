@@ -1,5 +1,5 @@
 import streamlit as st
-from utilities import page_layout, FirestoreWrapper
+from utilities import page_layout, FirestoreWrapper, normalize_username
 from pages.uploader import upload_widget
 from Home import ensure_session
 from data_structures import Book
@@ -16,7 +16,10 @@ page_layout()
 # Auth params are always present; ``flow``/``session`` (new generic mode, #143)
 # and ``book`` (legacy page-upload mode) are optional, so read them defensively.
 token = st.query_params.get("token")
-user = st.query_params.get("user")
+# Normalize (#129 shared helper): the phone QR link is built from the
+# (already-normalized) session username, but normalize defensively here too so
+# a differently-cased ``user`` still resolves to the same account doc.
+user = normalize_username(st.query_params.get("user"))
 book = st.query_params.get("book")
 flow = st.query_params.get("flow")
 session = st.query_params.get("session")

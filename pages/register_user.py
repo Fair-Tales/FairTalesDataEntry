@@ -4,12 +4,17 @@ import bcrypt
 import email.utils
 from utilities import (
     page_layout, hash_password, send_confirmation_email, FirestoreWrapper,
-    ROLE_ARCHIVIST,
+    ROLE_ARCHIVIST, normalize_username,
 )
 from text_content import Alerts, GenderRegistration, RegisterUser
 
 
 def register_user(_username, _name, _password, _gender, _birth_year, _newsletter_opt_in=False):
+    # Normalize the email/username (case-insensitive identity, #129 shared
+    # helper) here too, on top of the widget-level normalization below, so the
+    # duplicate-check and the stored doc id/``username`` field are guaranteed
+    # consistent even if this function is ever called from another path.
+    _username = normalize_username(_username)
     hashed_password = hash_password(_password)
     confirmation_token = bcrypt.gensalt().decode('utf8')
     now = datetime.now()
@@ -92,7 +97,7 @@ page_layout()
 
 with st.form('registration_form'):
     st.title(RegisterUser.title)
-    username = st.text_input(RegisterUser.email_label, value="", key='register_email').lower().strip()
+    username = normalize_username(st.text_input(RegisterUser.email_label, value="", key='register_email'))
     name = st.text_input(RegisterUser.name_label, value="", key='name_of_user').strip()
     password = st.text_input(RegisterUser.password_label, type="password", value="", key='register_password')
     gender = st.selectbox(
