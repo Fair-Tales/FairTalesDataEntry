@@ -14,6 +14,7 @@ from utilities import (
     CHARACTER_AUTODETECT_SOURCE_AUTO, CHARACTER_AUTODETECT_SOURCE_MANUAL,
 )
 from data_structures import Page, Character, Alias, ExtractionErrorLog
+from image_processing import make_display_copy
 from pages.uploader import extract_page_info, PageExtractionError
 from text_content import EnterText, ManageCharacters, AliasForm, CharacterForm
 
@@ -261,9 +262,28 @@ def manual_correction_dialog():
     if save_col.button(EnterText.save_corrected_button, width="stretch", key="enter_text_save_corrected_button"):
         buf = io.BytesIO()
         img.save(buf, format='JPEG', quality=95)
+        corrected_bytes = buf.getvalue()
+        # Persist the full-res corrected image.
         cropped_path = f"sawimages/{book}/page_{page_number}_cropped.jpg"
         with fs.open(cropped_path, 'wb') as f:
-            f.write(buf.getvalue())
+            f.write(corrected_bytes)
+        # Regenerate the small display derivative from the SAME corrected bytes.
+        # Post-#184 the inline view prefers page_{n}_display.jpg; without this the
+        # manual correction would appear to "revert" — the new _cropped.jpg was
+        # saved but display_image() kept showing the stale display copy generated
+        # at processing time (the original, upside-down, orientation).
+        display_path = f"sawimages/{book}/page_{page_number}_display.jpg"
+        with fs.open(display_path, 'wb') as f:
+            f.write(make_display_copy(corrected_bytes))
+        # Record that a corrected image now exists (write-through persists to
+        # Firestore) so _page_has_cropped() returns True without an S3 HEAD check
+        # and display_image() defaults to the corrected view + "show original"
+        # toggle. Covers a page the auto-pipeline left uncorrected (corrected
+        # False/None) as well as re-correcting a bad auto-correction.
+        st.session_state.current_page.corrected = True
+        # Invalidate the @st.cache_data image cache so the freshly written
+        # _cropped/_display bytes are re-fetched from S3 (the cache would
+        # otherwise return the pre-save image for these keys).
         load_image.clear()
         # Close the dialog and rerun the main page so the corrected image is
         # shown immediately (st.rerun() inside an st.dialog dismisses it).

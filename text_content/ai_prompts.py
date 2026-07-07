@@ -1,38 +1,48 @@
 class AIPrompts:
 
     rotation_angle = (
-        "This is a photo of a single book page. It may have been captured "
-        "rotated sideways, or completely upside down.\n"
-        "By how many degrees CLOCKWISE must the whole image be rotated so that "
-        "the text reads the right way up — upright and left-to-right, as you "
-        "would hold the book to read it (NOT upside down and NOT sideways)?\n"
-        "Look carefully at the shapes of the letters to judge which way is up. "
-        "Upside-down text still lies along horizontal lines, so 'the lines look "
-        "horizontal' is NOT enough — the individual letters must be the right "
-        "way up.\n"
-        "The single most commonly missed case is a page photographed UPSIDE "
-        "DOWN: before answering 0, explicitly check whether the individual "
-        "letters are inverted (ascenders pointing down, letterforms mirrored "
-        "top-to-bottom, any illustration hanging the wrong way up) — if they "
-        "are, the answer is 180, not 0.\n"
+        "This is a photo of a single page from a children's picture book, OR its "
+        "front or back COVER. It may have been captured rotated sideways, or "
+        "completely upside down.\n"
+        "By how many degrees CLOCKWISE must the whole image be rotated so that it "
+        "reads the right way up — upright and left-to-right, as you would hold "
+        "the book to read it (NOT upside down and NOT sideways)?\n"
+        "Judge which way is up from EVERY cue available, in this order:\n"
+        "1. The shapes of the letters (title text on a cover counts). Upside-down "
+        "text still lies along horizontal lines, so 'the lines look horizontal' "
+        "is NOT enough — the individual letters must be the right way up "
+        "(ascenders point UP, not down).\n"
+        "2. The illustration / cover artwork: people and animals stand with head "
+        "above feet, the sky/sun/clouds are at the TOP and the ground is at the "
+        "BOTTOM. A cover often has little or no body text, so on a cover the "
+        "artwork orientation is usually the strongest cue — use it.\n"
+        "The single most commonly missed case is an image photographed UPSIDE "
+        "DOWN: before answering 0, explicitly check whether letters are inverted "
+        "(ascenders pointing down, letterforms mirrored top-to-bottom) AND "
+        "whether any illustration is hanging the wrong way up (figures on their "
+        "heads, sky at the bottom) — if either is true, the answer is 180, not "
+        "0.\n"
         "Answer with EXACTLY one of these four numbers and nothing else:\n"
         "0   = already upright, no rotation needed\n"
         "90  = rotate a quarter turn clockwise\n"
         "180 = upside down; rotate a half turn\n"
         "270 = rotate a quarter turn anticlockwise (i.e. three-quarters "
         "clockwise)\n"
-        "If there is no legible text, answer 0."
+        "If the image is blank or you genuinely cannot tell which way is up, "
+        "answer 0."
     )
 
     crop_quality_check = (
-        "Does this image show a properly cropped book page that is the RIGHT "
-        "WAY UP? Answer 'yes' only if ALL of these hold: the text is upright "
-        "and reads left-to-right the normal way (NOT upside down and NOT "
-        "sideways); the page fills most of the frame; and no significant "
-        "content is cut off. Remember that upside-down text still lies along "
+        "Does this image show a properly cropped book page or cover that is the "
+        "RIGHT WAY UP? Answer 'yes' only if ALL of these hold: it is upright and "
+        "reads the normal way (NOT upside down and NOT sideways); it fills most "
+        "of the frame; and no significant content is cut off. Judge orientation "
+        "from the letters AND the artwork: upside-down text still lies along "
         "horizontal lines, so check that the letters themselves are the right "
-        "way up, not merely that the lines are horizontal. "
-        "Answer only: yes or no."
+        "way up, not merely that the lines are horizontal; and a cover often has "
+        "little text, so also check the illustration — people and animals should "
+        "be upright (head above feet) with sky at the top and ground at the "
+        "bottom. Answer only: yes or no."
     )
 
     theme_detection = """\
@@ -344,12 +354,19 @@ Analyse this photo of a children's picture book page.
 Instructions:
 1. Correct for any rotation or tilt in the image. Focus on the book page itself \
 and ignore any background (table, hands, etc.).
-2. Decide whether the page contains any of the book's OWN text at all. Many \
-picture-book pages are WORDLESS full illustrations — that is normal and \
-expected. Set has_text to true only if the page carries real story/narrative \
-text; set it to false for a wordless illustration.
-3. Transcribe ALL story text visible on the page exactly as written. Include speech \
-bubbles and captions. Do not include page numbers.
+2. Decide whether the page carries ANY of the book's OWN printed text at all. \
+This includes story/narrative text AND any front- or back-matter text: title, \
+copyright notice, ISBN, publisher information, dedication, table of contents, \
+about-the-author, back-cover blurb or synopsis, end matter. Many picture-book \
+pages are WORDLESS full illustrations — that is normal and expected. Set \
+has_text to true if the page carries any of the book's own printed text of any \
+kind; set it to false only for a page with no readable book text at all (e.g. a \
+wordless full illustration).
+3. Transcribe ALL of the book's own printed text visible on the page exactly as \
+written — story text AS WELL AS any front/back-matter text (title, copyright \
+notice, ISBN, publisher information, dedication, contents, about-the-author, \
+back-cover blurb, end matter). Include speech bubbles and captions. Do not \
+include page numbers.
    - If the photo shows a double-page spread (two facing pages captured together in \
 one image), decide the reading order before transcribing. By default, treat the two \
 pages as separate text blocks and transcribe the LEFT-hand page fully before the \
@@ -367,10 +384,10 @@ or other background signage. Only extract text that belongs to the story itself.
    - If a word or passage is difficult to read (blurred, partially obscured, \
 unusual lettering), enclose it in square brackets with a question mark: [like this?]
    - If you cannot make out any part of a word at all, write [?] in its place.
-   - If the page has no story text (has_text is false), set text to "" (an empty \
-string). NEVER put a description, caption, or note ABOUT the illustration into the \
-text field — the text field must contain only the book's own transcribed words and \
-nothing else.
+   - If the page has no readable book text at all (has_text is false), set text \
+to "" (an empty string). NEVER put a description, caption, or note ABOUT the \
+illustration into the text field — the text field must contain only the book's \
+own transcribed words and nothing else.
 4. Classify whether this is a STORY page — meaning it contains narrative text \
 that is part of the story itself. The following page types are NOT story pages: \
 title page, half-title, copyright, dedication, contents, about the author, \
@@ -383,6 +400,16 @@ expected format:
   "text": "Once upon a time, a [small?] rabbit lived in the forest.",
   "is_story_page": true,
   "page_type": "story"
+}
+
+Example for a copyright page (front/back-matter that has text but is NOT part of \
+the story):
+{
+  "has_text": true,
+  "text": "First published in 2019 by Example Press. Text and illustrations \
+copyright © Jane Author 2019. ISBN 978-0-00-000000-0. All rights reserved.",
+  "is_story_page": false,
+  "page_type": "copyright"
 }
 
 Example for a wordless illustration:
