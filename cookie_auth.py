@@ -46,6 +46,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 from datetime import datetime, timezone, timedelta
 
 import streamlit as st
@@ -53,6 +54,8 @@ import extra_streamlit_components as stx
 from streamlit.errors import StreamlitSecretNotFoundError
 
 from utilities import get_user, get_role, ROLE_ADMIN, normalize_username
+
+logger = logging.getLogger(__name__)
 
 # Name of the browser cookie holding the signed remember-me token.
 COOKIE_NAME = "fairtales_remember"
@@ -274,3 +277,14 @@ def restore_session_from_cookie():
     st.session_state["role"] = role
     st.session_state["admin"] = role == ROLE_ADMIN
     st.session_state[RESTORED_FLAG] = True
+    # Server-side record of a reconnect-with-empty-session event (#185): this path
+    # only runs when a script rerun found NO authenticated session (a websocket
+    # reconnect / fresh script run after the server dropped the session) and we
+    # transparently rebuilt it from the remember-me cookie. Logging it lets pilot
+    # "controls vanished" reports be correlated with real disconnects. Correlates
+    # with the ``_remember_restored`` marker consumed on the next page render.
+    logger.info(
+        "Session restored from remember-me cookie for user=%s "
+        "(reconnect with empty session_state, #185).",
+        username,
+    )

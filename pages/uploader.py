@@ -4,7 +4,7 @@ from functools import partial
 import streamlit as st
 import anthropic
 from data_structures import Page, ExtractionErrorLog, log_extraction_error
-from image_processing import exif_transpose_bytes, correct_page_image
+from image_processing import exif_transpose_bytes, correct_page_image, make_display_copy
 from text_content import Instructions, AIPrompts, BookPhotoEntry, Uploader, PhotoUpload
 from utilities import (
     page_layout, check_authentication_status, extract_isbn, lookup_isbn,
@@ -197,6 +197,11 @@ def _process_page(raw_bytes, page_number, photos_url, fs, ai_client, report=None
     if corrected is not None:
         with fs.open(f"{photos_url}/page_{page_number}_cropped.jpg", 'wb') as f:
             f.write(corrected)
+    # Screen-sized display derivative (#184): enter-text ships this instead of
+    # the multi-MB original. Derived from the corrected image when one exists
+    # (what enter-text shows by default), else the oriented raw page.
+    with fs.open(f"{photos_url}/page_{page_number}_display.jpg", 'wb') as f:
+        f.write(make_display_copy(corrected if corrected is not None else raw_bytes))
     return bytes_for_extraction, method
 
 
@@ -212,7 +217,7 @@ def _consume_background_result(result, page_number, model):
     re-raised as :class:`PageExtractionError` so the caller's existing
     blank-page/failed-pages handling applies unchanged (#132).
     """
-    outcome, payload, _method, _corrected = result
+    outcome, payload, _method, corrected = result
     if outcome != 'ok':
         error_type, error_message = payload
         log_extraction_error(
@@ -226,7 +231,7 @@ def _consume_background_result(result, page_number, model):
         )
         raise PageExtractionError(error_type, error_message)
     text, is_story, page_type = payload
-    return text, is_story, page_type
+    return text, is_story, page_type, bool(corrected)
 
 
 def _register_placeholder_page(page, page_number):
@@ -262,8 +267,11 @@ def _register_processed_page(page_number, produce, model):
     shared by the durable-job finalize path and the inline pipeline so the
     identical error handling lives in one place).
 
-    ``produce`` is a zero-arg callable returning ``(text, is_story, page_type)``
-    or raising :class:`PageExtractionError`. Returns ``(status, copyright_text)``
+    ``produce`` is a zero-arg callable returning
+    ``(text, is_story, page_type, corrected)`` or raising
+    :class:`PageExtractionError`. ``corrected`` (whether an auto-corrected image
+    was written, #184) is recorded on the Page so enter-text can skip the S3 HEAD
+    check. Returns ``(status, copyright_text)``
     where ``status`` is ``'ok'`` / ``'failed'`` and ``copyright_text`` is the
     page's text when it is the copyright page (else ``None``). Never raises.
 
@@ -284,15 +292,17 @@ def _register_processed_page(page_number, produce, model):
     page = Page(page_number=page_number, book=current_book.title)
     try:
         try:
-            text, is_story, page_type = produce()
+            text, is_story, page_type, corrected = produce()
         except PageExtractionError:
             # Detail already logged to extraction_errors; keep the blank page in
-            # the sequence and record it for the user (#132).
+            # the sequence and record it for the user (#132). ``corrected`` stays
+            # None (unknown) so enter-text falls back to the S3 check for it.
             page.register()
             return 'failed', None
         if text:
             page.text = text
         page.contains_story = is_story
+        page.corrected = corrected
         page.register()
         return 'ok', (text if (page_type == 'copyright' and text) else None)
     except Exception as exc:  # noqa: BLE001 - per-page isolation boundary, see docstring
@@ -375,15 +385,16 @@ def _finalize_job_batch(job, raw_bytes_list, total, fs, db, ai_client, model,
             raw_bytes = exif_transpose_bytes(raw_bytes_list[page_number - 1])
             with fs.open(f"{photos_url}/page_{page_number}.jpg", 'wb') as f:
                 f.write(raw_bytes)
-            bytes_for_extraction, _method = _process_page(
+            bytes_for_extraction, method = _process_page(
                 raw_bytes, page_number, photos_url, fs, ai_client, report
             )
             report(Uploader.substep_extracting)
-            return extract_page_info(
+            text, is_story, page_type = extract_page_info(
                 bytes_for_extraction, ai_client, book=current_book,
                 page_number=page_number, page_name=f"page_{page_number}.jpg",
                 flow=ExtractionErrorLog.FLOW_SINGLE,
             )
+            return text, is_story, page_type, method is not None
 
         page_status, cp = _register_processed_page(page_number, _produce, model)
         if page_status == 'failed':
@@ -444,15 +455,16 @@ def _inline_ai_batch(raw_bytes_list, total, fs, ai_client, model, status, progre
         report = _make_reporter(status, page_number, total)
 
         def _produce(raw_bytes=raw_bytes, page_number=page_number, report=report):
-            bytes_for_extraction, _method = _process_page(
+            bytes_for_extraction, method = _process_page(
                 raw_bytes, page_number, photos_url, fs, ai_client, report
             )
             report(Uploader.substep_extracting)
-            return extract_page_info(
+            text, is_story, page_type = extract_page_info(
                 bytes_for_extraction, ai_client, book=current_book,
                 page_number=page_number, page_name=f"page_{page_number}.jpg",
                 flow=ExtractionErrorLog.FLOW_SINGLE,
             )
+            return text, is_story, page_type, method is not None
 
         page_status, cp = _register_processed_page(page_number, _produce, model)
         if page_status == 'failed':
@@ -480,8 +492,13 @@ def _blank_batch(raw_bytes_list, total, fs, status, progress):
     # images to enter text against even with no OCR.
     for fi, raw_bytes in enumerate(raw_bytes_list):
         status.update(label=Uploader.saving_photo.format(current=fi + 1, total=total))
+        oriented = exif_transpose_bytes(raw_bytes)
         with fs.open(f"{photos_url}/page_{fi + 1}.jpg", 'wb') as f:
-            f.write(exif_transpose_bytes(raw_bytes))
+            f.write(oriented)
+        # Display derivative (#184): no correction runs on this path, so it is
+        # derived from the oriented raw page.
+        with fs.open(f"{photos_url}/page_{fi + 1}_display.jpg", 'wb') as f:
+            f.write(make_display_copy(oriented))
         progress.progress((fi + 1) / total)
 
     current_book.photos_uploaded = True
@@ -489,6 +506,9 @@ def _blank_batch(raw_bytes_list, total, fs, status, progress):
     current_book.page_count = total
     for page_number in range(1, total + 1):
         page = Page(page_number=page_number, book=current_book.title)
+        # No auto-correction on the no-API-key path, so there is never a cropped
+        # image — record corrected=False so enter-text skips the S3 HEAD check.
+        page.corrected = False
         try:
             page.register()
         except Exception as exc:  # noqa: BLE001 - isolation boundary, one bad register must not abort the batch

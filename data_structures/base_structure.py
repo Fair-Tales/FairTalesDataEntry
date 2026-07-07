@@ -156,6 +156,25 @@ class DataStructureBase(ABC):
             self.is_registered = True
             self.save_to_db()
 
+    def register_batched(self, batch):
+        """Like :meth:`register`, but stage the initial full write into ``batch``
+        instead of committing it immediately (#184).
+
+        Preserves the write-through ``Field`` semantics: the object must be built
+        UNREGISTERED (so field assignments never hit Firestore), and this single
+        batched ``set`` replaces ``register``'s ``save_to_db``. The caller commits
+        ``batch`` once for many entities, turning N per-entity round-trips into one.
+        Sets the same ``entered_by``/``datetime_created``/``is_registered`` fields
+        as ``register`` so the persisted document is identical.
+        """
+        if not self.is_registered:
+            self.entered_by = st.session_state['firestore'].username_to_doc_ref(
+                st.session_state['username']
+            )
+            self.datetime_created = datetime.now(timezone.utc)
+            self.is_registered = True
+            batch.set(self.get_ref(), self.to_dict(), merge=True)
+
     def save_to_db(self):
         db = st.session_state['firestore'].connect_book()
         db.collection(

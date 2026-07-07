@@ -64,7 +64,7 @@ from datetime import datetime, timezone, timedelta
 
 from google.cloud import firestore
 
-from image_processing import correct_page_image, exif_transpose_bytes
+from image_processing import correct_page_image, exif_transpose_bytes, make_display_copy
 from s3_constants import S3_BUCKET
 from utilities import detect_book_characters
 
@@ -299,6 +299,14 @@ def _run_worker(fs, db, client, settings, job_id, s3_prefix, page_count,
                 )
                 if corrected is not None:
                     _s3_write(fs, f"{s3_prefix}/page_{page_number}_cropped.jpg", corrected)
+                # Screen-sized display derivative (#184): enter-text ships this
+                # instead of the multi-MB original. Derive it from the corrected
+                # image when one exists (that is what enter-text shows by default),
+                # else the oriented raw.
+                _s3_write(
+                    fs, f"{s3_prefix}/page_{page_number}_display.jpg",
+                    make_display_copy(corrected if corrected is not None else oriented),
+                )
                 outcome, payload = attempt_page_extraction(
                     bytes_for_extraction, client, settings, label=_WORKER_EXTRACTION_LABEL,
                 )
