@@ -1,19 +1,25 @@
 import io
 import zipfile
 import csv
+import logging
 import streamlit as st
 from google.api_core.exceptions import GoogleAPIError
+from botocore.exceptions import BotoCoreError, ClientError
 from utilities import (
     page_layout,
     check_authentication_status,
     FirestoreWrapper,
+    get_s3_filesystem,
     is_admin,
     is_team_or_above,
     resolve_role,
     VALID_ROLES,
     ROLE_ADMIN,
 )
+from data_structures import Book
 from text_content import FeedbackExport, Admin, AdminSettings
+
+logger = logging.getLogger(__name__)
 
 check_authentication_status()
 
@@ -213,6 +219,139 @@ if st.button(Admin.prepare_book_download_button, key="admin_prepare_book_downloa
         mime="application/zip",
         key="admin_download_book_button"
     )
+
+st.divider()
+
+# ---------------------------------------------------------------------------
+# Delete a book (#188). Admin-gated (this whole page requires is_admin) with an
+# explicit confirmation step so it can never fire by accident. Deletes the book
+# and its OWNED sub-records — its pages, characters and aliases — but NOT the
+# shared author/illustrator/publisher, which may belong to other books.
+
+
+def _remove_book_s3_folder(book):
+    """Best-effort removal of a book's S3 image folder (#188).
+
+    Reuses the shared ``get_s3_filesystem`` (#129). Guarded: a missing folder or
+    a transient S3 error must never leave the Firestore delete half-done —
+    surface a warning and carry on. Returns True only when a folder was removed.
+    """
+    folder = book.photos_url or f"sawimages/{book.title}"
+    fs = get_s3_filesystem()
+    try:
+        if fs.exists(folder):
+            fs.rm(folder, recursive=True)
+            return True
+    except (FileNotFoundError, OSError, BotoCoreError, ClientError) as exc:
+        logger.warning("Delete book: S3 folder removal failed for %s: %s", folder, exc)
+        st.warning(Admin.delete_book_s3_warning.format(folder=folder, error=exc))
+    return False
+
+
+def _delete_book_and_children(book):
+    """Delete ``book`` and its owned pages/characters/aliases (#188).
+
+    Collects every owned sub-record by its ``book`` reference (plus aliases by
+    their ``character`` reference, belt-and-suspenders for legacy aliases with no
+    ``book`` field), deletes them in chunked WriteBatches, then the book document
+    itself, and finally its S3 image folder. Shared author/illustrator/publisher
+    references are never touched.
+    """
+    firestore = st.session_state.firestore
+    book_ref = book.get_ref()
+
+    char_refs = [
+        snap.reference
+        for snap in firestore.query_stream('characters', 'book', '==', book_ref)
+    ]
+    alias_paths = set()
+    alias_refs = []
+    for snap in firestore.query_stream('aliases', 'book', '==', book_ref):
+        if snap.reference.path not in alias_paths:
+            alias_paths.add(snap.reference.path)
+            alias_refs.append(snap.reference)
+    for cref in char_refs:
+        for snap in firestore.query_stream('aliases', 'character', '==', cref):
+            if snap.reference.path not in alias_paths:
+                alias_paths.add(snap.reference.path)
+                alias_refs.append(snap.reference)
+    page_refs = [
+        snap.reference
+        for snap in firestore.query_stream('pages', 'book', '==', book_ref)
+    ]
+
+    try:
+        n_aliases = firestore.batch_delete_references(alias_refs)
+        n_chars = firestore.batch_delete_references(char_refs)
+        n_pages = firestore.batch_delete_references(page_refs)
+        firestore.delete_document(collection='books', doc_id=book.document_id)
+    except GoogleAPIError as exc:
+        logger.warning("Delete book %s failed: %s", book.document_id, exc)
+        st.error(Admin.delete_book_error.format(error=exc))
+        return
+
+    _remove_book_s3_folder(book)
+
+    # Clear the widget state so the freshly deleted book cannot be re-selected on
+    # the rerun, and surface a success summary.
+    st.session_state.pop('admin_delete_book_confirm', None)
+    st.session_state.pop('admin_delete_book_select', None)
+    st.success(
+        Admin.delete_book_success.format(
+            title=book.title, pages=n_pages, characters=n_chars, aliases=n_aliases
+        )
+    )
+    st.rerun()
+
+
+st.header(Admin.delete_book_header)
+st.write(Admin.delete_book_description)
+
+try:
+    _book_docs = list(
+        st.session_state.firestore.get_all_documents_stream(collection='books')
+    )
+except GoogleAPIError as e:
+    st.error(Admin.delete_book_load_error.format(error=e))
+    _book_docs = None
+
+if _book_docs is not None:
+    if not _book_docs:
+        st.info(Admin.delete_book_empty)
+    else:
+        # Map a human label -> the book's stored dict, sorted by title.
+        _book_options = {}
+        for _doc in sorted(
+            _book_docs, key=lambda d: (d.to_dict().get('title') or d.id).lower()
+        ):
+            _data = _doc.to_dict()
+            _title = _data.get('title') or _doc.id
+            _book_options[f"{_title}  ({_doc.id})"] = _data
+
+        _placeholder = Admin.delete_book_select_placeholder
+        _choice = st.selectbox(
+            Admin.delete_book_select_label,
+            options=[_placeholder] + list(_book_options.keys()),
+            index=0,
+            key="admin_delete_book_select",
+        )
+
+        if _choice != _placeholder:
+            _book = Book(db_object=_book_options[_choice])
+            # Confirmation step: the admin must tick a box NAMING the book before
+            # the (primary, red) delete button becomes active — a single stray
+            # click can never delete a book.
+            _confirmed = st.checkbox(
+                Admin.delete_book_confirm_label.format(title=_book.title),
+                key="admin_delete_book_confirm",
+            )
+            if st.button(
+                Admin.delete_book_button,
+                type="primary",
+                disabled=not _confirmed,
+                key="admin_delete_book_button",
+            ):
+                _delete_book_and_children(_book)
 
 st.divider()
 

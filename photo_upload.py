@@ -37,7 +37,7 @@ from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 from requests.models import PreparedRequest
 
-from text_content import BookPhotoEntry, PhotoUpload
+from text_content import BookPhotoEntry, PhotoUpload, Instructions
 
 logger = logging.getLogger(__name__)
 
@@ -332,6 +332,54 @@ def render_go_to_phone(flow_key, session_id):
     st.image(temp.getvalue(), width=260)
     st.write(PhotoUpload.link_line % (target_url, target_url))
     st.write(PhotoUpload.qr_return_instruction)
+
+
+def render_photo_instructions(container=None, expanded=True):
+    """Render the canonical "How to photograph a book" guidance (#186).
+
+    Shared across EVERY upload surface (desktop upload pages, add_book_photos, and
+    the phone ``qr_landing`` page) so the same photos-first framing/lighting/order
+    advice is always shown — previously the QR flow surfaced none of it. Rendered
+    inside a ``st.expander`` (open by default) so it is prominent but collapsible.
+    ``container`` may be any Streamlit container (defaults to the page).
+    """
+    target = container if container is not None else st
+    with target.expander(
+        Instructions.photo_instructions_expander_title, expanded=expanded
+    ):
+        st.write(Instructions.photo_instructions_canonical)
+
+
+def render_uploaded_photos_list(fs, flow_key, session_id, container=None):
+    """Render a live "uploaded so far" list for a flow/session prefix (#186).
+
+    Lists the photos already in the temp prefix (via :func:`list_uploaded_keys`)
+    with a count and page numbering ("These will become pages 1-N, in this
+    order") so a user can verify order and completeness before processing, and
+    warns when a file name appears more than once (the duplicate guard). Returns
+    the list of keys so the caller can avoid re-listing.
+    """
+    target = container if container is not None else st
+    keys = list_uploaded_keys(fs, flow_key, session_id)
+    if not keys:
+        return keys
+    names = [k.rsplit("/", 1)[-1] for k in keys]
+    target.caption(BookPhotoEntry.uploaded_so_far_header.format(count=len(names)))
+    target.write(BookPhotoEntry.uploaded_page_range.format(n=len(names)))
+    # Duplicate guard: warn if any file name shows up more than once so the user
+    # can clear and start again rather than silently uploading a page twice.
+    seen = set()
+    duplicates = sorted({n for n in names if n in seen or seen.add(n)})
+    if duplicates:
+        target.warning(
+            BookPhotoEntry.uploaded_duplicates_warning.format(
+                names=", ".join(duplicates)
+            )
+        )
+    target.write(
+        "\n".join(f"{i}. {name}" for i, name in enumerate(names, start=1))
+    )
+    return keys
 
 
 # The component markup/JS lives here as a template; only the *strings* shown to

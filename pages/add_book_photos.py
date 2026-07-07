@@ -42,6 +42,8 @@ from photo_upload import (
     cleanup_prefix,
     reset_upload_session,
     render_go_to_phone,
+    render_photo_instructions,
+    render_uploaded_photos_list,
     uploads_settled,
     list_uploaded_keys,
 )
@@ -161,6 +163,8 @@ def _apply_extracted_metadata(metadata):
 
 st.header(BookPhotoEntry.header)
 st.write(BookPhotoEntry.instructions)
+# Canonical "how to photograph a book" guidance (#186), shown on every upload surface.
+render_photo_instructions(expanded=True)
 
 ai_available = 'ANTHROPIC_API_KEY' in st.secrets
 if not ai_available:
@@ -339,6 +343,9 @@ def _auto_upload_watcher(flow_key, sid):
         # Photos are arriving: reset the idle ceiling and show live progress.
         st.session_state['_auto_polls'] = 0
         st.caption(BookPhotoEntry.auto_upload_progress.format(n=len(keys)))
+        # Live "uploaded so far" list + duplicate guard (#186) so the user can
+        # verify order/completeness and catch a photo uploaded twice.
+        render_uploaded_photos_list(fs, flow_key, sid)
         if len(keys) == prev:
             # Non-empty count stable across two polls => the upload has finished.
             st.session_state['photos_ready_auto'] = True

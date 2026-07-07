@@ -31,6 +31,11 @@ class Alerts:
 
     not_implemented = "This feature is not implemented yet! Please check back soon."
 
+    # Shown briefly (as a toast) when a session was rebuilt from the remember-me
+    # cookie after a reconnect / lost connection (#185), so a user whose controls
+    # briefly changed knows what happened and that nothing was lost.
+    session_restored = "Connection was lost — your work is saved."
+
     please_uploaded_photos = """
         Please upload photos of the book pages first!
     """

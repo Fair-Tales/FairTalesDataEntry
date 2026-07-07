@@ -133,6 +133,28 @@ def downscale_for_vision(image_bytes, max_edge=1568, quality=85,
         return image_bytes
 
 
+#: Long-edge (px) for the lightweight on-screen page derivative (#184). The full
+#: resolution page photos are multi-MB quality-95 JPEGs; enter-text only needs a
+#: screen-sized copy, so a ~1200px derivative cuts the S3 fetch and browser
+#: transfer ~10x while staying crisp on a laptop/phone. Enlarge / crop keep using
+#: the full-res original.
+DISPLAY_MAX_EDGE = 1200
+
+
+def make_display_copy(image_bytes, max_edge=DISPLAY_MAX_EDGE, quality=80):
+    """Return JPEG bytes of a screen-sized display derivative of a page image (#184).
+
+    Reuses ``downscale_for_vision``'s resize+encode (only shrinks, bakes in EXIF
+    orientation, normalises to JPEG). ``max_bytes=None`` because the display copy
+    is bandwidth-bounded by ``max_edge`` alone — there is no per-image API cap to
+    honour here. Written alongside the raw/corrected page image at processing time
+    so enter-text can ship the small copy instead of the multi-MB original.
+    """
+    return downscale_for_vision(
+        image_bytes, max_edge=max_edge, quality=quality, max_bytes=None
+    )
+
+
 def is_black_frame(image_bytes, mean_threshold=10.0, percentile=99,
                    percentile_threshold=40.0):
     """

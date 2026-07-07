@@ -63,15 +63,32 @@ def page_change(delta):
         st.session_state['current_page_number'] = st.session_state.current_book.page_count
 
 
-@st.cache_data(max_entries=3)
-def load_image(book, page_number, use_cropped=True):
-    """Load page image, preferring the corrected _cropped version when available.
+# Display copies are ~150-300KB each (#184), so a much larger cache still costs
+# little memory but makes back/forward paging and the N+1 prefetch instant.
+@st.cache_data(max_entries=24)
+def load_image(book, page_number, use_cropped=True, display=False):
+    """Load a page image from S3.
 
     ImageOps.exif_transpose bakes any EXIF orientation tag into the pixels so
     portrait photos display the right way up. It is a no-op for images without
-    an orientation tag (e.g. the re-encoded _cropped versions), so it is safe to
-    apply to both branches and to any legacy photos stored before this fix.
+    an orientation tag (e.g. the re-encoded _cropped/_display versions), so it is
+    safe to apply to every branch and to legacy photos stored before this fix.
+
+    ``display=True`` (#184) loads the small ``page_{n}_display.jpg`` derivative
+    that enter-text shows inline — far less S3 fetch + browser transfer than the
+    full-res original. It falls back to the full-res image below when no display
+    copy exists (legacy pages processed before the derivative was introduced), so
+    the caller never has to special-case them. Enlarge / crop-and-rotate pass
+    ``display=False`` to keep working on the full-resolution original.
     """
+    if display:
+        try:
+            return ImageOps.exif_transpose(Image.open(fs.open(
+                f"sawimages/{book}/page_{page_number}_display.jpg", mode='rb'
+            )))
+        except FileNotFoundError:
+            # Legacy page with no display copy — fall back to full-res below.
+            pass
     if use_cropped:
         try:
             return ImageOps.exif_transpose(Image.open(fs.open(
@@ -255,10 +272,23 @@ def manual_correction_dialog():
         st.rerun()
 
 
+def _page_has_cropped(book, page_number):
+    """Whether an auto-corrected image exists for the current page (#184).
+
+    Prefers the ``corrected`` flag recorded on the Page doc at processing time so
+    the common case costs NO S3 request. Only legacy pages saved before that flag
+    existed (``corrected is None``) fall back to the per-render S3 HEAD check.
+    """
+    corrected = getattr(st.session_state.get('current_page'), 'corrected', None)
+    if corrected is None:
+        return cropped_exists(book, page_number)
+    return bool(corrected)
+
+
 def display_image():
     book = st.session_state['current_book'].title
     page_number = st.session_state.current_page_number
-    has_cropped = cropped_exists(book, page_number)
+    has_cropped = _page_has_cropped(book, page_number)
 
     use_cropped = True
     if has_cropped:
@@ -272,7 +302,14 @@ def display_image():
     else:
         col1.caption(EnterText.auto_correction_unavailable_caption)
 
-    page_image = load_image(book, page_number, use_cropped=use_cropped)
+    if use_cropped:
+        # Default view: ship the small display derivative (#184) — it is built
+        # from the corrected image, so it matches the auto-corrected view and
+        # falls back to full-res for legacy pages.
+        page_image = load_image(book, page_number, use_cropped=True, display=True)
+    else:
+        # User explicitly asked for the original: load the full-res raw page.
+        page_image = load_image(book, page_number, use_cropped=False)
     w, h = page_image.size
 
     col1.image(page_image, width="stretch")
@@ -295,9 +332,20 @@ def display_image():
         manual_correction_dialog()
 
     if col1.button(EnterText.enlarge_button, width="stretch", key="enter_text_enlarge_button"):
-        # Reuse the image already loaded above rather than re-fetching from S3 in
-        # the dialog, so opening Enlarge does no network I/O (#167).
-        enlarged_image_dialog(page_image)
+        # Enlarge must show the FULL-RES image (#184), not the downsized display
+        # copy shown inline — load the full-res version of whichever variant
+        # (corrected vs original) is currently selected.
+        enlarged_image_dialog(load_image(book, page_number, use_cropped=use_cropped))
+
+    # Prefetch the next page's display copy so "Next page" is instant (#184): the
+    # cache is warmed while the user reads the current page. Guarded — a prefetch
+    # miss must never break the render.
+    next_page = page_number + 1
+    if next_page <= st.session_state.current_book.page_count:
+        try:
+            load_image(book, next_page, use_cropped=True, display=True)
+        except (FileNotFoundError, OSError) as exc:
+            logger.debug("Prefetch of page %s failed: %s", next_page, exc)
 
     dimensions = st_dimensions(key="main")
     col_width = int(dimensions['width'] * 3 / 5) if dimensions else 500
@@ -697,6 +745,21 @@ def commit_detected_characters(rows):
     alias_count = 0
     skipped = []
 
+    # --- Batched commit (#184) -------------------------------------------------
+    # The old code did, per character/alias: one document_exists read + one
+    # register() write + (per character) one book character-list write — dozens of
+    # sequential Firestore round-trips on a book with many characters. Here we
+    # build every entity UNREGISTERED (so the write-through Field descriptors never
+    # touch Firestore while we assemble them), resolve existence with ONE get_all
+    # per collection, and stage every write into a single WriteBatch committed
+    # once. Total cost is a small constant number of round-trips regardless of how
+    # many characters/aliases were detected.
+    firestore = st.session_state.firestore
+    book = st.session_state['current_book']
+
+    # Build the characters we intend to create, de-duplicating by document id.
+    planned_characters = []  # (Character, name, [alias names])
+    seen_char_ids = set()
     for row in create_rows.values():
         name = row['name'].strip()
         character = Character(book=book_title)
@@ -705,50 +768,86 @@ def commit_detected_characters(rows):
         character.human = row['human']
         character.protagonist = row['protagonist']
         character.plural = row['plural']
+        cid = character.document_id
+        if cid in seen_char_ids:
+            continue
+        seen_char_ids.add(cid)
+        planned_characters.append((character, name, row['_aliases']))
 
-        if st.session_state.firestore.document_exists(
-            collection='characters', doc_id=character.document_id
-        ):
+    # ONE existence read across all candidate character ids.
+    existing_char_ids = firestore.get_existing_ids(
+        'characters', [c.document_id for c, _n, _a in planned_characters]
+    )
+
+    batch = firestore.write_batch()
+    new_book_refs = []
+    planned_aliases = []  # (character_ref, alias_name)
+
+    for character, name, alias_names in planned_characters:
+        if character.document_id in existing_char_ids:
             skipped.append(name)
             continue
-
-        character.register()
+        character.register_batched(batch)
         character_ref = character.get_ref()
-        # Link the new character to the book so it appears in the book's
-        # character list / Manage view (mirrors the manual character flow in
-        # Character.to_form); registering alone only writes the characters
-        # collection, not the book->characters list.
-        st.session_state['current_book'].add_character(character_ref)
+        new_book_refs.append(character_ref)
+        # Keep the session lookup dicts in sync (mirrors the manual flow) so the
+        # new character is immediately selectable for alias entry etc.
         st.session_state['character_dict'][name] = character_ref
         st.session_state.setdefault('book_character_dict', {})[name] = character_ref
         created_count += 1
+        for alias_name in alias_names:
+            planned_aliases.append((character_ref, alias_name))
 
-        for alias_name in row['_aliases']:
-            alias = Alias(book=book_title)
-            alias.character = name
-            alias.name = alias_name
-            if st.session_state.firestore.document_exists(
-                collection='aliases', doc_id=alias.document_id
-            ):
-                continue
-            alias.register()
-            alias_count += 1
-
-    # Attach rows the user merged into an existing book character as new aliases
-    # on that character.
+    # Aliases merged into already-existing book characters.
     for target_ref, target_name, extra in merge_into_existing:
         for alias_name in extra:
             if not alias_name or alias_name.lower() == target_name.lower():
                 continue
-            alias = Alias(book=book_title)
-            alias.character = target_ref
-            alias.name = alias_name
-            if st.session_state.firestore.document_exists(
-                collection='aliases', doc_id=alias.document_id
-            ):
-                continue
-            alias.register()
-            alias_count += 1
+            planned_aliases.append((target_ref, alias_name))
+
+    # Build the alias entities, de-duplicating by document id (which is book+name
+    # scoped), then ONE existence read across all candidate alias ids.
+    alias_objs = []
+    seen_alias_ids = set()
+    for character_ref, alias_name in planned_aliases:
+        alias = Alias(book=book_title)
+        alias.character = character_ref  # a reference, stored directly
+        alias.name = alias_name
+        aid = alias.document_id
+        if aid in seen_alias_ids:
+            continue
+        seen_alias_ids.add(aid)
+        alias_objs.append(alias)
+
+    existing_alias_ids = firestore.get_existing_ids(
+        'aliases', [a.document_id for a in alias_objs]
+    )
+    for alias in alias_objs:
+        if alias.document_id in existing_alias_ids:
+            continue
+        alias.register_batched(batch)
+        alias_count += 1
+
+    # Link every newly created character to the book in ONE batched update rather
+    # than a per-character write-through. Update the in-memory list too (under the
+    # reading_from_db guard so it does not trigger its own write) so the book stays
+    # consistent this session without a re-read.
+    book_updated = False
+    if new_book_refs:
+        existing_paths = {ref.path for ref in book.characters}
+        additions = [r for r in new_book_refs if r.path not in existing_paths]
+        if additions:
+            updated = book.characters + additions
+            book.reading_from_db = True
+            book.characters = updated
+            book.reading_from_db = False
+            batch.update(book.get_ref(), {'characters': updated})
+            book_updated = True
+
+    # Commit only when something was actually staged (all-skip / all-existing runs
+    # stage nothing).
+    if created_count or alias_count or book_updated:
+        batch.commit()
 
     messages = [EnterText.review_created.format(characters=created_count, aliases=alias_count)]
     if skipped:

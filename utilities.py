@@ -782,7 +782,14 @@ def check_authentication_status():
     # deliberate visit to the login/sign-out page. The login page itself does not
     # call this function, so it still sees the flag and redirects a freshly
     # restored user home.
-    st.session_state.pop('_remember_restored', None)
+    #
+    # On the render where the flag IS set the session was just rebuilt from the
+    # remember-me cookie after a reconnect/lost connection (#185) — surface a
+    # brief, non-intrusive toast so the user knows their work is safe. A toast is
+    # deliberately used (not a page banner) so it does not restructure the UI.
+    if st.session_state.pop('_remember_restored', None):
+        from text_content import Alerts
+        st.toast(Alerts.session_restored, icon="🔌")
 
 
 _MAX_HISTORY = 10
@@ -2202,6 +2209,54 @@ class FirestoreWrapper:
         db = self.connect_book()
         doc = db.collection(collection).document(doc_id).get()
         return doc.exists
+
+    def get_existing_ids(self, collection, doc_ids):
+        """Return the subset of ``doc_ids`` that already exist in ``collection``.
+
+        Uses a single ``get_all`` batch read instead of a ``document_exists``
+        round-trip per id (#184), so checking N candidate character/alias ids
+        before a bulk insert costs ONE Firestore read rather than N.
+        """
+        doc_ids = list(doc_ids)
+        if not doc_ids:
+            return set()
+        db = self.connect_book()
+        refs = [db.collection(collection).document(doc_id) for doc_id in doc_ids]
+        return {snap.id for snap in db.get_all(refs) if snap.exists}
+
+    def write_batch(self):
+        """Return a new Firestore ``WriteBatch`` bound to the book database (#184).
+
+        Lets a caller stage many ``set``/``update``/``delete`` operations and
+        commit them in one round-trip. Reference objects from ``get_ref()`` /
+        ``query_stream()`` snapshots can be mixed in freely — the batch commits by
+        document path via its own client.
+        """
+        return self.connect_book().batch()
+
+    def batch_delete_references(self, references, chunk_size=400):
+        """Delete every DocumentReference in ``references`` using chunked batches.
+
+        Firestore caps a WriteBatch at 500 operations, so the deletes are split
+        into ``chunk_size`` chunks (a margin under the cap) and committed per
+        chunk. Returns the number of documents deleted. Used by the admin
+        delete-book cascade (#188).
+        """
+        db = self.connect_book()
+        deleted = 0
+        batch = db.batch()
+        pending = 0
+        for ref in references:
+            batch.delete(ref)
+            deleted += 1
+            pending += 1
+            if pending >= chunk_size:
+                batch.commit()
+                batch = db.batch()
+                pending = 0
+        if pending:
+            batch.commit()
+        return deleted
 
     def update_field(self, collection, document, field, value):
         db = self.connect_book()

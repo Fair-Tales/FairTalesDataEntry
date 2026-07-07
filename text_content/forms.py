@@ -58,9 +58,12 @@ class BookForm:
     author_select_label = "Select from existing authors"
     publisher_select_label = "Select from existing publishers"
     illustrator_select_label = "Select from existing illustrators"
-    new_author_option = "None of these (create a new author now)."
-    new_publisher_option = "None of these (create a new publisher now)."
-    new_illustrator_option = "None of these (create a new illustrator now)."
+    # Worded to set the expectation of a NEXT step (#186): a user previously read
+    # "(create a new author now)" as an invitation to type the name into the
+    # select box itself.
+    new_author_option = "None of these — you'll create a new author on the next page."
+    new_publisher_option = "None of these — you'll create a new publisher on the next page."
+    new_illustrator_option = "None of these — you'll create a new illustrator on the next page."
     themes_label = "Select themes"
     comment_label = "Comment"
     isbn_prefill_caption = "ℹ Metadata pre-filled from ISBN lookup — please verify."
@@ -230,6 +233,16 @@ class BookPhotoEntry:
         "read automatically once they finish uploading."
     )
     auto_upload_progress = "{n} photo(s) uploaded so far — waiting for the rest…"
+    # Live "uploaded so far" list (#186): lets a user see exactly what has landed
+    # (count, page numbering, file names) and catch accidental duplicates before
+    # processing.
+    uploaded_so_far_header = "Uploaded so far: {count} photo(s)."
+    uploaded_page_range = "These will become pages 1–{n}, in this order:"
+    uploaded_duplicates_warning = (
+        "These file names appear more than once — you may have uploaded a photo "
+        "twice: {names}. If so, re-select the photos (newest batch replaces the "
+        "old one) or start again."
+    )
     auto_upload_timeout = (
         "Still waiting for uploads to finish. If they're all done, use the "
         "**Go** button below to read the book now."
@@ -357,13 +370,22 @@ class BatchBookEntry:
 class EnterText:
 
     header = "Please enter text and add characters"
+    # Leads with what the app has ALREADY done (#186): pilot users read the old
+    # "enter with spelling verbatim" opening as an instruction to type the whole
+    # book out by hand, never realising the text was extracted automatically.
     instruction = """
-        - You only need to enter text for the pages that contain the story (or main content of the book).
-        - Please enter with spelling verbatim and use 'enter' for newlines. 
+        **The text of each page has already been read automatically from your photos.**
+        You usually only need to **check it against the photo and fix any mistakes** — you do
+        not need to type the whole book out. You only need text for the pages that contain the
+        story (or main content); if a page came out wrong or blank, use **Re-extract** to read it
+        again.
+
+        **When correcting or typing text:**
+        - Please enter with spelling verbatim and use 'enter' for newlines.
         - When a linebreak appears to mark the end of a sentence please add a full stop. **This is very
         important for our language analysis.**
-        - Please add all characters and their aliases (other names used to refer to them). You only need to 
-        enter each character once and it doesn't matter when you enter them or which of their names you 
+        - Please add all characters and their aliases (other names used to refer to them). You only need to
+        enter each character once and it doesn't matter when you enter them or which of their names you
         use for their 'main' name, as long as you record all the other names as aliases.
     """
 
@@ -897,6 +919,33 @@ class Admin:
 
     book_export_header = "Book database export"
     book_export_description = "Download a ZIP of CSV files — one per collection — for research use. May take a moment for large datasets."
+
+    # Delete-book action (#188). Admin-gated with an explicit confirmation step.
+    delete_book_header = "Delete a book"
+    delete_book_description = (
+        "Permanently delete a book together with its pages, characters and "
+        "aliases, and its uploaded page photos. Shared authors, illustrators and "
+        "publishers are NOT deleted (they may belong to other books). This cannot "
+        "be undone."
+    )
+    delete_book_select_placeholder = "— select a book —"
+    delete_book_select_label = "Book to delete"
+    delete_book_confirm_label = (
+        "Yes, permanently delete “{title}” and all of its pages, "
+        "characters and aliases."
+    )
+    delete_book_button = "Delete this book"
+    delete_book_empty = "There are no books to delete."
+    delete_book_load_error = "Could not load the book list: {error}"
+    delete_book_error = "Could not delete the book: {error}"
+    delete_book_s3_warning = (
+        "The book record was deleted, but its image folder ({folder}) could not "
+        "be removed: {error}"
+    )
+    delete_book_success = (
+        "Deleted “{title}” — {pages} page(s), {characters} character(s) "
+        "and {aliases} alias(es)."
+    )
     prepare_book_download_button = "Prepare book data download"
     download_book_button = "⬇ Download book database (ZIP of CSVs)"
     book_file_name = "fairtales_book_data.zip"
@@ -1087,8 +1136,8 @@ class PhotoUpload:
     method_upload_here = "Upload here"
     method_go_to_phone = "Go to phone"
     qr_instruction = (
-        "Take the photos on your phone, then scan this QR code to open the uploader "
-        "there. Each photo uploads straight to secure storage."
+        "Take all the photos first, then scan the QR code and select them from your "
+        "camera roll. Each photo uploads straight to secure storage."
     )
     qr_return_instruction = (
         "Once every photo has finished uploading on your phone, come back to this "
