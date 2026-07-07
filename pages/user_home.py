@@ -1,3 +1,4 @@
+import logging
 import streamlit as st
 from streamlit_option_menu import option_menu
 from st_keyup import st_keyup
@@ -7,6 +8,8 @@ from data_structures import Book
 from photo_upload import reset_upload_session
 from background_pipeline import cancel_page_processing_job
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 check_authentication_status()
 
@@ -66,14 +69,29 @@ def book_search():
             if search_term in title.lower()
         ]
 
-        if len(matching_titles) == 0:
+        # Resolve each title's document up front and drop any whose Firestore
+        # doc no longer exists (book_data is None): a book_dict entry can go
+        # stale if it was deleted (e.g. admin delete-book, #188) before the
+        # local/cached lookup was refreshed. Guarding here — rather than only
+        # inside _person_name_from_ref — avoids the AttributeError from calling
+        # .get() on a None book_data, independent of any cache-freshness fix.
+        matches = []
+        for title in matching_titles:
+            book_ref = st.session_state['book_dict'][title]
+            book_data = book_ref.get().to_dict()
+            if book_data is None:
+                logger.warning(
+                    "book_search: stale book_dict entry for %r (document no "
+                    "longer exists); skipping", title
+                )
+                continue
+            matches.append((title, book_data))
+
+        if len(matches) == 0:
             st.warning(Alerts.no_matching_book)
         else:
-            st.write(UserHome.results_found.format(count=len(matching_titles)))
-            for title in matching_titles:
-                book_ref = st.session_state['book_dict'][title]
-                book_data = book_ref.get().to_dict()
-
+            st.write(UserHome.results_found.format(count=len(matches)))
+            for title, book_data in matches:
                 author_name = _person_name_from_ref(book_data.get('author'))
 
                 published = book_data.get('published', '')

@@ -15,6 +15,8 @@ from utilities import (
     resolve_role,
     VALID_ROLES,
     ROLE_ADMIN,
+    load_book_dict,
+    load_character_dict,
 )
 from data_structures import Book
 from text_content import FeedbackExport, Admin, AdminSettings
@@ -260,10 +262,11 @@ def _delete_book_and_children(book):
     firestore = st.session_state.firestore
     book_ref = book.get_ref()
 
-    char_refs = [
-        snap.reference
-        for snap in firestore.query_stream('characters', 'book', '==', book_ref)
-    ]
+    char_snaps = list(firestore.query_stream('characters', 'book', '==', book_ref))
+    char_refs = [snap.reference for snap in char_snaps]
+    # Names captured up front (rather than re-querying after delete) so the
+    # local ``character_dict`` cache can be pruned below without an extra read.
+    char_names = [(snap.to_dict() or {}).get('name') for snap in char_snaps]
     alias_paths = set()
     alias_refs = []
     for snap in firestore.query_stream('aliases', 'book', '==', book_ref):
@@ -291,6 +294,21 @@ def _delete_book_and_children(book):
         return
 
     _remove_book_s3_folder(book)
+
+    # Invalidate the shared book/character lookup caches (mirrors the
+    # register/confirm write-through convention: any collection mutation must
+    # clear its ``load_*_dict`` cache) and prune this session's local copies so
+    # the deleted book and its characters immediately stop appearing in
+    # search (pages/user_home.py book_search/author_search) rather than
+    # lingering for up to the cache TTL. Author/illustrator/publisher are
+    # intentionally left untouched — they are shared and not deleted here.
+    load_book_dict.clear()
+    load_character_dict.clear()
+    st.session_state.get('book_dict', {}).pop(book.title, None)
+    character_dict = st.session_state.get('character_dict')
+    if character_dict:
+        for _name in char_names:
+            character_dict.pop(_name, None)
 
     # Clear the widget state so the freshly deleted book cannot be re-selected on
     # the rerun, and surface a success summary.
