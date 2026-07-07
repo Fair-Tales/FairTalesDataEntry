@@ -416,6 +416,20 @@ def correct_page_image(raw_bytes, ai_client, ai_settings, report=None):
             # Gate disabled by the admin: trust the geometric result directly.
             crop_ok = True
         if crop_ok:
+            # The crop-quality gate (when ON) also vets orientation and rejects
+            # an upside-down crop, routing it to the Stage-2 rotation fallback
+            # below. But with the gate OFF that safety net is gone, so an
+            # upside-down page/cover that OpenCV cropped cleanly would be saved
+            # uncorrected. Honour the "orientation is never skipped while
+            # rotation correction is enabled" invariant by running the cheap
+            # rotation check on the accepted crop here too (#181 follow-up).
+            if rotation_on and not crop_gate_on:
+                report(Uploader.substep_detecting_rotation)
+                angle = get_rotation_angle(
+                    corrected_bytes, ai_client, model=rotation_model
+                )
+                if angle != 0:
+                    corrected_bytes = rotate_image(corrected_bytes, angle)
             return corrected_bytes, corrected_bytes, 'opencv'
 
     # Stage 2 — rotation-only fallback.
