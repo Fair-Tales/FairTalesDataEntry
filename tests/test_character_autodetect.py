@@ -28,6 +28,7 @@ from utilities import (
     mark_character_autodetect_pending,
     consume_pending_character_autodetect,
     stage_character_redetect,
+    usable_precomputed_suggestions,
     CHARACTER_AUTODETECT_SOURCE_AUTO,
     CHARACTER_AUTODETECT_SOURCE_MANUAL,
 )
@@ -67,6 +68,43 @@ def test_stage_character_redetect_sets_auto_run_flags_and_source():
     # discard_previous=False (the OCR-completion hook, nothing to discard on
     # the first run) must leave any pre-existing suggestions untouched.
     assert session_state['_detected_characters'] == [{'name': 'stale'}]
+
+
+# ---------------------------------------------------------------------------
+# usable_precomputed_suggestions: the landing gate that decides whether the
+# background pipeline's precompute (#179) is safe to surface directly or the
+# caller must fall back to a live run. This is the fix for auto-detection
+# showing nothing on first landing while the manual re-run worked.
+# ---------------------------------------------------------------------------
+
+def test_usable_precompute_returns_suggestions_when_book_matches_and_nonempty():
+    precomputed = {'book_id': 'the_gruffalo', 'suggestions': [{'name': 'Mouse'}]}
+    assert usable_precomputed_suggestions(precomputed, 'the_gruffalo') == [{'name': 'Mouse'}]
+
+
+def test_usable_precompute_none_when_empty_so_caller_falls_back_to_live_run():
+    # The background detection had not produced anything to hand over yet (still
+    # running when finalize collected it, or skipped/none-found): an empty list
+    # must be treated as "nothing usable" so the caller runs detection live
+    # rather than rendering an empty review — the core bug fix.
+    precomputed = {'book_id': 'the_gruffalo', 'suggestions': []}
+    assert usable_precomputed_suggestions(precomputed, 'the_gruffalo') is None
+
+
+def test_usable_precompute_none_when_suggestions_missing_or_none():
+    assert usable_precomputed_suggestions({'book_id': 'the_gruffalo'}, 'the_gruffalo') is None
+    assert usable_precomputed_suggestions(
+        {'book_id': 'the_gruffalo', 'suggestions': None}, 'the_gruffalo'
+    ) is None
+
+
+def test_usable_precompute_none_for_different_book_so_stash_never_leaks():
+    precomputed = {'book_id': 'other_book', 'suggestions': [{'name': 'Mouse'}]}
+    assert usable_precomputed_suggestions(precomputed, 'the_gruffalo') is None
+
+
+def test_usable_precompute_none_when_absent():
+    assert usable_precomputed_suggestions(None, 'the_gruffalo') is None
 
 
 def test_stage_character_redetect_discards_previous_suggestions_by_default():

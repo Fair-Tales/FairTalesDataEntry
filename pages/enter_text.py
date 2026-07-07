@@ -10,6 +10,7 @@ from utilities import (
     detect_book_characters, clear_entity_form_state,
     get_s3_filesystem, get_anthropic_client,
     consume_pending_character_autodetect, stage_character_redetect,
+    usable_precomputed_suggestions,
     CHARACTER_AUTODETECT_SOURCE_AUTO, CHARACTER_AUTODETECT_SOURCE_MANUAL,
 )
 from data_structures import Page, Character, Alias, ExtractionErrorLog
@@ -1018,22 +1019,29 @@ if (
     # pages.uploader._process_photo_batch flags this once its per-page OCR
     # loop finishes; consume it here (once, per book load) and land straight
     # on the existing detection review UI. When the background pipeline (#179)
-    # already precomputed the suggestions during the metadata step, show them
-    # directly (filtered to be additive, #182) — no further AI call; otherwise
-    # stage a live run exactly as before. Either way nothing is written until
-    # the human reviews and submits "Create selected characters" below.
+    # already precomputed USABLE suggestions during the metadata step, show them
+    # directly (filtered to be additive, #182) — no further AI call. Otherwise
+    # (no precompute, a different book's stash, OR an empty/in-flight precompute
+    # that would render an empty review) fall back to a live run — the SAME path
+    # the "Re-run character detection" button uses, which is why that button
+    # worked when first-landing auto-surfacing did not. Either way nothing is
+    # written until the human reviews and submits "Create selected characters".
     if consume_pending_character_autodetect(st.session_state):
         _precomputed = st.session_state.pop('_precomputed_character_suggestions', None)
-        if _precomputed is not None and _precomputed.get('book_id') == _book_id:
-            _suggestions, _skipped = _filter_existing_characters(_precomputed['suggestions'])
+        _precomputed_suggestions = usable_precomputed_suggestions(_precomputed, _book_id)
+        if _precomputed_suggestions is not None:
+            _suggestions, _skipped = _filter_existing_characters(_precomputed_suggestions)
             st.session_state['_detected_characters'] = _suggestions
             st.session_state['_detected_characters_source'] = CHARACTER_AUTODETECT_SOURCE_AUTO
             st.session_state['now_entering'] = 'detect'
         else:
-            # No precompute (or it was for a different book — discarded): run
-            # detection live, exactly as before #179.
+            # No usable precompute (missing / different book / empty because the
+            # background detection had not finished): run detection live over the
+            # freshly loaded page text, exactly like the working re-run button.
+            # discard_previous=True drops any stale suggestions left from a
+            # previous book so a leftover empty list can't block the fresh run.
             stage_character_redetect(
-                st.session_state, source=CHARACTER_AUTODETECT_SOURCE_AUTO, discard_previous=False
+                st.session_state, source=CHARACTER_AUTODETECT_SOURCE_AUTO, discard_previous=True
             )
 
 if 'current_page_number' not in st.session_state:
