@@ -354,12 +354,19 @@ Analyse this photo of a children's picture book page.
 Instructions:
 1. Correct for any rotation or tilt in the image. Focus on the book page itself \
 and ignore any background (table, hands, etc.).
-2. Decide whether the page contains any of the book's OWN text at all. Many \
-picture-book pages are WORDLESS full illustrations — that is normal and \
-expected. Set has_text to true only if the page carries real story/narrative \
-text; set it to false for a wordless illustration.
-3. Transcribe ALL story text visible on the page exactly as written. Include speech \
-bubbles and captions. Do not include page numbers.
+2. Decide whether the page carries ANY of the book's OWN printed text at all. \
+This includes story/narrative text AND any front- or back-matter text: title, \
+copyright notice, ISBN, publisher information, dedication, table of contents, \
+about-the-author, back-cover blurb or synopsis, end matter. Many picture-book \
+pages are WORDLESS full illustrations — that is normal and expected. Set \
+has_text to true if the page carries any of the book's own printed text of any \
+kind; set it to false only for a page with no readable book text at all (e.g. a \
+wordless full illustration).
+3. Transcribe ALL of the book's own printed text visible on the page exactly as \
+written — story text AS WELL AS any front/back-matter text (title, copyright \
+notice, ISBN, publisher information, dedication, contents, about-the-author, \
+back-cover blurb, end matter). Include speech bubbles and captions. Do not \
+include page numbers.
    - If the photo shows a double-page spread (two facing pages captured together in \
 one image), decide the reading order before transcribing. By default, treat the two \
 pages as separate text blocks and transcribe the LEFT-hand page fully before the \
@@ -377,10 +384,10 @@ or other background signage. Only extract text that belongs to the story itself.
    - If a word or passage is difficult to read (blurred, partially obscured, \
 unusual lettering), enclose it in square brackets with a question mark: [like this?]
    - If you cannot make out any part of a word at all, write [?] in its place.
-   - If the page has no story text (has_text is false), set text to "" (an empty \
-string). NEVER put a description, caption, or note ABOUT the illustration into the \
-text field — the text field must contain only the book's own transcribed words and \
-nothing else.
+   - If the page has no readable book text at all (has_text is false), set text \
+to "" (an empty string). NEVER put a description, caption, or note ABOUT the \
+illustration into the text field — the text field must contain only the book's \
+own transcribed words and nothing else.
 4. Classify whether this is a STORY page — meaning it contains narrative text \
 that is part of the story itself. The following page types are NOT story pages: \
 title page, half-title, copyright, dedication, contents, about the author, \
@@ -393,6 +400,16 @@ expected format:
   "text": "Once upon a time, a [small?] rabbit lived in the forest.",
   "is_story_page": true,
   "page_type": "story"
+}
+
+Example for a copyright page (front/back-matter that has text but is NOT part of \
+the story):
+{
+  "has_text": true,
+  "text": "First published in 2019 by Example Press. Text and illustrations \
+copyright © Jane Author 2019. ISBN 978-0-00-000000-0. All rights reserved.",
+  "is_story_page": false,
+  "page_type": "copyright"
 }
 
 Example for a wordless illustration:
