@@ -1,10 +1,13 @@
 import streamlit as st
-from utilities import page_layout, FirestoreWrapper, normalize_username
+from utilities import page_layout, FirestoreWrapper, normalize_username, get_s3_filesystem
 from pages.uploader import upload_widget
 from Home import ensure_session
 from data_structures import Book
 from text_content import Instructions, Alerts, QrLanding
-from photo_upload import generate_put_urls, build_uploader_html
+from photo_upload import (
+    generate_put_urls, build_uploader_html,
+    render_photo_instructions, render_uploaded_photos_list,
+)
 
 # NB: this is a PUBLIC, token-authenticated deep-link reached from the phone QR —
 # it must NOT call check_authentication_status()/redirect to login. It does its
@@ -25,7 +28,9 @@ flow = st.query_params.get("flow")
 session = st.query_params.get("session")
 
 st.title(QrLanding.title)
-st.write(Instructions.photo_upload_instructions)
+# Canonical photo guidance on the phone QR flow too (#186) — users reaching the
+# uploader here previously saw none of the framing/order/lighting advice.
+render_photo_instructions(expanded=True)
 st.write(Instructions.photo_naming_instructions)
 
 db_user = FirestoreWrapper().connect_user(auth=False)
@@ -55,6 +60,14 @@ else:
         put_urls = generate_put_urls(flow, session)
         st.iframe(build_uploader_html(put_urls), height=460)
         st.info(QrLanding.phone_done_instruction)
+
+        # Live "uploaded so far" list (#186) so the user can SEE what has landed
+        # and spot accidental duplicates. Polls the temp prefix every few seconds.
+        @st.fragment(run_every=3)
+        def _uploaded_list(flow=flow, session=session):
+            render_uploaded_photos_list(get_s3_filesystem(), flow, session)
+
+        _uploaded_list()
     else:
         # Legacy page-upload mode (page_photo_upload's QR): the phone runs the full
         # upload + processing pipeline against the QR's book.

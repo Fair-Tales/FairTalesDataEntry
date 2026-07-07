@@ -34,6 +34,23 @@ class Instructions:
         - Try to hold the book flat - you can use your thumb or finger.  
         - Please upload all photos in one batch.
     """
+    # Canonical "How to photograph a book" block (#186), rendered on EVERY upload
+    # surface — including the phone QR landing page, where users previously saw no
+    # guidance at all. Leads with the photos-first order and keeps the key
+    # framing/lighting/order tips tight enough to read on a phone.
+    photo_instructions_expander_title = "📸 How to photograph the book (tap to read)"
+    photo_instructions_canonical = """
+        **Take all the photos first, then upload them all together.**
+
+        - Take the photos in reading order, starting with the front cover.
+        - Photograph the whole double-page spreads in **landscape**; photograph the front and
+          rear covers on their own as **portrait** photos.
+        - Get the whole page in frame, including the corners and edges.
+        - Keep it clear and high-resolution: good lighting, minimal glare, and hold the book
+          as flat as you can (use a thumb at the edge).
+        - Use the same phone and camera app for the whole book, then upload the photos in one batch.
+    """
+
     photo_naming_instructions = """
         You don't need to rename your photos. Your phone names them in the order you take
         them, and we put the pages back in that order from the file names — so just take the
@@ -59,10 +76,14 @@ class Instructions:
         photos for this book.
     """
 
+    # Recommended order stated explicitly (#186): take ALL the photos first, then
+    # scan and pick them from the camera roll. The "scan first / use the phone
+    # camera" alternative is deliberately NOT offered — photos-first is the one
+    # instruction we want every user to follow.
     go_to_phone_instructions = """
-        First take the photos on your phone. 
-        Then scan the QR code below, which will take you to the upload page.
-        (If this does not work, you can also log into this app on your mobile device and go via 
+        **Take all the photos first**, then scan the QR code below and select them from your
+        camera roll in one go.
+        (If the QR code does not work, you can also log into this app on your mobile device and go via
         the `Edit my books` option on your homepage).
     """
 
@@ -91,9 +112,10 @@ class Instructions:
     """
 
     author_publisher_illustrator_select = """
-        Please select author, publisher and illustrator. 
-        If not listed, please select `None of these` and you will be guided 
-        to enter these details on the next steps.
+        Please select author, publisher and illustrator.
+        If any of them is not listed, choose `None of these` — you'll create the new
+        author, publisher or illustrator on the next page (don't type their name into
+        the select box here).
     """
 
     book_edit_home_intro = """

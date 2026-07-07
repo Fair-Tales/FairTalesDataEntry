@@ -11,6 +11,12 @@ class Page(DataStructureBase):
         'page_number': -1,
         'contains_story': False,
         'text': "",
+        # Whether an auto-corrected (cropped/rotated) image was written for this
+        # page at processing time (#184). Recorded here so enter-text can decide
+        # whether to offer the "show original" toggle WITHOUT an S3 HEAD request
+        # on every render. ``None`` means "unknown" — a legacy page saved before
+        # this field existed — for which enter-text falls back to the S3 check.
+        'corrected': None,
         'datetime_created': -1,
         'entered_by': None,
         'last_updated': -1
