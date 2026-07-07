@@ -2,12 +2,11 @@ import logging
 import streamlit as st
 from streamlit_option_menu import option_menu
 from st_keyup import st_keyup
-from text_content import Alerts, Instructions, old_books, BookPhotoEntry, UserHome
+from text_content import Alerts, Instructions, BookPhotoEntry, UserHome
 from utilities import check_authentication_status, page_layout, navigate_to, clear_page_history, clear_entity_form_state
 from data_structures import Book
 from photo_upload import reset_upload_session
 from background_pipeline import cancel_page_processing_job
-import pandas as pd
 
 logger = logging.getLogger(__name__)
 
