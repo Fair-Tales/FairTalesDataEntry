@@ -58,8 +58,16 @@ def upload_here():
 
 
 def already_uploaded_options():
-    """Let the user skip the upload step or choose to replace existing photos."""
-    st.info(Instructions.photos_already_uploaded)
+    """Tell the user their photos are in and processed, and let them continue to
+    text entry or replace the photos (#180).
+
+    This renders straight after the user's own upload finishes as well as on any
+    return visit, so the message states what happened (photos processed, text
+    read) and what's next — it must never read as a duplicate-upload warning.
+    """
+    page_count = getattr(st.session_state.current_book, 'page_count', None)
+    count_str = f" ({page_count} pages)" if page_count else ""
+    st.info(Instructions.photos_already_uploaded.format(count_str=count_str))
     skip_col, replace_col = st.columns(2)
     if skip_col.button(PhotoUpload.continue_to_text_button, width="stretch", key="photo_upload_skip_continue_button"):
         st.session_state.pop('_replacing_photos', None)

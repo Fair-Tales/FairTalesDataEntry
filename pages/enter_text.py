@@ -278,20 +278,21 @@ def display_image():
     col1.image(page_image, width="stretch")
 
     # Crop/rotate (#169): rendered below the photo, consistently with Enlarge
-    # below, rather than above it. Only shown in the no-auto-corrected-version
-    # case (unchanged behaviour) — when a cropped version exists, the toggle
-    # above is shown instead.
-    if not has_cropped:
-        if col1.button(EnterText.edit_image_button, width="stretch", key="enter_text_edit_image_button"):
-            # Start each editing session from a clean slate: clear any rotation/
-            # crop state left from a previous open (including closing via the
-            # dialog's native ✕, which we can't otherwise hook into).
-            for _k in (
-                '_manual_rotation', 'fine_rotation',
-                'crop_left', 'crop_right', 'crop_top', 'crop_bottom',
-            ):
-                st.session_state.pop(_k, None)
-            manual_correction_dialog()
+    # below. ALWAYS shown (#181) — it was previously hidden whenever an
+    # auto-corrected version existed, which left a BAD auto-correction (wrong
+    # rotation, bad crop) impossible to fix. The dialog starts from the original
+    # photo and overwrites page_{n}_cropped.jpg, so it doubles as the
+    # fix-a-bad-auto-correction tool.
+    if col1.button(EnterText.edit_image_button, width="stretch", key="enter_text_edit_image_button"):
+        # Start each editing session from a clean slate: clear any rotation/
+        # crop state left from a previous open (including closing via the
+        # dialog's native ✕, which we can't otherwise hook into).
+        for _k in (
+            '_manual_rotation', 'fine_rotation',
+            'crop_left', 'crop_right', 'crop_top', 'crop_bottom',
+        ):
+            st.session_state.pop(_k, None)
+        manual_correction_dialog()
 
     if col1.button(EnterText.enlarge_button, width="stretch", key="enter_text_enlarge_button"):
         # Reuse the image already loaded above rather than re-fetching from S3 in
@@ -367,24 +368,17 @@ def confirm_delete_alias(alias_doc_dict, name):
         st.rerun()
 
 
-def adding_detect():
-    # Auto-save the current page text before leaving the text box (#152).
-    _save_current_page_text()
-    # Start a fresh detection run; discard any previous suggestions.
-    st.session_state.pop('_detected_characters', None)
-    st.session_state.pop('_detected_characters_source', None)
-    st.session_state.now_entering = 'detect'
-
-
 def rerun_detect():
-    """On-click handler for the "Re-run character detection" button (#170).
+    """On-click handler for the "Re-run character detection" button (#170/#182).
 
-    Unlike ``adding_detect`` (which opens the blank detect screen and waits
-    for the separate "Run detection" click), this stages an IMMEDIATE re-run
-    via ``stage_character_redetect`` — the same staging used by the
-    auto-run-after-OCR hook below — so detect_entry() executes the AI call as
-    soon as it renders. Reuses the existing detection + review pipeline
-    (#129); does not write any Character/Alias itself.
+    Stages an IMMEDIATE run via ``stage_character_redetect`` — the same staging
+    used by the auto-run-after-OCR hook below — so detect_entry() executes the
+    AI call as soon as it renders, with no separate confirmation click. A
+    re-run is strictly ADDITIVE: suggestions matching characters already
+    entered for this book are filtered out (see ``run_character_detection``),
+    so it can only propose new characters/aliases and never replaces anything
+    already entered. Reuses the existing detection + review pipeline (#129);
+    does not write any Character/Alias itself.
     """
     _save_current_page_text()
     stage_character_redetect(st.session_state, source=CHARACTER_AUTODETECT_SOURCE_MANUAL)
@@ -426,13 +420,10 @@ def text_entry(element, image_height, delta=50):
         help=ManageCharacters.manage_help,
         key="enter_text_manage_characters_button",
     )
-    element.button(
-        EnterText.detect_button,
-        width="stretch",
-        on_click=adding_detect,
-        help=EnterText.detect_help,
-        key="enter_text_detect_button",
-    )
+    # Character detection runs automatically once the book's pages have been
+    # read (#170/#179), so there is no separate "Detect characters (AI)" button
+    # any more (#182) — only the additive re-run below, which executes
+    # immediately on click.
     element.button(
         EnterText.rerun_detect_button,
         width="stretch",
@@ -573,8 +564,35 @@ def manage_characters_entry(element):
     element.button(ManageCharacters.done_button, width="stretch", on_click=adding_text, key="enter_text_manage_done_button")
 
 
+def _filter_existing_characters(suggestions):
+    """Drop suggestions whose name matches a character already entered for this
+    book (case-insensitive), so detection is strictly ADDITIVE (#182): a
+    (re-)run can only propose NEW characters/aliases and never replaces or
+    duplicates anything already entered. Existing characters remain available
+    as 'Merge into' targets in the review form, so newly detected nicknames can
+    still be attached to them as aliases; ``commit_detected_characters``'s
+    document_exists checks remain the backstop.
+
+    Returns ``(kept_suggestions, skipped_count)`` and stashes the skipped count
+    for the review form's caption.
+    """
+    existing = {
+        name.lower()
+        for name in st.session_state['current_book'].get_character_dict()
+    }
+    kept = [s for s in suggestions if s['name'].lower() not in existing]
+    skipped = len(suggestions) - len(kept)
+    st.session_state['_detected_existing_skipped'] = skipped
+    return kept, skipped
+
+
 def run_character_detection():
-    """Run the two-pass AI detection and stash suggestions in session state.
+    """Run the AI character detection and stash suggestions in session state.
+
+    Status is always VISIBLE (#183): the call runs under an explicit spinner and
+    every outcome is surfaced — success lands on the review form (with a
+    success banner), zero suggestions shows the explicit "none found" notice
+    there, and a failure shows an error message. Never silent.
 
     Returns True when suggestions were produced (and a rerun should follow),
     False otherwise (a warning/error has already been shown to the user).
@@ -607,6 +625,8 @@ def run_character_detection():
             st.error(EnterText.detect_failed.format(error=error))
             return False
 
+    # Additive guard (#182): never re-suggest characters already in this book.
+    suggestions, _skipped = _filter_existing_characters(suggestions)
     st.session_state['_detected_characters'] = suggestions
     return True
 
@@ -747,6 +767,11 @@ def character_review_form(element):
     suggestions = st.session_state['_detected_characters']
     if not suggestions:
         element.info(EnterText.detect_none_found)
+        skipped_existing = st.session_state.get('_detected_existing_skipped', 0)
+        if skipped_existing:
+            # Everything detected was already entered for this book (#182) —
+            # say so explicitly rather than implying the AI found nothing.
+            element.caption(EnterText.detect_existing_skipped.format(count=skipped_existing))
         element.button(
             EnterText.back_to_text_button, width="stretch", on_click=adding_text, key="detect_back_none"
         )
@@ -754,6 +779,11 @@ def character_review_form(element):
 
     if st.session_state.get('_detected_characters_source') == CHARACTER_AUTODETECT_SOURCE_AUTO:
         element.info(EnterText.auto_detect_banner)
+    # Explicit, visible outcome (#183): say the run finished and what it found.
+    element.success(EnterText.detect_success.format(count=len(suggestions)))
+    skipped_existing = st.session_state.get('_detected_existing_skipped', 0)
+    if skipped_existing:
+        element.caption(EnterText.detect_existing_skipped.format(count=skipped_existing))
     element.write(EnterText.review_instruction)
     names = [s['name'] for s in suggestions]
     # Characters already defined for this book are also valid merge targets, so a
@@ -822,22 +852,22 @@ def character_review_form(element):
 
 def detect_entry(element):
     if '_detected_characters' not in st.session_state:
-        # Staged by the auto-run-after-OCR hook or the "Re-run character
-        # detection" button (#170, see stage_character_redetect): run the AI
-        # call immediately instead of waiting for the separate "Run
-        # detection" click below. Popped so it only fires once per staging.
-        # On failure (e.g. no API key / no story text yet — already
-        # surfaced via st.warning/st.error inside run_character_detection),
-        # fall through to the normal manual controls rather than stranding
-        # the user on a blank screen.
-        if st.session_state.pop('_auto_run_detection', False) and run_character_detection():
+        # Landing on the detect view means a run was requested — by the
+        # auto-run-after-OCR hook or the "Re-run character detection" button
+        # (#170, see stage_character_redetect). There is no separate "Run
+        # detection" confirmation click any more (#182): run immediately, with
+        # the spinner/progress visible (#183).
+        st.session_state.pop('_auto_run_detection', None)
+        if run_character_detection():
             st.rerun()
             return
-        element.info(EnterText.detect_intro)
-        if element.button(EnterText.run_detection_button, width="stretch", key="run_detect"):
-            if run_character_detection():
-                st.rerun()
-        element.button(EnterText.cancel_button, width="stretch", on_click=adding_text, key="cancel_detect")
+        # Failure / no story text / no API key: the explicit warning or error
+        # is already on screen (run_character_detection is never silent, #183)
+        # — give the user a way back rather than a blank screen.
+        element.button(
+            EnterText.back_to_text_button, width="stretch",
+            on_click=adding_text, key="cancel_detect",
+        )
         return
     character_review_form(element)
 
@@ -888,14 +918,24 @@ if (
     # Auto-run character detection right after OCR completes (#170):
     # pages.uploader._process_photo_batch flags this once its per-page OCR
     # loop finishes; consume it here (once, per book load) and land straight
-    # on the existing detection review UI instead of requiring the user to
-    # find/click "Detect characters (AI)" themselves. This only stages a run —
-    # nothing is written until the human reviews and submits "Create selected
-    # characters" below.
+    # on the existing detection review UI. When the background pipeline (#179)
+    # already precomputed the suggestions during the metadata step, show them
+    # directly (filtered to be additive, #182) — no further AI call; otherwise
+    # stage a live run exactly as before. Either way nothing is written until
+    # the human reviews and submits "Create selected characters" below.
     if consume_pending_character_autodetect(st.session_state):
-        stage_character_redetect(
-            st.session_state, source=CHARACTER_AUTODETECT_SOURCE_AUTO, discard_previous=False
-        )
+        _precomputed = st.session_state.pop('_precomputed_character_suggestions', None)
+        if _precomputed is not None and _precomputed.get('book_id') == _book_id:
+            _suggestions, _skipped = _filter_existing_characters(_precomputed['suggestions'])
+            st.session_state['_detected_characters'] = _suggestions
+            st.session_state['_detected_characters_source'] = CHARACTER_AUTODETECT_SOURCE_AUTO
+            st.session_state['now_entering'] = 'detect'
+        else:
+            # No precompute (or it was for a different book — discarded): run
+            # detection live, exactly as before #179.
+            stage_character_redetect(
+                st.session_state, source=CHARACTER_AUTODETECT_SOURCE_AUTO, discard_previous=False
+            )
 
 if 'current_page_number' not in st.session_state:
     st.session_state['current_page_number'] = 1

@@ -52,7 +52,7 @@ import streamlit as st
 import extra_streamlit_components as stx
 from streamlit.errors import StreamlitSecretNotFoundError
 
-from utilities import get_user, get_role, ROLE_ADMIN
+from utilities import get_user, get_role, ROLE_ADMIN, normalize_username
 
 # Name of the browser cookie holding the signed remember-me token.
 COOKIE_NAME = "fairtales_remember"
@@ -257,6 +257,11 @@ def restore_session_from_cookie():
     username = _verify_token(raw)
     if username is None:
         return
+    # Normalize (#129 shared helper) defensively: the payload was written from
+    # an already-normalized session username, but normalizing again on the way
+    # in guarantees session_state['username'] is always the canonical form
+    # even against an older cookie minted before this fix.
+    username = normalize_username(username)
     # Re-resolve from the database. Never trust a role baked into the cookie: a
     # forged/stale cookie must not be able to escalate privileges, and a deleted
     # user must not be restored.

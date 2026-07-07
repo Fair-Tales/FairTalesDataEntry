@@ -333,6 +333,96 @@ def strip_json_fence(raw):
     return raw.strip()
 
 
+#: How many trailing ``}`` cut points ``salvage_json`` tries when repairing a
+#: truncated reply. Bounds the repair loop so a pathological reply cannot make
+#: parsing quadratic; 50 complete objects of slack is far more than any real
+#: truncation needs.
+_SALVAGE_MAX_CUTS = 50
+
+
+def _unclosed_json_brackets(text):
+    """Return the closing brackets needed to balance ``text``, or ``None``.
+
+    Walks the text with JSON string/escape awareness. Returns the closers (e.g.
+    ``"]}"``) when the prefix is structurally sound but unterminated, ``""`` when
+    it is already balanced, and ``None`` when it cannot be repaired by appending
+    (mismatched brackets, or the cut landed inside a string literal).
+    """
+    stack = []
+    in_string = False
+    escape = False
+    for char in text:
+        if escape:
+            escape = False
+            continue
+        if in_string:
+            if char == '\\':
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in '{[':
+            stack.append(char)
+        elif char in '}]':
+            if not stack:
+                return None
+            expected = '}' if stack[-1] == '{' else ']'
+            if char != expected:
+                return None
+            stack.pop()
+    if in_string:
+        return None
+    return ''.join('}' if opener == '{' else ']' for opener in reversed(stack))
+
+
+def salvage_json(raw):
+    """Best-effort recovery of a JSON object from a malformed or truncated model
+    reply (#183).
+
+    The JSON helpers ask for "valid JSON only", but a reply can still come back
+    (a) wrapped in prose/fences, (b) followed by trailing commentary, or (c) cut
+    off mid-structure — either truncated at ``max_tokens`` or with a stray
+    syntax error partway through (the pilot's real failure: ``Expecting ','
+    delimiter``). Rather than discarding the entire reply, this recovers what it
+    can:
+
+    1. ``raw_decode`` parses a leading valid JSON value and ignores trailing
+       garbage ("Extra data" failures).
+    2. Truncation/malformation repair: trim back to the last complete ``}``
+       (string-aware, so a ``}`` inside a string never fools it) and append the
+       closers for whatever brackets remain open — recovering every complete
+       entry before the corruption point.
+
+    Returns the parsed object, or ``None`` when nothing usable can be recovered.
+    Callers log when they fall back to this (#127) — a salvage is never silent.
+    """
+    if not raw:
+        return None
+    text = strip_json_fence(raw)
+    start = text.find('{')
+    if start == -1:
+        return None
+    text = text[start:]
+    try:
+        value, _end = json.JSONDecoder().raw_decode(text)
+        return value
+    except (json.JSONDecodeError, ValueError):
+        pass
+    cut_points = [i for i, char in enumerate(text) if char == '}']
+    for cut in reversed(cut_points[-_SALVAGE_MAX_CUTS:]):
+        candidate = text[:cut + 1]
+        closers = _unclosed_json_brackets(candidate)
+        if closers is None:
+            continue
+        try:
+            return json.loads(candidate + closers)
+        except (json.JSONDecodeError, ValueError):
+            continue
+    return None
+
+
 def first_text_block(response):
     """Return the text of the FIRST ``text`` content block in a Claude response,
     or ``None`` when the reply carried no text block.
@@ -647,6 +737,15 @@ def vision_json(client, images, prompt, *, model="claude-sonnet-4-6",
     try:
         return json.loads(strip_json_fence(raw)), raw
     except (json.JSONDecodeError, ValueError) as exc:
+        # Malformed/truncated reply: try to recover the usable prefix before
+        # giving up on the whole page (#183). A salvage is logged, not silent.
+        salvaged = salvage_json(raw)
+        if salvaged is not None:
+            logger.warning(
+                "vision_json: reply was not clean JSON (%s); salvaged a usable "
+                "object from it (flow=%s)", exc, label or "-",
+            )
+            return salvaged, raw
         logger.warning("vision_json: could not parse model reply as JSON: %s", exc)
         return None, raw
 
@@ -878,10 +977,32 @@ def page_layout(current_page=None):
 
 
 
+def normalize_username(value):
+    """Normalize an email/username identity string for case-insensitive auth.
+
+    Email addresses are this app's usernames, so the same address must always
+    resolve to the same account regardless of how it was capitalised at
+    registration, login, or in a query-param deep link (confirm / password
+    reset / QR upload). Every identity lookup or write — the register
+    duplicate-check, the stored ``username`` field / doc id, login,
+    ``get_user``/``username_to_doc_ref``, and the confirm/reset/QR ``user``
+    query params — MUST go through this single helper (#129 reuse) rather than
+    an ad hoc ``.lower()``/``.strip()`` chain at each call site.
+
+    Returns ``""`` for ``None``/blank input so callers can treat it the same
+    as an empty string. Never apply this to passwords, tokens, or display
+    names (book titles, author/illustrator names) — those are legitimately
+    case-sensitive.
+    """
+    return value.strip().lower() if value else ""
+
+
 def get_user(username):
     db = FirestoreWrapper().connect_user(auth=False)
     users_ref = db.collection("users")
-    query_ref = users_ref.where(filter=firestore.FieldFilter("username", "==", username))
+    query_ref = users_ref.where(
+        filter=firestore.FieldFilter("username", "==", normalize_username(username))
+    )
     docs = query_ref.get()
     if len(docs) == 1:
         return docs[0]
@@ -1292,16 +1413,42 @@ def _claude_json(client, prompt, max_tokens=1024, label="character_detection",
     text = first_text_block(response)
     if text is None:
         raise json.JSONDecodeError("no text block in model reply", "", 0)
-    return json.loads(strip_json_fence(text))
+    try:
+        return json.loads(strip_json_fence(text))
+    except json.JSONDecodeError as exc:
+        # Malformed/truncated reply (#183 — the pilot's real "Expecting ','
+        # delimiter" failure): recover the usable prefix rather than throwing
+        # the whole run away. Logged, never silent; if nothing can be salvaged
+        # the original error propagates for the caller to surface as before.
+        salvaged = salvage_json(text)
+        if salvaged is not None:
+            logger.warning(
+                "_claude_json: reply was not clean JSON (%s); salvaged a usable "
+                "object from it (model=%s, flow=%s)", exc, model, label,
+            )
+            return salvaged
+        raise
 
 
-def detect_book_characters(pages, client, progress_callback=None):
+#: Reply-token ceiling for the single whole-book character-detection call. A
+#: character-rich book's JSON reply overran the previous 2048 cap and came back
+#: truncated/unparseable (#183 — the pilot's "Expecting ',' delimiter" failure),
+#: so this uses the validated maximum (``AI_TOKENS_MAX``); output tokens are
+#: only billed when actually generated.
+CHARACTER_DETECTION_MAX_TOKENS = 8192
+
+
+def detect_book_characters(pages, client, progress_callback=None, model=None):
     """Two-pass character + alias detection across a book's story pages (#52).
 
     Args:
         pages: iterable of (page_number, page_text) for story pages with text.
         client: an anthropic.Anthropic client.
         progress_callback: optional callable(done, total) for UI progress.
+        model: optional explicit model id. Defaults to the admin-configured
+            ``character_detection_model``; the background pipeline (#179) passes
+            it explicitly because ``get_ai_settings`` (a Streamlit cache) must
+            not be called from the worker thread.
 
     Returns a list of character suggestion dicts, each with keys:
         name (str), gender (one of CharacterForm.gender_options),
@@ -1332,8 +1479,8 @@ def detect_book_characters(pages, client, progress_callback=None):
     result = _claude_json(
         client,
         AIPrompts.character_detection.format(pages_json=pages_json),
-        max_tokens=2048,
-        model=get_ai_settings()['character_detection_model'],
+        max_tokens=CHARACTER_DETECTION_MAX_TOKENS,
+        model=model or get_ai_settings()['character_detection_model'],
     )
     raw_characters = result.get("characters", []) if isinstance(result, dict) else []
 
@@ -2039,7 +2186,17 @@ class FirestoreWrapper:
         db.collection(collection).document(doc_id).delete()
 
     def username_to_doc_ref(self, username):
-        return self.connect_user().collection('users').document(username)
+        # Normalize (case-insensitive email/username identity): this method is
+        # used ONLY for the ``users`` collection (unlike the generic
+        # ``document_exists``/``delete_document`` below, which take doc ids
+        # for any collection and must NOT be lowercased). Normalizing here
+        # hardens every caller (page_photo_upload/photo_upload QR params,
+        # review_my_books, validation, base_structure's ``entered_by`` stamp,
+        # report_feedback, account_settings) against a mismatched-case
+        # username.
+        return self.connect_user().collection('users').document(
+            normalize_username(username)
+        )
 
     def document_exists(self, collection, doc_id):
         db = self.connect_book()

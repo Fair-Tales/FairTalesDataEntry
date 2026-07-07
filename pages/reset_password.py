@@ -5,7 +5,9 @@ import streamlit as st
 from google.api_core import exceptions as gapi_exceptions
 from google.cloud import firestore
 
-from utilities import FirestoreWrapper, page_layout, hash_password, ROLE_ARCHIVIST
+from utilities import (
+    FirestoreWrapper, page_layout, hash_password, ROLE_ARCHIVIST, normalize_username,
+)
 from text_content import PasswordReset
 from Home import ensure_session
 
@@ -20,7 +22,10 @@ page_layout()
 st.title(PasswordReset.page_title)
 
 token = st.query_params.get('token')
-user = st.query_params.get('user')
+# Normalize (#129 shared helper) so a differently-cased ``user`` in the link
+# still resolves to the same account doc as the (already-normalized) stored
+# username.
+user = normalize_username(st.query_params.get('user'))
 
 # Guard missing query params rather than letting attribute access raise.
 if not token or not user:
