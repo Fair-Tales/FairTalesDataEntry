@@ -1578,6 +1578,39 @@ def stage_character_redetect(session_state, *, source, discard_previous=True):
     session_state['_detected_characters_source'] = source
 
 
+def usable_precomputed_suggestions(precomputed, book_id):
+    """Return the background pipeline's precomputed character suggestions to
+    auto-surface on landing, or ``None`` when there is nothing usable to show.
+
+    #179's background worker hands ``pages/enter_text.py`` its whole-book
+    character suggestions via ``st.session_state['_precomputed_character_suggestions']``
+    as ``{'book_id', 'suggestions'}``. Those are only safe to surface directly
+    (skipping a live AI call) when BOTH:
+
+    * they belong to the book being opened (``book_id`` match — a stale stash
+      from a previous entry must never leak into a different book), AND
+    * they actually contain at least one suggestion.
+
+    An absent / ``None`` / empty ``suggestions`` list means detection produced
+    nothing to hand over yet: it had not finished when
+    ``uploader._finalize_job_batch`` collected it off the job doc, or was
+    skipped/failed, or genuinely found none. Surfacing any of those renders an
+    EMPTY review form — which is exactly what made auto-detection look broken on
+    first landing (nothing shown) while the manual "Re-run character detection"
+    (a fresh live run over the now fully-loaded page text) worked. Returning
+    ``None`` here tells the caller to fall back to that same reliable live run
+    instead (#170/#179/#182).
+    """
+    if not isinstance(precomputed, dict):
+        return None
+    if precomputed.get('book_id') != book_id:
+        return None
+    suggestions = precomputed.get('suggestions')
+    if not suggestions:
+        return None
+    return suggestions
+
+
 def lookup_isbn(isbn):
     """
     Look up book metadata via the Google Books API (free, no auth required).
