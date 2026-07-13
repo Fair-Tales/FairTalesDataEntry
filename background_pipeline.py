@@ -323,11 +323,27 @@ def _run_worker(fs, db, client, settings, job_id, s3_prefix, page_count,
 
         # Phase C — whole-book character detection over the persisted story
         # text, so enter-text can show the review form without a further AI
-        # call. Only when it has not already been done for this job.
+        # call. Only when it has not already been done for this job, AND every
+        # page has a TERMINAL result (#201): Phase B `continue`s past pages
+        # fresh-claimed by ANOTHER worker (overlapping resume — a second tab, a
+        # reconnected session, a redeploy), so this worker can reach here while
+        # those pages are still processing. Running detection then would read
+        # incomplete story text and stamp character_status='done', which BLOCKS
+        # recomputation — the review form silently misses characters. Leaving
+        # the status 'pending' instead hands detection to whichever worker
+        # finishes the final page (its own Phase C then sees all pages
+        # terminal), or, failing that, to the consumer's live fallback
+        # (usable_precomputed_suggestions returns None -> live run).
         snap = job_ref.get()
         job_data = snap.to_dict() or {}
         if job_data.get('character_status') not in ('done', 'failed'):
-            _detect_characters(db, job_id, client, settings)
+            if _pages_all_terminal(db, job_id, page_count):
+                _detect_characters(db, job_id, client, settings)
+            else:
+                logger.info(
+                    "background job %s: deferring character detection — "
+                    "another worker still owns unfinished pages", job_id,
+                )
 
         job_ref.set({'status': 'complete', 'updated_at': _now()}, merge=True)
     except Exception as exc:  # noqa: BLE001 - worker top-level guard: never crash the thread silently
@@ -337,6 +353,26 @@ def _run_worker(fs, db, client, settings, job_id, s3_prefix, page_count,
             entry = _ACTIVE_WORKERS.get(job_id)
             if entry is not None and entry.get('thread') is threading.current_thread():
                 _ACTIVE_WORKERS.pop(job_id, None)
+
+
+def _pages_all_terminal(db, job_id, page_count):
+    """True when EVERY page ``1..page_count`` of the job has a terminal
+    ('done'/'failed') result recorded (#201). A missing page doc (never
+    claimed) or a 'processing' claim held by another worker counts as not
+    terminal, so character detection is never computed over a partial book.
+    """
+    statuses = {}
+    for page_snap in _job_ref(db, job_id).collection('pages').stream():
+        data = page_snap.to_dict() or {}
+        try:
+            page_number = int(data.get('page_number', page_snap.id))
+        except (TypeError, ValueError):
+            continue
+        statuses[page_number] = data.get('status')
+    return all(
+        statuses.get(page_number) in ('done', 'failed')
+        for page_number in range(1, page_count + 1)
+    )
 
 
 def _detect_characters(db, job_id, client, settings):
@@ -358,7 +394,14 @@ def _detect_characters(db, job_id, client, settings):
             story_pages, client, model=settings['character_detection_model'],
         )
         job_ref.set(
-            {'character_status': 'done', 'character_suggestions': suggestions, 'updated_at': _now()},
+            {
+                'character_status': 'done',
+                'character_suggestions': suggestions,
+                # Diagnostic (#201): how many story pages fed this run, so a
+                # partial computation is detectable after the fact.
+                'character_pages_used': len(story_pages),
+                'updated_at': _now(),
+            },
             merge=True,
         )
     except Exception as exc:  # noqa: BLE001 - optional precompute; consumer runs it live instead

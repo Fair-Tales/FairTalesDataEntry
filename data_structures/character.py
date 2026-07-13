@@ -1,7 +1,7 @@
 import streamlit as st
 from datetime import datetime, timezone
 from text_content import CharacterForm
-from utilities import load_character_dict
+from utilities import load_character_dict, clear_entity_form_state
 from .base_structure import DataStructureBase, Field
 
 
@@ -154,7 +154,21 @@ class Character(DataStructureBase):
                 collection='characters',
                 doc_id=self.document_id
             ):
-                st.warning(CharacterForm.character_exists)
+                # Same-name add EDITS the existing character (#201). After the
+                # AI review has created the book's cast, re-entering a detected
+                # name used to show only a quiet warning — the Save button
+                # looked dead. document_id is book-scoped ({book_id}_{name}),
+                # so the collision is always THIS book's character: route to
+                # the manage view with its edit form open, with an explanation.
+                # (Buttons are not allowed inside an st.form, so this is a
+                # direct route rather than an offered choice.)
+                clear_entity_form_state("character_form_")
+                st.session_state['_editing_character_id'] = self.document_id
+                st.session_state['_manage_flash'] = (
+                    CharacterForm.character_exists_editing.format(name=self.name)
+                )
+                st.session_state['now_entering'] = 'manage'
+                st.rerun()
             else:
                 self.register()
                 character_ref = self.get_ref()
