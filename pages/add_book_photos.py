@@ -37,6 +37,7 @@ from background_pipeline import (
 from photo_upload import (
     get_upload_session_id,
     generate_put_urls,
+    generate_manifest_put_url,
     build_uploader_html,
     fetch_uploaded_photos,
     cleanup_prefix,
@@ -45,7 +46,7 @@ from photo_upload import (
     render_photo_instructions,
     render_uploaded_photos_list,
     uploads_settled,
-    list_uploaded_keys,
+    upload_batch_ready,
 )
 
 # Shared "Upload here / Go to phone" chooser styling, reused across the photo
@@ -194,10 +195,11 @@ if upload_method == PhotoUpload.method_go_to_phone:
 else:
     st.write(BookPhotoEntry.direct_upload_instructions)
     put_urls = generate_put_urls(UPLOAD_FLOW_KEY, session_id)
+    manifest_url = generate_manifest_put_url(UPLOAD_FLOW_KEY, session_id)
     # st.iframe (Streamlit 1.56+) replaces the deprecated st.components.v1.html. An
     # HTML string is embedded via srcdoc exactly as before (same-origin preserved,
     # so the browser→S3 PUT still uses the app origin that the S3 CORS policy allows).
-    st.iframe(build_uploader_html(put_urls), height=460)
+    st.iframe(build_uploader_html(put_urls, manifest_url), height=460)
 
 def _run_extraction(fs, *, check_settled):
     """Fetch the uploaded photos, run the two-pass extraction, and either route to
@@ -208,14 +210,21 @@ def _run_extraction(fs, *, check_settled):
     upload count is stable (#142).
     """
     if check_settled:
-        # The uploader iframe is one-way, so gate reading on the temp prefix having
-        # stopped growing — otherwise reading mid-upload reads a PARTIAL batch
-        # (#142). See photo_upload.uploads_settled for the trade-off.
+        # The uploader iframe is one-way, so gate reading on the upload being
+        # COMPLETE — primarily the explicit manifest (#199), with the legacy
+        # count-stability heuristic only as a manifest-less fallback — otherwise
+        # reading mid-upload reads a PARTIAL batch (#142) and bakes a shifted
+        # page order into the book. See photo_upload.uploads_settled.
         with st.spinner(BookPhotoEntry.checking_uploads):
             settled, uploaded_keys = uploads_settled(fs, UPLOAD_FLOW_KEY, session_id)
         if uploaded_keys and not settled:
+            # Not ready: block, but never dead-end (#199) — the persistent
+            # prompt rendered below the Go button offers an explicit
+            # proceed-anyway with the photos already uploaded.
+            st.session_state['_upload_incomplete_count'] = len(uploaded_keys)
             st.warning(BookPhotoEntry.uploads_in_progress)
             return
+        st.session_state.pop('_upload_incomplete_count', None)
 
     with st.spinner(BookPhotoEntry.reading_photos):
         # List the temp prefix and pull the uploaded photos (in page order) into
@@ -323,6 +332,11 @@ def _run_extraction(fs, *, check_settled):
 # above. The manual "Go" button below remains as a fallback.
 POLL_INTERVAL_SECONDS = 3
 MAX_IDLE_POLLS = 200  # ~10 min ceiling on idle polling before we defer to "Go".
+# Polls with photos present but the manifest still absent/mismatched and the
+# count unchanged before we surface the "upload looks stalled" warning (#199):
+# ~1 minute — long enough for a slow last photo, short enough not to strand
+# the user staring at a silent page.
+STALL_POLLS = 20
 
 
 @st.fragment(run_every=POLL_INTERVAL_SECONDS)
@@ -336,20 +350,36 @@ def _auto_upload_watcher(flow_key, sid):
     ):
         return
     fs = get_s3_filesystem()
-    keys = list_uploaded_keys(fs, flow_key, sid)
+    # The AUTO read requires the explicit completion manifest to match the keys
+    # present (#199) — completion is no longer inferred from a stable count,
+    # which fired early on a stalled concurrent batch and read a partial book.
+    ready, keys, _manifest = upload_batch_ready(fs, flow_key, sid)
     prev = st.session_state.get('_auto_last_count', 0)
     st.session_state['_auto_last_count'] = len(keys)
     if keys:
         # Photos are arriving: reset the idle ceiling and show live progress.
         st.session_state['_auto_polls'] = 0
         st.caption(BookPhotoEntry.auto_upload_progress.format(n=len(keys)))
-        # Live "uploaded so far" list + duplicate guard (#186) so the user can
-        # verify order/completeness and catch a photo uploaded twice.
+        # Live "uploaded so far" list + duplicate/gap guards (#186/#199) so the
+        # user can verify order/completeness and catch a photo uploaded twice.
         render_uploaded_photos_list(fs, flow_key, sid)
-        if len(keys) == prev:
-            # Non-empty count stable across two polls => the upload has finished.
+        if ready:
+            st.session_state.pop('_auto_stall_polls', None)
             st.session_state['photos_ready_auto'] = True
             st.rerun()  # full-app rerun so the extraction below runs automatically
+        elif len(keys) == prev:
+            # Photos present but completion unconfirmed and nothing new landing:
+            # after ~a minute tell the user it looks stalled and point at the
+            # retry / manual-proceed affordances (no dead-end, #199).
+            stall_polls = st.session_state.get('_auto_stall_polls', 0) + 1
+            st.session_state['_auto_stall_polls'] = stall_polls
+            if stall_polls >= STALL_POLLS:
+                st.warning(BookPhotoEntry.upload_stalled_warning)
+            else:
+                st.caption(BookPhotoEntry.auto_upload_waiting_finish)
+        else:
+            st.session_state['_auto_stall_polls'] = 0
+            st.caption(BookPhotoEntry.auto_upload_waiting_finish)
     else:
         polls = st.session_state.get('_auto_polls', 0) + 1
         st.session_state['_auto_polls'] = polls
@@ -380,6 +410,22 @@ read_clicked = st.button(
 if read_clicked:
     _run_extraction(get_s3_filesystem(), check_settled=True)
 
+# No-dead-end escape hatch (#199): a manual read that found photos but no
+# completion confirmation blocks above and sets _upload_incomplete_count.
+# Rendered OUTSIDE the read-click block so the proceed-anyway button survives
+# the rerun; the user can also simply wait / re-select photos and click Go
+# again (retry).
+_incomplete_count = st.session_state.get('_upload_incomplete_count')
+if _incomplete_count and not st.session_state.get('photos_ready_auto'):
+    st.warning(BookPhotoEntry.upload_incomplete_prompt.format(n=_incomplete_count))
+    if st.button(
+        BookPhotoEntry.force_read_button,
+        disabled=not ai_available,
+        key="add_book_photos_force_read_button",
+    ):
+        st.session_state.pop('_upload_incomplete_count', None)
+        _run_extraction(get_s3_filesystem(), check_settled=False)
+
 # Persistent "couldn't extract — enter manually" state, rendered OUTSIDE the
 # read-click block so the proceed button survives the rerun the click triggers.
 if st.session_state.get('photo_extract_empty'):
@@ -403,6 +449,7 @@ if st.session_state.get('photo_extract_empty'):
             'ai_prefilled_author', 'ai_prefilled_illustrator',
             'ai_prefilled_publisher', 'ai_prefilled_year',
             'photos_ready_auto', '_auto_last_count', '_auto_polls',
+            '_auto_stall_polls', '_upload_incomplete_count',
         ):
             st.session_state.pop(_key, None)
         # Photos stay in photo_first_pages (memory) for the reuse pipeline, so the
@@ -425,6 +472,7 @@ if cancel_button:
     for _key in (
         'photo_first_pages', 'photo_extract_empty', 'photo_extract_diag',
         'photos_ready_auto', '_auto_last_count', '_auto_polls',
+        '_auto_stall_polls', '_upload_incomplete_count',
         'ai_prefilled_author', 'ai_prefilled_illustrator',
         'ai_prefilled_publisher', 'ai_prefilled_year',
     ):

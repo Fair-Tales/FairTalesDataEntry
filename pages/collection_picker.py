@@ -39,6 +39,7 @@ from data_structures import Collection
 from photo_upload import (
     get_upload_session_id,
     generate_put_urls,
+    generate_manifest_put_url,
     build_uploader_html,
     fetch_uploaded_photos,
     cleanup_prefix,
@@ -423,7 +424,8 @@ def method_photo():
     else:
         st.write(CollectionPicker.photo_direct_upload_instructions)
         put_urls = generate_put_urls("collection", session_id)
-        st.iframe(build_uploader_html(put_urls), height=460)
+        manifest_url = generate_manifest_put_url("collection", session_id)
+        st.iframe(build_uploader_html(put_urls, manifest_url), height=460)
 
     if st.button(
         CollectionPicker.photo_extract_button,

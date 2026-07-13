@@ -20,10 +20,12 @@ from background_pipeline import (
 from photo_upload import (
     get_upload_session_id,
     generate_put_urls,
+    generate_manifest_put_url,
     build_uploader_html,
     fetch_uploaded_photos,
     cleanup_prefix,
     reset_upload_session,
+    uploads_settled,
 )
 
 # Direct-to-S3 upload flow key (#118) for the shared page-photo / QR-phone upload
@@ -546,6 +548,15 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
     copyright_text = None
     failed_pages = []
 
+    # Invalidate enter-text's cached page images (#199): this pipeline is about
+    # to (re)write sawimages/{title}/page_N(.jpg|_cropped|_display) — on a
+    # RE-upload the @st.cache_data image cache would otherwise keep serving the
+    # previous upload's image per page, which read as wrong page order that
+    # "fixed itself" as entries evicted. enter_text.load_image cannot be
+    # imported here (enter_text imports this module), so the clear is staged
+    # via session state and consumed at the top of enter_text.
+    st.session_state['_invalidate_image_cache'] = True
+
     ai_client = get_anthropic_client()
 
     # Recognise this session's durable background job by a fingerprint of the
@@ -675,12 +686,37 @@ def upload_widget(on_submit='enter_text', auto_forward=False):
             st.write(Uploader.direct_upload_instructions)
             session_id = get_upload_session_id(UPLOAD_FLOW_KEY)
             put_urls = generate_put_urls(UPLOAD_FLOW_KEY, session_id)
-            st.iframe(build_uploader_html(put_urls), height=460)
+            manifest_url = generate_manifest_put_url(UPLOAD_FLOW_KEY, session_id)
+            st.iframe(build_uploader_html(put_urls, manifest_url), height=460)
 
             process = st.button(Uploader.process_button, key="uploader_process_button")
             if not done:
-                if not process:
+                # No-dead-end escape hatch (#199): a blocked Process click set
+                # _uploader_incomplete_count and reran, so this prompt + the
+                # proceed-anyway button persist until resolved.
+                incomplete = st.session_state.get('_uploader_incomplete_count')
+                force = False
+                if incomplete:
+                    st.warning(Uploader.upload_incomplete_prompt.format(n=incomplete))
+                    force = st.button(
+                        Uploader.force_process_button,
+                        key="uploader_force_process_button",
+                    )
+                if not (process or force):
                     return
+                if not force:
+                    # Gate reading on the upload confirming completion (#199):
+                    # primarily the explicit manifest, with the legacy count-
+                    # stability heuristic only as a manifest-less fallback.
+                    # Reading a PARTIAL concurrent batch here assigned page
+                    # numbers positionally over a hole-y listing, permanently
+                    # baking a shifted page order into the book.
+                    with st.spinner(BookPhotoEntry.checking_uploads):
+                        settled, keys = uploads_settled(fs, UPLOAD_FLOW_KEY, session_id)
+                    if keys and not settled:
+                        st.session_state['_uploader_incomplete_count'] = len(keys)
+                        st.rerun()
+                st.session_state.pop('_uploader_incomplete_count', None)
                 with st.spinner(BookPhotoEntry.reading_photos):
                     pages = fetch_uploaded_photos(fs, UPLOAD_FLOW_KEY, session_id)
                 if not pages:

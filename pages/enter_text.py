@@ -1017,6 +1017,15 @@ page_layout(current_page="./pages/enter_text.py")
 
 fs = get_s3_filesystem()
 
+# A (re)processed photo batch invalidates the cached page images (#199): the
+# upload pipeline just (re)wrote sawimages/{title}/page_N* — without this the
+# @st.cache_data image cache keeps serving the PREVIOUS upload's image for each
+# (book, page) key, which reads as wrong page order that slowly "fixes itself"
+# as entries evict. The pipeline (pages/uploader._process_photo_batch) cannot
+# import load_image (it would be a circular import), so it stages this flag.
+if st.session_state.pop('_invalidate_image_cache', False):
+    load_image.clear()
+
 # Rebuild the page cache whenever the current book changes. Without this, the
 # dict for the first book opened persists in session state and is shown for
 # every subsequent book (stale text leaking across books).

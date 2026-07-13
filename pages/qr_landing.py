@@ -5,7 +5,7 @@ from Home import ensure_session
 from data_structures import Book
 from text_content import Instructions, Alerts, QrLanding
 from photo_upload import (
-    generate_put_urls, build_uploader_html,
+    generate_put_urls, generate_manifest_put_url, build_uploader_html,
     render_photo_instructions, render_uploaded_photos_list,
 )
 
@@ -58,7 +58,8 @@ else:
         # phone only uploads; the computer does the processing when the user returns
         # and taps its read button. Reuses the shared one-way uploader component.
         put_urls = generate_put_urls(flow, session)
-        st.iframe(build_uploader_html(put_urls), height=460)
+        manifest_url = generate_manifest_put_url(flow, session)
+        st.iframe(build_uploader_html(put_urls, manifest_url), height=460)
         st.info(QrLanding.phone_done_instruction)
 
         # Live "uploaded so far" list (#186) so the user can SEE what has landed
