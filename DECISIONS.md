@@ -222,3 +222,19 @@ Status: `accepted` | `superseded` | `deprecated`.
 - Sonnet 5 intro pricing ends ~Sep 1 2026 (+~30% app baseline); front-load heavy entry before then.
 - App-side changes need live-Streamlit-server testing before the `main` deploy.
 ---
+
+## 011 — Book rename is an id-changing, multi-collection migration (standalone script)
+
+**Status:** accepted
+
+**Context:** A test user's partially-entered book ("Clean Up!") needed to be set aside — renamed to "Clean Up! (Partial Entry)" — so students could re-enter that title from scratch. There was no rename function. A book's Firestore `document_id` is title-derived (`title.lower().replace(" ", "_")`), and every dependent document embeds that id and/or holds a `book` reference: pages (`{book_id}_{n}`), characters (`{book_id}_{name}`), aliases (`{book_id}_{name}`, plus a `character` ref), the book's own `characters` ref-list, and the S3 image folder (`sawimages/{title}`, the raw title). So a naive title edit would orphan all of it — the exact trap DECISIONS #005 flags when it makes the validation title read-only.
+
+**Decision:** Perform book renames via a standalone, guarded migration script (`scripts/rename_book.py`), modelled on `scripts/data_cleanup.py`: runs OUTSIDE Streamlit, loads `.streamlit/secrets.toml` directly, builds its own `firestore.Client` + `s3fs`, reuses `s3_constants` and `data_cleanup.load_secrets` (code reuse, #129). It is **dry-run by default**, requires `--execute` **and** a typed `CONFIRM`, logs every write, and uses **create-new-before-delete-old** ordering so a mid-run failure leaves the original intact (re-run is safe — the target-exists guard trips). It recreates every page/character/alias under the new id with `book`/`character` refs repointed and remaps the book's `characters` list, then moves the S3 folder server-side, then deletes the old docs.
+
+**Reasons:**
+- The id-changing rename is a batch migration across four collections plus S3 — it does not fit the per-field write-through `Field` pattern (mirrors the `Character.rename()` single-entity precedent, scaled to the whole book).
+- A guarded, logged, dry-run-first CLI matches the repo's norm for production data mutations (#120 cleanup tool) and keeps the destructive step behind an explicit confirmation.
+
+**Consequences / follow-up:**
+- First live use (2026-07-13): renamed `books/clean_up!` → `books/clean_up!_(partial_entry)` (12 pages, 10 characters, 3 aliases, 38 S3 objects); verified old id freed and no dangling refs.
+- Follow-up issue filed: surface book renaming as an **admin function** in-app, reusing this script's migration logic (extract the ref-repointing core into a shared, Streamlit-callable helper).
