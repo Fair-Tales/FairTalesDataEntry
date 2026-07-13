@@ -42,7 +42,8 @@ Schema of an ``edit_log`` document
                                       own entered_by, denormalised for self-
                                       contained training data)
   timestamp    (datetime, UTC)      — when the correction was recorded
-  context      (str)                — 'validation'
+  context      (str)                — 'validation' | 'reopen' (#200: the owner
+                                      withdrew a submitted book back to editing)
 """
 
 import streamlit as st
@@ -53,6 +54,10 @@ class EditLog:
 
     COLLECTION = 'edit_log'
     CONTEXT_VALIDATION = 'validation'
+    # The owner reopened their own submitted (not-yet-validated) book for
+    # further editing (#200) — recorded as an entry_status before/after so the
+    # audit trail shows when and by whom a submission was withdrawn.
+    CONTEXT_REOPEN = 'reopen'
 
     # The entity types an audit record may describe.
     ENTITY_BOOK = 'book'

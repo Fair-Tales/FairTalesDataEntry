@@ -29,7 +29,9 @@ from datetime import date
 
 import streamlit as st
 
-from utilities import page_layout, check_authentication_status, is_team_or_above
+from utilities import (
+    page_layout, check_authentication_status, is_team_or_above, entered_by_username,
+)
 from data_structures import Book, Page, Character, Alias, EditLog
 from text_content import Validation, BookForm, CharacterForm
 
@@ -83,20 +85,6 @@ def _current_ref_name(option_dict, current_ref):
 def _guarded_index(options, value, default=0):
     """``options.index(value)`` guarded against ``value`` not being present."""
     return options.index(value) if value in options else default
-
-
-def _entered_by_name(entered_by):
-    """The owner username for a book's ``entered_by``, handling BOTH shapes.
-
-    ``entered_by`` may be a ``users``-collection ``DocumentReference`` (the normal
-    case) OR a plain username string (legacy/single-DB records, see #131 / the
-    ``databot`` owner). Returns the username string (the ref's ``.id``) or ``None``
-    when unset, so callers can compare/display owners uniformly."""
-    if not entered_by:
-        return None
-    if isinstance(entered_by, str):
-        return entered_by
-    return getattr(entered_by, 'id', None) or str(entered_by)
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +166,7 @@ def render_list():
         username = st.session_state['username']
         pending = [
             data for data in pending
-            if _entered_by_name(data.get('entered_by')) == username
+            if entered_by_username(data.get('entered_by')) == username
         ]
 
     # Flagged/high-priority books float to the top so a validator can prioritise
@@ -552,8 +540,9 @@ def render_review():
 
     st.header(Validation.review_header.format(title=book.title))
     # Show the validator who originally entered this book. entered_by may be a
-    # plain username string or a user DocumentReference; _entered_by_name guards both.
-    entered_by_name = _entered_by_name(book.entered_by)
+    # plain username string or a user DocumentReference; entered_by_username
+    # (utilities, #129) guards both.
+    entered_by_name = entered_by_username(book.entered_by)
     if entered_by_name:
         st.caption(Validation.entered_by_label.format(name=entered_by_name))
     st.write(Validation.review_intro)
