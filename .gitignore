@@ -3,6 +3,9 @@ databases/
 secrets/
 planning/*.docx
 
+# Test-user feedback / bug reports (may contain user emails & real book data) — never commit.
+feedback/
+
 # Data-cleanup tool output (scripts/data_cleanup.py, #120): generated audit
 # reports + deletion logs, may reference real titles/ids — never commit.
 cleanup_reports/
