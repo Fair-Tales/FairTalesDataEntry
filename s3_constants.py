@@ -24,7 +24,7 @@ S3_BUCKET = "sawimages"
 #: ``uploads/{flow}/{session}/`` written by photo_upload.py / uploader.py).
 NON_BOOK_S3_PREFIXES = ("uploads",)
 
-_PAGE_IMAGE_RE = re.compile(r"^page_\d+\.jpg$", re.IGNORECASE)
+_PAGE_IMAGE_RE = re.compile(r"^page_(\d+)\.jpg$", re.IGNORECASE)
 
 
 def is_page_image(path: str) -> bool:
@@ -36,6 +36,13 @@ def is_page_image(path: str) -> bool:
     bare filename or a full S3 path (the basename is matched).
     """
     return bool(_PAGE_IMAGE_RE.match(os.path.basename(path)))
+
+
+def page_image_number(path: str):
+    """Page number of a ``page_N.jpg`` original, or ``None`` for anything else
+    (including the derived ``_cropped``/``_display`` variants)."""
+    match = _PAGE_IMAGE_RE.match(os.path.basename(path))
+    return int(match.group(1)) if match else None
 
 
 def book_folder_name(title: str, photos_url: str = "") -> str:
@@ -62,5 +69,23 @@ def count_folder_pages(fs, folder: str) -> int:
         if not fs.exists(prefix):
             return 0
         return sum(1 for path in fs.find(prefix) if is_page_image(path))
+    except FileNotFoundError:
+        return 0
+
+
+def max_folder_page(fs, folder: str) -> int:
+    """Highest ``page_N.jpg`` page number under ``{S3_BUCKET}/{folder}`` (0 when
+    the folder is missing or holds no page images).
+
+    Used by the append-photos flow (#203) to compute where new pages start:
+    unlike :func:`count_folder_pages` it is robust to numbering holes, so an
+    appended page can NEVER be assigned an existing page's number/filename.
+    """
+    prefix = f"{S3_BUCKET}/{folder}"
+    try:
+        if not fs.exists(prefix):
+            return 0
+        numbers = (page_image_number(path) for path in fs.find(prefix))
+        return max((n for n in numbers if n is not None), default=0)
     except FileNotFoundError:
         return 0
