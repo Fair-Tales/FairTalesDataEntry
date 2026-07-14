@@ -268,6 +268,11 @@ class Book(DataStructureBase):
         'photos_url': "",
         'comment': "",
         'datetime_submitted': -1,
+        # Validation heartbeat (#200): set (throttled) whenever a validator has
+        # this book OPEN in the validation UI, so its owner cannot reopen a book
+        # that is actively being reviewed. ``-1`` = never opened for validation.
+        'validation_active_at': -1,
+        'validation_active_by': None,
         # List of Firestore references to the Character documents that appear in
         # this book. A character may be referenced by more than one book, which
         # is why the relationship is modelled as a list of references on the

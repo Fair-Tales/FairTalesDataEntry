@@ -1184,6 +1184,53 @@ def validation_recently_active(
     return False
 
 
+#: Throttle for the validation "active" heartbeat write (#200) — at most one
+#: Firestore write per book per this many seconds while a validator reviews it.
+VALIDATION_HEARTBEAT_THROTTLE_SECONDS = 30
+
+
+def validation_marker_active(
+    active_at, *, now=None, window_minutes=VALIDATION_ACTIVITY_WINDOW_MINUTES
+):
+    """True when a validator's "active" heartbeat on the book is within the
+    recent window — the durable "currently being validated" signal that blocks
+    an owner reopening their submitted book (#200).
+
+    Unlike ``validation_recently_active`` (which keys off ``edit_log`` records
+    and so only fires once a validator SAVES a change), this reads the book's
+    ``validation_active_at`` field, written when a validator merely OPENS the
+    book — so viewing a book in the validation UI is enough to block a reopen,
+    which is the behaviour #200 originally intended.
+
+    ``active_at`` is a datetime, or a sentinel (``-1`` / ``None`` / ``NaN``) for
+    a book never opened in validation. Naive datetimes are treated as UTC.
+    """
+    if not isinstance(active_at, datetime):
+        return False
+    now = now if now is not None else datetime.now(timezone.utc)
+    if active_at.tzinfo is None:
+        active_at = active_at.replace(tzinfo=timezone.utc)
+    return active_at >= now - timedelta(minutes=window_minutes)
+
+
+def validation_heartbeat_due(
+    store, book_id, now_ts, *, throttle_seconds=VALIDATION_HEARTBEAT_THROTTLE_SECONDS
+):
+    """Whether a validation heartbeat write is due for ``book_id`` (#200).
+
+    Throttles the heartbeat to at most one write per ``throttle_seconds`` so a
+    validator paging around a book does not rewrite ``validation_active_at`` on
+    every rerun. ``store`` is a mutable dict (the validator's session-state
+    heartbeat map) updated in place; ``now_ts`` is epoch seconds. Returns True
+    (and records the time) when a write should happen.
+    """
+    last = store.get(book_id)
+    if last is not None and (now_ts - last) < throttle_seconds:
+        return False
+    store[book_id] = now_ts
+    return True
+
+
 #: submitted_book_reopen_block return values (#200).
 REOPEN_BLOCK_VALIDATED = 'validated'
 REOPEN_BLOCK_VALIDATION_ACTIVE = 'validation_active'

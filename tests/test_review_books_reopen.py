@@ -5,13 +5,15 @@ Edit-my-books page: every missing book was simply ``entry_status ==
 'completed'`` (submitted), which the page filtered out with no explanation.
 The fix lists submitted books in their own section and lets the OWNER reopen
 one — but only when it is NOT already validated and NOT currently being
-validated. Validation-in-progress has no durable marker (validation.py tracks
-the open book only in the validator's own session state), so recent
-``edit_log`` activity with ``context='validation'`` is used as the proxy.
+validated. "Currently being validated" is a durable heartbeat
+(``validation_active_at``) that validation.py writes when a validator OPENS a
+book (throttled), so merely viewing a book blocks the reopen; recent
+``edit_log`` ``context='validation'`` activity is kept as a backstop.
 
 These tests cover the pure decision helpers in ``utilities`` (plain dicts, no
 Streamlit, no network, no writes): ``entered_by_username`` (moved from
-pages/validation.py for reuse, #129), ``validation_recently_active`` and
+pages/validation.py for reuse, #129), ``validation_recently_active``,
+``validation_marker_active``, ``validation_heartbeat_due`` and
 ``submitted_book_reopen_block``.
 """
 
@@ -20,6 +22,8 @@ from datetime import datetime, timedelta, timezone
 from utilities import (
     entered_by_username,
     validation_recently_active,
+    validation_marker_active,
+    validation_heartbeat_due,
     submitted_book_reopen_block,
     REOPEN_BLOCK_VALIDATED,
     REOPEN_BLOCK_VALIDATION_ACTIVE,
@@ -122,3 +126,62 @@ def test_nan_validated_counts_as_not_validated():
 
 def test_missing_validated_counts_as_not_validated():
     assert submitted_book_reopen_block({}, validation_active=False) is None
+
+
+# ---------------------------------------------------------------------------
+# validation_marker_active — the durable "opened for validation" heartbeat.
+# This is the #200 fix: OPENING a book (not only editing it) blocks the reopen.
+# ---------------------------------------------------------------------------
+
+def test_marker_within_window_blocks():
+    assert validation_marker_active(NOW - timedelta(minutes=5), now=NOW) is True
+
+
+def test_marker_at_window_edge_blocks():
+    assert validation_marker_active(
+        NOW - timedelta(minutes=VALIDATION_ACTIVITY_WINDOW_MINUTES), now=NOW
+    ) is True
+
+
+def test_marker_outside_window_does_not_block():
+    assert validation_marker_active(
+        NOW - timedelta(minutes=VALIDATION_ACTIVITY_WINDOW_MINUTES + 1), now=NOW
+    ) is False
+
+
+def test_marker_sentinels_do_not_block():
+    # A book never opened for validation stores -1 (the Field default) or None;
+    # a legacy pandas row can surface NaN. None are datetimes -> not active.
+    assert validation_marker_active(-1, now=NOW) is False
+    assert validation_marker_active(None, now=NOW) is False
+    assert validation_marker_active(float('nan'), now=NOW) is False
+
+
+def test_marker_naive_timestamp_treated_as_utc():
+    assert validation_marker_active(
+        (NOW - timedelta(minutes=10)).replace(tzinfo=None), now=NOW
+    ) is True
+
+
+# ---------------------------------------------------------------------------
+# validation_heartbeat_due — throttles the heartbeat write (one per book per
+# throttle window) so it is not rewritten on every validation rerun.
+# ---------------------------------------------------------------------------
+
+def test_heartbeat_due_first_time_then_throttled():
+    store = {}
+    t0 = 1_000_000.0
+    # First check for a book is always due (and records the time).
+    assert validation_heartbeat_due(store, 'book_a', t0) is True
+    # A rerun a few seconds later is throttled.
+    assert validation_heartbeat_due(store, 'book_a', t0 + 5, throttle_seconds=30) is False
+    # Past the throttle window it is due again.
+    assert validation_heartbeat_due(store, 'book_a', t0 + 31, throttle_seconds=30) is True
+
+
+def test_heartbeat_due_is_per_book():
+    store = {}
+    t0 = 1_000_000.0
+    assert validation_heartbeat_due(store, 'book_a', t0) is True
+    # A different book is independently due even within the throttle window.
+    assert validation_heartbeat_due(store, 'book_b', t0 + 1) is True
