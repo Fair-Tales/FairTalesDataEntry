@@ -494,6 +494,16 @@ class EnterText:
     crop_top_label = "Top"
     crop_bottom_label = "Bottom"
     preview_caption = "Preview"
+    # Which image the crop/rotate editor starts from (#209): always the image
+    # the user is currently looking at, so "rotate 180°" means "rotate what I
+    # see by 180°". Toggle "Show original photo" before opening the editor to
+    # start from the unedited original instead.
+    editing_corrected_caption = (
+        "Editing the corrected image you are currently viewing. To start from "
+        "the original photo instead, close this, switch on \"Show original "
+        "photo\", and reopen."
+    )
+    editing_original_caption = "Editing the original photo."
     save_corrected_button = "💾 Save as corrected image"
     discard_button = "✕ Discard"
     show_original_toggle = "Show original photo"
