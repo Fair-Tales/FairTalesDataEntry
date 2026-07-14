@@ -10,6 +10,7 @@ from utilities import (
     detect_book_characters, clear_entity_form_state,
     get_s3_filesystem, get_anthropic_client,
     consume_pending_character_autodetect, stage_character_redetect,
+    stage_reextract_refresh, consume_reextract_refresh,
     usable_precomputed_suggestions,
     CHARACTER_AUTODETECT_SOURCE_AUTO, CHARACTER_AUTODETECT_SOURCE_MANUAL,
 )
@@ -145,8 +146,13 @@ def reextract_current_page(page_number):
     already present in session_state from the current render, so simply
     updating ``current_page``'s fields and rerunning would NOT change what the
     widgets display — Streamlit ignores a widget's ``value=`` once its key is
-    already populated. The widgets' own session_state entries are overwritten
-    directly below so the fresh result is visible immediately.
+    already populated. Assigning to those keys here is ALSO illegal (#198):
+    this function runs mid-render, after the checkbox has been instantiated,
+    and Streamlit raises ``StreamlitAPIException`` on assignment to an
+    already-instantiated widget's key. So the refresh is STAGED instead
+    (``stage_reextract_refresh``) and the top of the next script run pops the
+    widget keys before the widgets exist, letting them re-seed from the
+    freshly written-through ``current_page`` values.
     """
     _save_current_page_text()
 
@@ -187,12 +193,9 @@ def reextract_current_page(page_number):
     st.session_state.current_page.contains_story = is_story
     st.session_state.book_pages_dict[page_number] = st.session_state.current_page
 
-    # Overwrite the widgets' own state (see docstring above) so the page shows
-    # the fresh result as soon as it reruns.
-    st.session_state[f"enter_text_page_text_{page_number}"] = text
-    st.session_state[f"enter_text_contains_story_{page_number}"] = is_story
-
-    st.success(EnterText.reextract_success)
+    # Stage the widget-state refresh + success flash for the next run (see
+    # docstring above — assigning to the widget keys here would crash, #198).
+    stage_reextract_refresh(st.session_state, page_number, EnterText.reextract_success)
     st.rerun()
 
 
@@ -456,6 +459,13 @@ def rerun_detect():
 def text_entry(element, image_height, delta=50):
     for message in st.session_state.pop('_detected_characters_result', []):
         element.success(message)
+
+    # Success flash from a just-completed re-extract (#198): staged by
+    # stage_reextract_refresh because st.success immediately before st.rerun()
+    # is never seen.
+    _reextract_message = st.session_state.pop('_reextract_result', None)
+    if _reextract_message:
+        element.success(_reextract_message)
 
     # The story toggle and text area are seeded from the current page, so suffix
     # their keys with the page number to re-seed (rather than bleed state) when
@@ -1014,6 +1024,12 @@ def user_entry_box(element, image_height, delta=50):
 
 
 page_layout(current_page="./pages/enter_text.py")
+
+# Consume a staged re-extract refresh (#198) BEFORE any of this page's widgets
+# are instantiated: pops the refreshed page's widget-backed keys so the text
+# area and contains-story checkbox re-seed from the freshly extracted
+# current_page values (already persisted via the write-through Fields).
+consume_reextract_refresh(st.session_state)
 
 fs = get_s3_filesystem()
 
