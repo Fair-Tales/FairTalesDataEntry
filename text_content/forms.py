@@ -879,6 +879,17 @@ class Login:
     # Brief notice for the one intermediate run while the remember-me cookie is
     # DELETED after Sign Out (#207) — the deferred-delete mirror of the above.
     signing_out = "Signing you out…"
+    # Shown when Confirm is clicked with an empty email or password (#174).
+    # This most commonly happens when a browser/password-manager AUTOFILLED the
+    # fields visually but never synced the values into the page: the submit then
+    # carries empty strings even though the fields LOOK filled. Distinct from
+    # Alerts.invalid_credentials so the user gets an actionable hint (and so
+    # future bug reports distinguish the two cases).
+    missing_fields = (
+        "Please enter your email and password. If your browser filled them in "
+        "for you, click into each field first (or re-type the password) — "
+        "auto-filled values are sometimes not registered until you do."
+    )
     resend_button = "Resend confirmation email"
     forgot_password_expander = "Forgot your password?"
     register_header = "Register"
