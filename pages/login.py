@@ -25,6 +25,19 @@ def confirm(username, password, remember=False):
     # is always the canonical lowercase form, even if this is ever called with
     # un-normalized input.
     username = normalize_username(username)
+    # Residual #174 root cause (empirically confirmed, 2026-07-14): when a
+    # browser/password-manager AUTOFILLS the login fields, the values can be
+    # painted into the DOM without the input events Streamlit needs to sync
+    # widget state — so the FIRST Confirm click submits empty strings ("no
+    # result"/invalid credentials), while the second click (after the rerun
+    # re-registers the fields) succeeds. Guard the empty submit with a specific,
+    # actionable message instead of a misleading "Invalid credentials", and skip
+    # the pointless Firestore lookup + bcrypt check. The autocomplete attributes
+    # on the form inputs below are the actual fix (they make Chrome/password
+    # managers fill via real input events); this guard is the safety net.
+    if not username or not password:
+        st.warning(Login.missing_fields)
+        return
     result = authenticate_user(username, password)
     if result == "ok":
         st.session_state['authentication_status'] = True
@@ -209,8 +222,21 @@ else:
     if selected == Login.menu_login:
         st.header(Login.login_header)
         with st.form('LoginForm'):
-            username = normalize_username(st.text_input(Login.email_label, value="", key='login_email'))
-            password = st.text_input(Login.password_label, type="password", value="", key='login_password')
+            # autocomplete attributes (#174): Streamlit defaults password inputs
+            # to autocomplete="new-password", which makes Chrome/password
+            # managers treat this as a REGISTRATION form — saved credentials get
+            # painted in without the input events Streamlit needs, so the first
+            # Confirm submits empty values and only the second click works.
+            # "username" + "current-password" mark this as a LOGIN form, making
+            # browsers fill via real input events that sync widget state.
+            username = normalize_username(st.text_input(
+                Login.email_label, value="", key='login_email',
+                autocomplete="username",
+            ))
+            password = st.text_input(
+                Login.password_label, type="password", value="",
+                key='login_password', autocomplete="current-password",
+            )
             # "Remember me" persistent login (#111). Only offered when a signing
             # key is configured; otherwise the feature is disabled and the box is
             # hidden so login behaves exactly as before.
