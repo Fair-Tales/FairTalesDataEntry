@@ -177,8 +177,13 @@ def logout():
     # empirically the cookie then SURVIVED sign-out and a later reload
     # re-authenticated the user (a shared-device hazard). The login page
     # renders the delete on the next run and st.stop()s so it completes —
-    # the exact mirror of the #174 deferred cookie WRITE.
-    st.session_state['_pending_remember_clear'] = True
+    # the exact mirror of the #174 deferred cookie WRITE. Only staged when
+    # remember-me is actually enabled: with no signing key there is no cookie
+    # AND no CookieManager component, so the stop-and-wait run would render no
+    # component, nothing would trigger the follow-on rerun, and the user would
+    # sit on "Signing you out…" until they clicked something.
+    if remember_me_available():
+        st.session_state['_pending_remember_clear'] = True
     clear_page_history()
     st.rerun()
 
