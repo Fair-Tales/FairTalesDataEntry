@@ -11,7 +11,7 @@ from utilities import (
     get_s3_filesystem, get_anthropic_client,
     consume_pending_character_autodetect, stage_character_redetect,
     stage_reextract_refresh, consume_reextract_refresh,
-    usable_precomputed_suggestions,
+    usable_precomputed_suggestions, strip_leading_article,
     CHARACTER_AUTODETECT_SOURCE_AUTO, CHARACTER_AUTODETECT_SOURCE_MANUAL,
 )
 from data_structures import Page, Character, Alias, ExtractionErrorLog
@@ -150,9 +150,11 @@ def reextract_current_page(page_number):
     this function runs mid-render, after the checkbox has been instantiated,
     and Streamlit raises ``StreamlitAPIException`` on assignment to an
     already-instantiated widget's key. So the refresh is STAGED instead
-    (``stage_reextract_refresh``) and the top of the next script run pops the
-    widget keys before the widgets exist, letting them re-seed from the
-    freshly written-through ``current_page`` values.
+    (``stage_reextract_refresh``) and the top of the next script run
+    (``consume_reextract_refresh``) writes the freshly extracted text/story
+    directly onto the widget keys before those widgets exist — a legal
+    assignment that refreshes the on-screen text deterministically (popping the
+    keys and relying on ``value=`` re-seeding did not reliably update it).
     """
     _save_current_page_text()
 
@@ -195,7 +197,11 @@ def reextract_current_page(page_number):
 
     # Stage the widget-state refresh + success flash for the next run (see
     # docstring above — assigning to the widget keys here would crash, #198).
-    stage_reextract_refresh(st.session_state, page_number, EnterText.reextract_success)
+    # The extracted text/story ride along so consume_reextract_refresh can seed
+    # the widgets directly at the top of the next run.
+    stage_reextract_refresh(
+        st.session_state, page_number, EnterText.reextract_success, text, is_story
+    )
     st.rerun()
 
 
@@ -723,11 +729,16 @@ def run_character_detection():
 
 def _parse_aliases(text, exclude_name):
     """Split a comma-separated alias string, dropping blanks, duplicates and
-    any value equal to the character's own name."""
+    any value equal to the character's own name.
+
+    Each alias has a leading article ("the"/"a"/"an") stripped (hotfix) so an
+    auto-detected alias like "the Butterfly" is stored as "Butterfly"; dedup and
+    the exclude-name check run on the stripped value so "the Butterfly" and
+    "Butterfly" collapse together."""
     aliases = []
     seen = set()
     for part in (text or "").split(','):
-        alias = part.strip()
+        alias = strip_leading_article(part.strip())
         if alias and alias.lower() != exclude_name.lower() and alias.lower() not in seen:
             seen.add(alias.lower())
             aliases.append(alias)

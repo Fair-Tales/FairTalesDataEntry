@@ -1184,6 +1184,53 @@ def validation_recently_active(
     return False
 
 
+#: Throttle for the validation "active" heartbeat write (#200) — at most one
+#: Firestore write per book per this many seconds while a validator reviews it.
+VALIDATION_HEARTBEAT_THROTTLE_SECONDS = 30
+
+
+def validation_marker_active(
+    active_at, *, now=None, window_minutes=VALIDATION_ACTIVITY_WINDOW_MINUTES
+):
+    """True when a validator's "active" heartbeat on the book is within the
+    recent window — the durable "currently being validated" signal that blocks
+    an owner reopening their submitted book (#200).
+
+    Unlike ``validation_recently_active`` (which keys off ``edit_log`` records
+    and so only fires once a validator SAVES a change), this reads the book's
+    ``validation_active_at`` field, written when a validator merely OPENS the
+    book — so viewing a book in the validation UI is enough to block a reopen,
+    which is the behaviour #200 originally intended.
+
+    ``active_at`` is a datetime, or a sentinel (``-1`` / ``None`` / ``NaN``) for
+    a book never opened in validation. Naive datetimes are treated as UTC.
+    """
+    if not isinstance(active_at, datetime):
+        return False
+    now = now if now is not None else datetime.now(timezone.utc)
+    if active_at.tzinfo is None:
+        active_at = active_at.replace(tzinfo=timezone.utc)
+    return active_at >= now - timedelta(minutes=window_minutes)
+
+
+def validation_heartbeat_due(
+    store, book_id, now_ts, *, throttle_seconds=VALIDATION_HEARTBEAT_THROTTLE_SECONDS
+):
+    """Whether a validation heartbeat write is due for ``book_id`` (#200).
+
+    Throttles the heartbeat to at most one write per ``throttle_seconds`` so a
+    validator paging around a book does not rewrite ``validation_active_at`` on
+    every rerun. ``store`` is a mutable dict (the validator's session-state
+    heartbeat map) updated in place; ``now_ts`` is epoch seconds. Returns True
+    (and records the time) when a write should happen.
+    """
+    last = store.get(book_id)
+    if last is not None and (now_ts - last) < throttle_seconds:
+        return False
+    store[book_id] = now_ts
+    return True
+
+
 #: submitted_book_reopen_block return values (#200).
 REOPEN_BLOCK_VALIDATED = 'validated'
 REOPEN_BLOCK_VALIDATION_ACTIVE = 'validation_active'
@@ -1696,42 +1743,70 @@ def usable_precomputed_suggestions(precomputed, book_id):
     return suggestions
 
 
-def stage_reextract_refresh(session_state, page_number, message):
+def stage_reextract_refresh(session_state, page_number, message, text, contains_story):
     """Stage a widget-state refresh after a successful per-page re-extract
-    (#165/#198), to be consumed by ``consume_reextract_refresh`` at the TOP of
-    the next ``pages/enter_text.py`` run.
+    (#165/#198), consumed by ``consume_reextract_refresh`` at the TOP of the next
+    ``pages/enter_text.py`` run.
 
-    A successful re-extract must make the text area and "contains story"
-    checkbox show the fresh result, but both widgets are keyed per page
+    A successful re-extract must make the text area and "contains story" checkbox
+    show the fresh result, but both widgets are keyed per page
     (``enter_text_page_text_<n>`` / ``enter_text_contains_story_<n>``) and have
     ALREADY been instantiated earlier in the same script run (the checkbox is
-    rendered before the re-extract button). Assigning to a widget-backed key
-    after its widget is instantiated raises ``StreamlitAPIException`` — the
-    crash reported in #198 — so instead of assigning, we record which page
-    needs its widget state dropped and stash the success flash message
-    (``st.success`` immediately before ``st.rerun()`` would never be seen).
+    rendered before the re-extract button), so assigning to those keys HERE would
+    raise ``StreamlitAPIException`` — the #198 crash. Instead we stash the freshly
+    extracted ``text`` and ``contains_story`` (plus the success flash message,
+    since an ``st.success`` right before ``st.rerun()`` is never seen), and
+    ``consume_reextract_refresh`` writes them onto the widget keys at the very top
+    of the next run — before those widgets exist, where the assignment is legal.
     """
     session_state['_reextract_refresh_page'] = page_number
     session_state['_reextract_result'] = message
+    session_state['_reextract_text'] = text
+    session_state['_reextract_contains_story'] = contains_story
 
 
 def consume_reextract_refresh(session_state):
     """Consume a staged re-extract refresh (see ``stage_reextract_refresh``).
 
-    Must run BEFORE any widget is instantiated in the script run: pops the
-    page's widget-backed keys so the text area and contains-story checkbox
-    re-seed from their ``value=`` arguments — i.e. from the freshly extracted
-    ``current_page.text`` / ``current_page.contains_story``, which the
-    write-through ``Field`` descriptors already persisted to Firestore.
-    Returns the refreshed page number, or ``None`` when nothing was staged.
-    The flash message is left in ``_reextract_result`` for the text-entry
-    view to pop and display.
+    Must run BEFORE any per-page widget is instantiated in the script run: it
+    writes the freshly extracted text / contains-story values DIRECTLY onto the
+    page's widget-backed session-state keys, so the text area and checkbox show
+    the new result. Because this runs before those widgets are created, the
+    assignment is legal (the #198 crash only occurs when assigning AFTER a widget
+    is instantiated) — and it refreshes the display deterministically, unlike
+    merely popping the keys and relying on ``value=`` re-seeding, which did NOT
+    reliably replace the on-screen text in production (the reported "re-extract
+    doesn't update the text" bug). Returns the refreshed page number, or ``None``
+    when nothing was staged. The flash message is left in ``_reextract_result``
+    for the text-entry view to display.
     """
     page_number = session_state.pop('_reextract_refresh_page', None)
+    text = session_state.pop('_reextract_text', None)
+    contains_story = session_state.pop('_reextract_contains_story', None)
     if page_number is not None:
-        session_state.pop(f"enter_text_page_text_{page_number}", None)
-        session_state.pop(f"enter_text_contains_story_{page_number}", None)
+        session_state[f"enter_text_page_text_{page_number}"] = text or ""
+        session_state[f"enter_text_contains_story_{page_number}"] = bool(contains_story)
     return page_number
+
+
+#: Leading article stripped from alias names so an auto-detected alias like
+#: "the Butterfly" is stored as "Butterfly" (hotfix). Matches a single leading
+#: "the"/"a"/"an" (case-insensitive) followed by whitespace.
+_LEADING_ARTICLE_RE = re.compile(r"^\s*(the|an|a)\s+", re.IGNORECASE)
+
+
+def strip_leading_article(name):
+    """Strip a single leading article ("the"/"a"/"an") from an alias ``name``.
+
+    So a detected alias "the Butterfly" is stored as "Butterfly". Non-string or
+    article-less names are returned unchanged; if stripping would leave nothing
+    (e.g. the name is literally "the"), the original is kept. Only the FIRST
+    leading article is removed — an interior "a"/"the" is untouched.
+    """
+    if not isinstance(name, str):
+        return name
+    stripped = _LEADING_ARTICLE_RE.sub("", name, count=1).strip()
+    return stripped or name.strip()
 
 
 def lookup_isbn(isbn):
