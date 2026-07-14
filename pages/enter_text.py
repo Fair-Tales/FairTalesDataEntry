@@ -15,7 +15,7 @@ from utilities import (
     CHARACTER_AUTODETECT_SOURCE_AUTO, CHARACTER_AUTODETECT_SOURCE_MANUAL,
 )
 from data_structures import Page, Character, Alias, ExtractionErrorLog
-from image_processing import make_display_copy
+from image_processing import make_display_copy, apply_manual_correction
 from pages.uploader import extract_page_info, PageExtractionError
 from text_content import EnterText, ManageCharacters, AliasForm, CharacterForm
 
@@ -224,7 +224,22 @@ def manual_correction_dialog():
     book = st.session_state['current_book'].title
     page_number = st.session_state.current_page_number
 
-    raw_image = load_image(book, page_number, use_cropped=False)
+    # #209: edit the image the user is CURRENTLY LOOKING AT, not unconditionally
+    # the raw original. The dialog previously always started from the original
+    # photo while the main view showed the auto-corrected image — so when
+    # auto-correction had already rotated the page, the rotate buttons appeared
+    # to apply the wrong amount (the reported "180° only rotates 90°": raw+180
+    # differs from the on-screen image by the auto-rotation). Basing the editor
+    # on the displayed variant makes "rotate 180°" mean "rotate what I see by
+    # 180°". Full resolution in both branches (display=False). Toggling "Show
+    # original photo" before opening still edits the original from scratch.
+    show_raw = bool(st.session_state.get(f"show_raw_{page_number}", False))
+    editing_corrected = _page_has_cropped(book, page_number) and not show_raw
+    base_image = load_image(book, page_number, use_cropped=editing_corrected)
+    st.caption(
+        EnterText.editing_corrected_caption if editing_corrected
+        else EnterText.editing_original_caption
+    )
 
     if '_manual_rotation' not in st.session_state:
         st.session_state['_manual_rotation'] = 0
@@ -250,20 +265,18 @@ def manual_correction_dialog():
     crop_top = st.slider(EnterText.crop_top_label, 0, 40, 0, key="crop_top")
     crop_bottom = st.slider(EnterText.crop_bottom_label, 0, 40, 0, key="crop_bottom")
 
-    img = raw_image.copy()
-    total_angle = st.session_state['_manual_rotation'] + fine_angle
-
-    if total_angle != 0:
-        img = img.rotate(-total_angle, expand=True)
-
-    w, h = img.size
-    if crop_left + crop_right < 100 and crop_top + crop_bottom < 100:
-        left = int(w * crop_left / 100)
-        right = int(w * (1 - crop_right / 100))
-        top_px = int(h * crop_top / 100)
-        bottom_px = int(h * (1 - crop_bottom / 100))
-        if right > left and bottom_px > top_px:
-            img = img.crop((left, top_px, right, bottom_px))
+    # Shared, unit-tested transform (#209): quarter-turn buttons accumulate in
+    # _manual_rotation (clockwise positive); apply_manual_correction never
+    # mutates base_image (safe with load_image's st.cache_data).
+    img = apply_manual_correction(
+        base_image,
+        rotation=st.session_state['_manual_rotation'],
+        fine_angle=fine_angle,
+        crop_left=crop_left,
+        crop_right=crop_right,
+        crop_top=crop_top,
+        crop_bottom=crop_bottom,
+    )
 
     st.image(img, width="stretch", caption=EnterText.preview_caption)
 
@@ -347,9 +360,10 @@ def display_image():
     # Crop/rotate (#169): rendered below the photo, consistently with Enlarge
     # below. ALWAYS shown (#181) — it was previously hidden whenever an
     # auto-corrected version existed, which left a BAD auto-correction (wrong
-    # rotation, bad crop) impossible to fix. The dialog starts from the original
-    # photo and overwrites page_{n}_cropped.jpg, so it doubles as the
-    # fix-a-bad-auto-correction tool.
+    # rotation, bad crop) impossible to fix. The dialog starts from the image
+    # CURRENTLY DISPLAYED (#209: corrected by default, the original when "Show
+    # original photo" is on) and overwrites page_{n}_cropped.jpg, so it doubles
+    # as the fix-a-bad-auto-correction tool.
     if col1.button(EnterText.edit_image_button, width="stretch", key="enter_text_edit_image_button"):
         # Start each editing session from a clean slate: clear any rotation/
         # crop state left from a previous open (including closing via the

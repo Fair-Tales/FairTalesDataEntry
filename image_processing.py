@@ -354,6 +354,53 @@ def rotate_image(image_bytes, angle_degrees):
     return buf.getvalue()
 
 
+def apply_manual_correction(
+    img,
+    rotation=0,
+    fine_angle=0,
+    crop_left=0,
+    crop_right=0,
+    crop_top=0,
+    crop_bottom=0,
+):
+    """Apply the manual crop-and-rotate editor's transform to a PIL image.
+
+    This is the SINGLE implementation of the enter-text "Crop and rotate"
+    dialog's preview/save transform (#209) — extracted from
+    ``pages/enter_text.manual_correction_dialog`` so the option→transform
+    mapping is pure and unit-testable (no Streamlit).
+
+    Args:
+        img: source PIL image. Never mutated — PIL ``rotate``/``crop`` return
+            new images (callers may pass a cached image safely).
+        rotation: accumulated quarter-turn rotation in degrees, CLOCKWISE
+            positive (the dialog's "90° right" adds +90, "90° left" adds -90,
+            "180°" adds +180).
+        fine_angle: fine-adjustment angle in degrees, clockwise positive.
+        crop_left/right/top/bottom: percentage (0-100) to trim from each edge.
+            Ignored when an axis' pair sums to >= 100 or would invert.
+
+    Returns the transformed PIL image (the input object itself when every
+    parameter is zero/no-op).
+    """
+    total_angle = rotation + fine_angle
+    if total_angle != 0:
+        # PIL rotates counter-clockwise for positive angles; the editor's
+        # convention is clockwise positive, hence the negation. expand=True so
+        # no content is lost on non-quarter angles.
+        img = img.rotate(-total_angle, expand=True)
+
+    w, h = img.size
+    if crop_left + crop_right < 100 and crop_top + crop_bottom < 100:
+        left = int(w * crop_left / 100)
+        right = int(w * (1 - crop_right / 100))
+        top_px = int(h * crop_top / 100)
+        bottom_px = int(h * (1 - crop_bottom / 100))
+        if right > left and bottom_px > top_px:
+            img = img.crop((left, top_px, right, bottom_px))
+    return img
+
+
 def correct_page_image(raw_bytes, ai_client, ai_settings, report=None):
     """Run the staged crop/rotation correction pipeline for one page — pure
     compute + AI calls only, with NO S3, Firestore or Streamlit access, so it is
