@@ -1,5 +1,6 @@
 import streamlit as st
 from text_content import AliasForm
+from utilities import strip_leading_article
 from .base_structure import DataStructureBase, Field
 
 
@@ -80,6 +81,10 @@ class Alias(DataStructureBase):
         )
 
         if submitted:
+            # Strip a leading article so a manually-typed "the Butterfly" is
+            # stored as "Butterfly", matching auto-detected aliases (hotfix). Done
+            # before document_id is used below so the id/name stay consistent.
+            self.name = strip_leading_article(self.name)
             # Resolve the selected name to its reference via the book-scoped
             # dict (guarded with .get) so we link the right character even when
             # two books contain characters that share a name.

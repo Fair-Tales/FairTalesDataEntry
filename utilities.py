@@ -1789,6 +1789,26 @@ def consume_reextract_refresh(session_state):
     return page_number
 
 
+#: Leading article stripped from alias names so an auto-detected alias like
+#: "the Butterfly" is stored as "Butterfly" (hotfix). Matches a single leading
+#: "the"/"a"/"an" (case-insensitive) followed by whitespace.
+_LEADING_ARTICLE_RE = re.compile(r"^\s*(the|an|a)\s+", re.IGNORECASE)
+
+
+def strip_leading_article(name):
+    """Strip a single leading article ("the"/"a"/"an") from an alias ``name``.
+
+    So a detected alias "the Butterfly" is stored as "Butterfly". Non-string or
+    article-less names are returned unchanged; if stripping would leave nothing
+    (e.g. the name is literally "the"), the original is kept. Only the FIRST
+    leading article is removed — an interior "a"/"the" is untouched.
+    """
+    if not isinstance(name, str):
+        return name
+    stripped = _LEADING_ARTICLE_RE.sub("", name, count=1).strip()
+    return stripped or name.strip()
+
+
 def lookup_isbn(isbn):
     """
     Look up book metadata via the Google Books API (free, no auth required).
