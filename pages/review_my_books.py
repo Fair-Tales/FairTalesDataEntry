@@ -29,6 +29,7 @@ from utilities import (
     check_authentication_status,
     databot_entered_by,
     validation_recently_active,
+    validation_marker_active,
     submitted_book_reopen_block,
     REOPEN_BLOCK_VALIDATED,
 )
@@ -108,15 +109,18 @@ else:
         )
         submitted_book = _book_from_row(submitted_books, submitted_title)
 
-        # "Currently being validated" proxy (#200): recent validation-context
-        # audit records for this book. Only checked when not already validated
-        # (the cheaper, decisive block). Single-field equality query — the
-        # context/timestamp filtering happens in Python, so no composite index
-        # is required.
+        # "Currently being validated" (#200): the durable heartbeat set when a
+        # validator OPENS this book (validation_active_at) is the primary signal
+        # — merely viewing a book now blocks the reopen, which the old edit_log
+        # proxy did not. Recent validation-context edit_log activity is kept as a
+        # backstop (OR), short-circuited so its Firestore read is skipped when the
+        # heartbeat already blocks. Only checked when not already validated.
         if submitted_book.validated:
             block = REOPEN_BLOCK_VALIDATED
         else:
-            recent_activity = validation_recently_active(
+            recent_activity = validation_marker_active(
+                submitted_book.validation_active_at
+            ) or validation_recently_active(
                 doc.to_dict() for doc in firestore.query_stream(
                     collection='edit_log',
                     field='book_id',

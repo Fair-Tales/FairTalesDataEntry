@@ -25,12 +25,13 @@ Page-text corrections — the original transcription vs the validated text — a
 captured here as ``entity_type='page', field='text'`` records.
 """
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 import streamlit as st
 
 from utilities import (
     page_layout, check_authentication_status, is_team_or_above, entered_by_username,
+    validation_heartbeat_due,
 )
 from data_structures import Book, Page, Character, Alias, EditLog
 from text_content import Validation, BookForm, CharacterForm
@@ -537,6 +538,17 @@ def render_review():
 
     book = Book(db_object=doc.to_dict())
     st.session_state['current_book'] = book
+
+    # Validation heartbeat (#200): record that this book is actively being
+    # reviewed so its owner cannot reopen it from "Review my books" while a
+    # validator has it open. Written on OPEN (not just on edits, which was the
+    # gap the edit_log proxy left) and refreshed as the validator works, but
+    # throttled so it is not rewritten on every rerun.
+    _hb_now = datetime.now(timezone.utc)
+    _hb_store = st.session_state.setdefault('_validation_heartbeat', {})
+    if validation_heartbeat_due(_hb_store, book.document_id, _hb_now.timestamp()):
+        book.validation_active_at = _hb_now
+        book.validation_active_by = st.session_state['username']
 
     st.header(Validation.review_header.format(title=book.title))
     # Show the validator who originally entered this book. entered_by may be a
