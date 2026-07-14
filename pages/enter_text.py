@@ -150,9 +150,11 @@ def reextract_current_page(page_number):
     this function runs mid-render, after the checkbox has been instantiated,
     and Streamlit raises ``StreamlitAPIException`` on assignment to an
     already-instantiated widget's key. So the refresh is STAGED instead
-    (``stage_reextract_refresh``) and the top of the next script run pops the
-    widget keys before the widgets exist, letting them re-seed from the
-    freshly written-through ``current_page`` values.
+    (``stage_reextract_refresh``) and the top of the next script run
+    (``consume_reextract_refresh``) writes the freshly extracted text/story
+    directly onto the widget keys before those widgets exist — a legal
+    assignment that refreshes the on-screen text deterministically (popping the
+    keys and relying on ``value=`` re-seeding did not reliably update it).
     """
     _save_current_page_text()
 
@@ -195,7 +197,11 @@ def reextract_current_page(page_number):
 
     # Stage the widget-state refresh + success flash for the next run (see
     # docstring above — assigning to the widget keys here would crash, #198).
-    stage_reextract_refresh(st.session_state, page_number, EnterText.reextract_success)
+    # The extracted text/story ride along so consume_reextract_refresh can seed
+    # the widgets directly at the top of the next run.
+    stage_reextract_refresh(
+        st.session_state, page_number, EnterText.reextract_success, text, is_story
+    )
     st.rerun()
 
 

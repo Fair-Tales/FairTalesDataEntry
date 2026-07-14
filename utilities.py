@@ -1696,41 +1696,49 @@ def usable_precomputed_suggestions(precomputed, book_id):
     return suggestions
 
 
-def stage_reextract_refresh(session_state, page_number, message):
+def stage_reextract_refresh(session_state, page_number, message, text, contains_story):
     """Stage a widget-state refresh after a successful per-page re-extract
-    (#165/#198), to be consumed by ``consume_reextract_refresh`` at the TOP of
-    the next ``pages/enter_text.py`` run.
+    (#165/#198), consumed by ``consume_reextract_refresh`` at the TOP of the next
+    ``pages/enter_text.py`` run.
 
-    A successful re-extract must make the text area and "contains story"
-    checkbox show the fresh result, but both widgets are keyed per page
+    A successful re-extract must make the text area and "contains story" checkbox
+    show the fresh result, but both widgets are keyed per page
     (``enter_text_page_text_<n>`` / ``enter_text_contains_story_<n>``) and have
     ALREADY been instantiated earlier in the same script run (the checkbox is
-    rendered before the re-extract button). Assigning to a widget-backed key
-    after its widget is instantiated raises ``StreamlitAPIException`` — the
-    crash reported in #198 — so instead of assigning, we record which page
-    needs its widget state dropped and stash the success flash message
-    (``st.success`` immediately before ``st.rerun()`` would never be seen).
+    rendered before the re-extract button), so assigning to those keys HERE would
+    raise ``StreamlitAPIException`` — the #198 crash. Instead we stash the freshly
+    extracted ``text`` and ``contains_story`` (plus the success flash message,
+    since an ``st.success`` right before ``st.rerun()`` is never seen), and
+    ``consume_reextract_refresh`` writes them onto the widget keys at the very top
+    of the next run — before those widgets exist, where the assignment is legal.
     """
     session_state['_reextract_refresh_page'] = page_number
     session_state['_reextract_result'] = message
+    session_state['_reextract_text'] = text
+    session_state['_reextract_contains_story'] = contains_story
 
 
 def consume_reextract_refresh(session_state):
     """Consume a staged re-extract refresh (see ``stage_reextract_refresh``).
 
-    Must run BEFORE any widget is instantiated in the script run: pops the
-    page's widget-backed keys so the text area and contains-story checkbox
-    re-seed from their ``value=`` arguments — i.e. from the freshly extracted
-    ``current_page.text`` / ``current_page.contains_story``, which the
-    write-through ``Field`` descriptors already persisted to Firestore.
-    Returns the refreshed page number, or ``None`` when nothing was staged.
-    The flash message is left in ``_reextract_result`` for the text-entry
-    view to pop and display.
+    Must run BEFORE any per-page widget is instantiated in the script run: it
+    writes the freshly extracted text / contains-story values DIRECTLY onto the
+    page's widget-backed session-state keys, so the text area and checkbox show
+    the new result. Because this runs before those widgets are created, the
+    assignment is legal (the #198 crash only occurs when assigning AFTER a widget
+    is instantiated) — and it refreshes the display deterministically, unlike
+    merely popping the keys and relying on ``value=`` re-seeding, which did NOT
+    reliably replace the on-screen text in production (the reported "re-extract
+    doesn't update the text" bug). Returns the refreshed page number, or ``None``
+    when nothing was staged. The flash message is left in ``_reextract_result``
+    for the text-entry view to display.
     """
     page_number = session_state.pop('_reextract_refresh_page', None)
+    text = session_state.pop('_reextract_text', None)
+    contains_story = session_state.pop('_reextract_contains_story', None)
     if page_number is not None:
-        session_state.pop(f"enter_text_page_text_{page_number}", None)
-        session_state.pop(f"enter_text_contains_story_{page_number}", None)
+        session_state[f"enter_text_page_text_{page_number}"] = text or ""
+        session_state[f"enter_text_contains_story_{page_number}"] = bool(contains_story)
     return page_number
 
 
