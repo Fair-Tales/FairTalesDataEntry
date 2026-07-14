@@ -876,6 +876,9 @@ class Login:
     # Brief notice shown for the one intermediate run while the remember-me
     # cookie is written before the redirect completes (#174).
     signing_in = "Signing you in…"
+    # Brief notice for the one intermediate run while the remember-me cookie is
+    # DELETED after Sign Out (#207) — the deferred-delete mirror of the above.
+    signing_out = "Signing you out…"
     resend_button = "Resend confirmation email"
     forgot_password_expander = "Forgot your password?"
     register_header = "Register"
