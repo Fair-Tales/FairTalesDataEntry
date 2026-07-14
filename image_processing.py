@@ -416,14 +416,20 @@ def correct_page_image(raw_bytes, ai_client, ai_settings, report=None):
             # Gate disabled by the admin: trust the geometric result directly.
             crop_ok = True
         if crop_ok:
-            # The crop-quality gate (when ON) also vets orientation and rejects
-            # an upside-down crop, routing it to the Stage-2 rotation fallback
-            # below. But with the gate OFF that safety net is gone, so an
-            # upside-down page/cover that OpenCV cropped cleanly would be saved
-            # uncorrected. Honour the "orientation is never skipped while
-            # rotation correction is enabled" invariant by running the cheap
-            # rotation check on the accepted crop here too (#181 follow-up).
-            if rotation_on and not crop_gate_on:
+            # Run the dedicated rotation check on EVERY accepted crop (#181).
+            # Previously this was skipped when the crop-quality gate was ON, on
+            # the theory that the gate's single yes/no "properly cropped AND
+            # right way up?" answer also vetted orientation — but that combined
+            # binary judgment misses 180° pages the dedicated 0/90/180/270
+            # question catches (its prompt makes the upside-down case explicit),
+            # and a gate-approved upside-down page was then saved uncorrected
+            # with NO later check. This was the last path where a saved
+            # corrected image could skip rotation detection; the invariant is
+            # now uniform across the high-confidence, gate-approved and gate-off
+            # paths: while rotation correction is enabled, orientation is never
+            # trusted (costs one extra cheap rotation call per gate-approved
+            # page; disable via the admin enable_rotation_correction toggle).
+            if rotation_on:
                 report(Uploader.substep_detecting_rotation)
                 angle = get_rotation_angle(
                     corrected_bytes, ai_client, model=rotation_model
