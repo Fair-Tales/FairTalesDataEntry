@@ -11,7 +11,7 @@ from utilities import (
     get_s3_filesystem, get_anthropic_client,
     consume_pending_character_autodetect, stage_character_redetect,
     stage_reextract_refresh, consume_reextract_refresh,
-    usable_precomputed_suggestions,
+    usable_precomputed_suggestions, strip_leading_article,
     CHARACTER_AUTODETECT_SOURCE_AUTO, CHARACTER_AUTODETECT_SOURCE_MANUAL,
 )
 from data_structures import Page, Character, Alias, ExtractionErrorLog
@@ -729,11 +729,16 @@ def run_character_detection():
 
 def _parse_aliases(text, exclude_name):
     """Split a comma-separated alias string, dropping blanks, duplicates and
-    any value equal to the character's own name."""
+    any value equal to the character's own name.
+
+    Each alias has a leading article ("the"/"a"/"an") stripped (hotfix) so an
+    auto-detected alias like "the Butterfly" is stored as "Butterfly"; dedup and
+    the exclude-name check run on the stripped value so "the Butterfly" and
+    "Butterfly" collapse together."""
     aliases = []
     seen = set()
     for part in (text or "").split(','):
-        alias = part.strip()
+        alias = strip_leading_article(part.strip())
         if alias and alias.lower() != exclude_name.lower() and alias.lower() not in seen:
             seen.add(alias.lower())
             aliases.append(alias)
