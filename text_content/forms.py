@@ -1209,6 +1209,43 @@ class PhotoUpload:
     add_more_photos_button = "Add more photos (append pages)"
     replace_button = "Replace / re-upload photos"
 
+    # --- Reorder pages (#148): fix a wrong upload/sort order in place ---
+    reorder_button = "Reorder pages"
+    reorder_header = "Reorder this book's pages"
+    reorder_instructions = (
+        "This book has **{count} pages**. Pick the page that is in the wrong "
+        "place and the position it should be at — the pages in between shift "
+        "along by one. Any text already entered moves with its photo. Repeat "
+        "for further moves."
+    )
+    reorder_from_label = "Move page"
+    reorder_to_label = "To position"
+    reorder_preview_caption = "Page {page} (the page being moved)"
+    reorder_no_preview = "No preview available for page {page}."
+    reorder_apply_button = "Move the page"
+    reorder_working = "Moving the page (photos and text)…"
+    reorder_success = (
+        "Done — the old page {page} is now page {position}. The preview above "
+        "shows the NEW page {page}; keep moving pages, or use Done to leave."
+    )
+    reorder_noop = "That page is already at that position — nothing to do."
+    reorder_done_button = "Done reordering"
+    reorder_too_few_pages = "This book has fewer than two pages — nothing to reorder."
+    # Interrupted-migration recovery: a previous reorder died mid-flight (e.g.
+    # the browser closed). Resolving either completes it (if its database
+    # commit happened) or discards it untouched.
+    reorder_pending_warning = (
+        "A previous reorder of this book did not finish. It must be resolved "
+        "before making further changes — click below to complete it (if it "
+        "had already been committed) or discard it (if it had not)."
+    )
+    reorder_resolve_button = "Resolve the unfinished reorder"
+    reorder_resolved_finished = "The unfinished reorder has been completed."
+    reorder_resolved_discarded = (
+        "The unfinished reorder had not been committed — it was discarded and "
+        "nothing was changed."
+    )
+
     # AI page-extraction failures (#132). Shown after processing so the user knows
     # which pages the AI couldn't read and therefore need entering by hand. The raw
     # API error is NEVER shown here — full details go to the extraction_errors debug
