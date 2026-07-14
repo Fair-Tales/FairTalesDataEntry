@@ -30,6 +30,10 @@ def confirm(username, password, remember=False):
         st.session_state['authentication_status'] = True
         st.session_state['username'] = username
         st.session_state.pop('unconfirmed_username', None)
+        # A successful explicit login ends the signed-out state: release the
+        # session-persistent just-logged-out guard (#125/#207) so cookie
+        # restore works normally again for the rest of this session.
+        st.session_state.pop(JUST_LOGGED_OUT_FLAG, None)
         # Resolve the three-tier role (#83) and store it on the session. Keep the
         # legacy 'admin' flag in sync so existing admin-gated pages and the
         # sidebar Admin link keep working unchanged.
@@ -131,11 +135,6 @@ _LOGOUT_KEEP = {
 
 
 def logout():
-    # Clear the persistent remember-me cookie (#111) BEFORE wiping session state,
-    # so a signed-out user is not silently re-authenticated on the next reload.
-    # Done first because the cookie component is read from session_state, which the
-    # wipe loop below clears.
-    clear_remember_cookie()
     # Wipe ALL per-session state except the shared infrastructure above, then
     # re-seed the empty working entities. Without this, one user's in-progress
     # state — e.g. a validator's open book review (`_validation_book_id`), a
@@ -153,16 +152,20 @@ def logout():
     st.session_state['publisher'] = Publisher()
     st.session_state['illustrator'] = Illustrator()
     st.session_state['active_form_to_confirm'] = None
-    # Defeat the Sign-Out vs remember-me race (#125): clear_remember_cookie() above
-    # deletes the cookie via the ASYNC CookieManager, but restore_session_from_cookie()
-    # reads SYNCHRONOUSLY from st.context.cookies, so the st.rerun() below would
-    # otherwise re-read the not-yet-expired request cookie and re-authenticate —
-    # making Sign Out a no-op while 'Remember me' is active. This one-shot flag
-    # survives the rerun (it is in-session state) and is consumed by restore on the
-    # next run, which then skips re-authenticating. Set AFTER the wipe loop above so
-    # the wipe cannot delete it; it is not in _LOGOUT_KEEP because it must not
-    # persist beyond the single post-logout rerun.
+    # Defeat the Sign-Out vs remember-me race (#125/#207). The flag now persists
+    # for the remainder of this session (restore PEEKS it; a new login pops it)
+    # because st.context.cookies keeps serving the connection-time cookie for
+    # the rest of the websocket session. Set AFTER the wipe loop above so the
+    # wipe cannot delete it.
     st.session_state[JUST_LOGGED_OUT_FLAG] = True
+    # The actual browser-cookie delete is DEFERRED to the next run (#207): the
+    # CookieManager delete is executed by a component iframe, and the
+    # st.rerun() below would replace the page before that iframe ever ran —
+    # empirically the cookie then SURVIVED sign-out and a later reload
+    # re-authenticated the user (a shared-device hazard). The login page
+    # renders the delete on the next run and st.stop()s so it completes —
+    # the exact mirror of the #174 deferred cookie WRITE.
+    st.session_state['_pending_remember_clear'] = True
     clear_page_history()
     st.rerun()
 
@@ -203,6 +206,16 @@ if is_authenticated():
         logout()
 
 else:
+    # Deferred remember-me cookie DELETE (#207), mirroring the deferred write
+    # above: logout() cannot render the delete component itself (its st.rerun()
+    # would unmount the component's iframe before the delete JS ran, leaving
+    # the cookie in the browser — verified empirically). Render it here, on the
+    # first signed-out run, and stop; the component's value-change rerun brings
+    # the user to the normal login form below with the cookie actually gone.
+    if st.session_state.pop('_pending_remember_clear', False):
+        clear_remember_cookie()
+        st.info(Login.signing_out)
+        st.stop()
     st.title(Login.sign_in_title)
     selected = option_menu("", options = [Login.menu_login, Login.menu_register], orientation="horizontal")
 

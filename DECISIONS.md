@@ -238,3 +238,21 @@ Status: `accepted` | `superseded` | `deprecated`.
 **Consequences / follow-up:**
 - First live use (2026-07-13): renamed `books/clean_up!` → `books/clean_up!_(partial_entry)` (12 pages, 10 characters, 3 aliases, 38 S3 objects); verified old id freed and no dangling refs.
 - Follow-up issue filed: surface book renaming as an **admin function** in-app, reusing this script's migration logic (extract the ref-repointing core into a shared, Streamlit-callable helper).
+
+---
+
+## 012 — Remember-me cookie: SameSite=Lax, deferred sign-out delete, session-persistent logout guard (issues #207/#125)
+
+**Status:** accepted (partially supersedes 006's #125 residual-race note)
+
+**Context:** Pilot users reported (a) a browser refresh logging them out despite "Remember me" + a configured `cookie_signing_key` (#207), and (b) DECISIONS-006 had accepted a "sub-second" Sign-Out race. Empirical Playwright testing of the real `cookie_auth` flow (2026-07-14) showed the local reload-restore machinery works, but **Sign Out never actually deleted the browser cookie**: `logout()` rendered the CookieManager delete component and immediately `st.rerun()`, which replaced the page before the component iframe's delete JS ever executed — so the cookie survived indefinitely and any later reload silently re-authenticated the signed-out user (a shared-device hazard, not a sub-second window). Separately, production cold visits bounce through `share.streamlit.io/-/auth/app` (verified: the app URL 303s there), i.e. cross-site top-level navigations — which a `SameSite=Strict` cookie is not sent on.
+
+**Decision:**
+- **Cookie is now `SameSite=Lax`** (was `strict`), matching Streamlit's own `streamlit_session` cookie. Lax still blocks cross-site subresource/POST sends; CSRF exposure is nil (HMAC-signed, restores a read session only, role re-resolved server-side).
+- **Sign-out delete is DEFERRED** (mirror of the #174 deferred write): `logout()` only sets `_pending_remember_clear` and reruns; the login page's signed-out branch renders `clear_remember_cookie()` + "Signing you out…" + `st.stop()` so the delete component completes, and its value-change rerun lands on the login form with the cookie actually gone. `clear_remember_cookie()` now renders the delete even when the getAll snapshot doesn't list the cookie.
+- **`JUST_LOGGED_OUT_FLAG` persists for the remainder of the session** (restore PEEKS it; a successful new login pops it) — `st.context.cookies` keeps serving the connection-time (deleted) cookie for the rest of the websocket session, so a one-shot pop was insufficient.
+- **Restore fallback + resilience:** when the request headers carry no cookie, restore falls back to the CookieManager component's `document.cookie` snapshot (covers header-stripping proxies / navigation quirks; hydrates a rerun later on a cold load). A **transient** user-lookup failure (GoogleAPIError, e.g. exhausted quota) skips restore WITHOUT clearing the cookie; only a clean "user does not exist" clears it.
+
+**Consequences / follow-up:**
+- Residual: a hard reload issued in the ~sub-second window between Sign Out and the deferred delete completing can still restore in a NEW session; far smaller than before (the delete now actually runs) — revisit only if server-side revocation lands.
+- Live verification required on Streamlit Cloud (refresh-restore over the auth bounce cannot be exercised locally).
