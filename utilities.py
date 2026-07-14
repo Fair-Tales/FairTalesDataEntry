@@ -1128,6 +1128,91 @@ def databot_entered_by():
     return st.session_state['firestore'].username_to_doc_ref(DATABOT_USERNAME)
 
 
+def entered_by_username(entered_by):
+    """The owner username for an ``entered_by`` value, handling BOTH shapes.
+
+    ``entered_by`` may be a ``users``-collection ``DocumentReference`` (the
+    normal case) OR a plain username string (legacy/single-DB records, see #131
+    / the ``databot`` owner). Returns the username string (the ref's ``.id``)
+    or ``None`` when unset, so callers can compare/display owners uniformly.
+    Shared by validation's owner caption/scope filter, the review-my-books
+    sections and the book-search ownership caption (#129 — moved here from
+    ``pages/validation.py``).
+    """
+    if not entered_by:
+        return None
+    if isinstance(entered_by, str):
+        return entered_by
+    return getattr(entered_by, 'id', None) or str(entered_by)
+
+
+#: How recent a validator's edit_log activity must be for a submitted book to
+#: count as "currently being validated" and therefore block the owner's reopen
+#: (#200). There is no durable "validation session open" marker (validation.py
+#: tracks the open book only in the VALIDATOR's own st.session_state), so
+#: recent validation-context audit records are the best available proxy.
+VALIDATION_ACTIVITY_WINDOW_MINUTES = 120
+
+
+def validation_recently_active(
+    edit_log_records, *, now=None, window_minutes=VALIDATION_ACTIVITY_WINDOW_MINUTES
+):
+    """True when any validation-context ``edit_log`` record falls within the
+    recent-activity window — the "currently being validated" proxy that blocks
+    an owner reopening their submitted book (#200).
+
+    ``edit_log_records`` is an iterable of edit_log document dicts (already
+    filtered to one book by the caller's ``book_id`` query — a single-field
+    equality query, so no composite index is needed; context/timestamp are
+    filtered here in Python). Records missing a timestamp, or whose ``context``
+    is not ``'validation'`` (kept in sync with ``EditLog.CONTEXT_VALIDATION``;
+    not imported to keep ``utilities`` free of a ``data_structures`` import),
+    are ignored. Naive timestamps are treated as UTC.
+    """
+    now = now if now is not None else datetime.now(timezone.utc)
+    threshold = now - timedelta(minutes=window_minutes)
+    for record in edit_log_records:
+        if record.get('context') != 'validation':
+            continue
+        timestamp = record.get('timestamp')
+        if not isinstance(timestamp, datetime):
+            continue
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        if timestamp >= threshold:
+            return True
+    return False
+
+
+#: submitted_book_reopen_block return values (#200).
+REOPEN_BLOCK_VALIDATED = 'validated'
+REOPEN_BLOCK_VALIDATION_ACTIVE = 'validation_active'
+
+
+def submitted_book_reopen_block(book_row, validation_active):
+    """Why the owner may NOT reopen this submitted book, or ``None`` if reopen
+    is allowed (#200).
+
+    * already validated                     -> ``REOPEN_BLOCK_VALIDATED``
+    * a validator is (probably) working on
+      it right now (see
+      ``validation_recently_active``)       -> ``REOPEN_BLOCK_VALIDATION_ACTIVE``
+    * otherwise                             -> ``None`` (reopen allowed)
+
+    ``book_row`` is a book document as a dict-like (Firestore dict or a pandas
+    row); a missing/NaN ``validated`` field (legacy records read via pandas)
+    counts as not validated.
+    """
+    validated = book_row.get('validated', False)
+    if isinstance(validated, float) and pd.isna(validated):
+        validated = False
+    if bool(validated):
+        return REOPEN_BLOCK_VALIDATED
+    if validation_active:
+        return REOPEN_BLOCK_VALIDATION_ACTIVE
+    return None
+
+
 def authenticate_user(username, password):
     """Authenticate a user by username and password.
 

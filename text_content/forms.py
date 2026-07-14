@@ -1184,6 +1184,38 @@ class ReviewBooks:
     edit_button = "Edit this book."
     cancel_button = "Cancel editing books."
 
+    # Section headers/labels for the three-section layout (#200/#202).
+    in_progress_header = "Books in progress"
+    none_in_progress = "You have no books in progress."
+    submitted_header = "Your submitted books"
+    submitted_intro = (
+        "Books you have submitted are locked for editing. If you spotted a "
+        "mistake, you can reopen a book here as long as it has not yet been "
+        "validated."
+    )
+    submitted_select_label = "Your submitted books:"
+    submitted_validated_info = (
+        "This book has already been validated, so it can no longer be edited. "
+        "Please ask a validator to make any corrections."
+    )
+    submitted_being_validated_info = (
+        "This book is currently being reviewed by a validator, so it cannot be "
+        "reopened right now. Please ask the validation team to make the "
+        "corrections, or try again later."
+    )
+    reopen_button = "Reopen this book for editing."
+    reopen_success = (
+        "'{title}' has been reopened — you can now edit it under "
+        "'Books in progress'."
+    )
+    databot_header = "AI books to finish"
+    databot_intro = (
+        "These books were entered automatically by AI and need a human to "
+        "finish and check them. Anyone can pick one up."
+    )
+    databot_select_label = "AI-generated books:"
+    databot_edit_button = "Finish this book."
+
 
 class Confirm:
     """Strings for the email-confirmation page (pages/confirm.py)."""
@@ -1209,6 +1241,22 @@ class UserHome:
     author_expander = "{name}  —  {gender}"
     no_books_for_author = "No books found for this author."
     books_label = "**Books:**"
+
+    # Ownership/status caption shown in book-search results for books the
+    # current user entered themselves (#200) — explains why a book that is
+    # visible in search may not be sitting under 'Edit my books'.
+    own_book_in_progress_caption = (
+        "You entered this book — it is still in progress. Open it via "
+        "'Edit my books'."
+    )
+    own_book_submitted_caption = (
+        "You entered this book — it has been submitted. If it still needs "
+        "changes you can reopen it from 'Edit my books'."
+    )
+    own_book_validated_caption = (
+        "You entered this book — it has been validated and is locked. Ask a "
+        "validator to make any corrections."
+    )
 
     # option_menu items (also used as the navigation dispatch keys)
     menu_search_books = "Search Books"

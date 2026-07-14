@@ -107,8 +107,9 @@ class Instructions:
     review_my_books = """
         Here you can select books to edit from those that you started entering previously.
         Any data that you entered previously should have saved automatically.
-        Please note that only books that you have not submitted for validation are
-        available to edit.
+        Books you have already submitted for validation are locked, but appear in the
+        'Your submitted books' section below, where you can reopen one for editing as
+        long as it has not yet been validated.
     """
 
     author_publisher_illustrator_select = """
