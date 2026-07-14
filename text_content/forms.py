@@ -247,6 +247,26 @@ class BookPhotoEntry:
         "Still waiting for uploads to finish. If they're all done, use the "
         "**Go** button below to read the book now."
     )
+    # Block-until-ready + no-dead-end affordances (#199): completion is now the
+    # explicit upload manifest; when it does not (yet) confirm completion the
+    # user is told what is happening and never left without a way forward.
+    auto_upload_waiting_finish = (
+        "Waiting for the upload to finish… photos are checked automatically as "
+        "they arrive."
+    )
+    upload_stalled_warning = (
+        "The upload looks stalled — no new photos have arrived for a while and "
+        "the upload has not confirmed it finished. You can keep waiting, "
+        "re-select the remaining photos above to retry, or use the **Go** "
+        "button below to proceed with the photos already uploaded."
+    )
+    upload_incomplete_prompt = (
+        "{n} photo(s) have uploaded, but the upload has not confirmed it "
+        "finished — some photos may still be arriving or may have failed. You "
+        "can wait and click **Go** again, re-select the missing photos above, "
+        "or proceed now with just these {n} photo(s)."
+    )
+    force_read_button = "Proceed with the uploaded photos anyway"
     auto_reading = "Photos uploaded — reading your book automatically…"
     manual_read_help = (
         "You don't normally need this — reading starts automatically once your "
@@ -1303,6 +1323,20 @@ class Uploader:
         "then tap **Process photos** once they have all finished."
     )
     process_button = "Process photos"
+    # Block-until-ready + no-dead-end affordances (#199), mirroring
+    # BookPhotoEntry's: reading is gated on the upload confirming completion
+    # (the manifest), with an explicit proceed-anyway escape hatch.
+    uploads_in_progress = (
+        "Your photos are still uploading. Please wait for every progress bar to "
+        "finish, then tap **Process photos** again."
+    )
+    upload_incomplete_prompt = (
+        "{n} photo(s) have uploaded, but the upload has not confirmed it "
+        "finished — some photos may still be arriving or may have failed. You "
+        "can wait and tap **Process photos** again, re-select the missing "
+        "photos above, or proceed now with just these {n} photo(s)."
+    )
+    force_process_button = "Process the uploaded photos anyway"
     no_photos_uploaded = (
         "We couldn't find any uploaded photos yet. Please select your page photos "
         "above and wait for every progress bar to finish, then try again."

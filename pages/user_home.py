@@ -195,6 +195,7 @@ def add_book_from_photos():
         'ai_prefilled_publisher', 'ai_prefilled_year',
         'photos_ready_auto', 'photo_extract_empty', 'photo_extract_diag',
         '_auto_last_count', '_auto_polls',
+        '_auto_stall_polls', '_upload_incomplete_count',
         # Stale character-autodetect staging from a previous book's pipeline
         # run (#179/#182): must not fire for (or leak suggestions into) the
         # new entry.

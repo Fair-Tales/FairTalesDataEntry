@@ -51,6 +51,7 @@ from utilities import (
 from photo_upload import (
     get_upload_session_id,
     generate_put_urls,
+    generate_manifest_put_url,
     build_uploader_html,
     fetch_uploaded_photos,
     cleanup_prefix,
@@ -356,7 +357,8 @@ def _render_upload(client, ai_available):
     else:
         st.write(BatchBookEntry.direct_upload_instructions)
         put_urls = generate_put_urls(UPLOAD_FLOW_KEY, session_id)
-        st.iframe(build_uploader_html(put_urls), height=460)
+        manifest_url = generate_manifest_put_url(UPLOAD_FLOW_KEY, session_id)
+        st.iframe(build_uploader_html(put_urls, manifest_url), height=460)
 
     detect = st.button(BatchBookEntry.detect_button, key="add_books_batch_detect_button")
     if st.button(BatchBookEntry.cancel_button, key="add_books_batch_cancel_upload_button"):
