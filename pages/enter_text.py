@@ -543,6 +543,10 @@ def text_entry(element, image_height, delta=50):
 
 def character_entry(element):
 
+    # Show the cast already saved for this book above the add form (#201), so
+    # the user can see a name is taken (and jump to editing it) before typing.
+    _render_saved_cast(element)
+
     st.session_state['current_character'] = Character(
         book=st.session_state['current_book'].title
     )
@@ -576,6 +580,12 @@ def manage_characters_entry(element):
 
     element.subheader(ManageCharacters.header)
     element.write(ManageCharacters.intro)
+
+    # Flash from a same-name add that was routed here to edit the existing
+    # character instead (#201, see Character.to_form).
+    _manage_flash = st.session_state.pop('_manage_flash', None)
+    if _manage_flash:
+        element.info(_manage_flash)
 
     book = st.session_state['current_book']
     # Rebuild the book-scoped character lookup from the book's reference list so
@@ -652,17 +662,18 @@ def _filter_existing_characters(suggestions):
     still be attached to them as aliases; ``commit_detected_characters``'s
     document_exists checks remain the backstop.
 
-    Returns ``(kept_suggestions, skipped_count)`` and stashes the skipped count
-    for the review form's caption.
+    Returns ``(kept_suggestions, skipped_names)`` and stashes the skipped
+    NAMES (#201) so the review form can say exactly which detected characters
+    were dropped as already-saved — a bare count read as "the AI missed them".
     """
     existing = {
         name.lower()
         for name in st.session_state['current_book'].get_character_dict()
     }
     kept = [s for s in suggestions if s['name'].lower() not in existing]
-    skipped = len(suggestions) - len(kept)
-    st.session_state['_detected_existing_skipped'] = skipped
-    return kept, skipped
+    skipped_names = [s['name'] for s in suggestions if s['name'].lower() in existing]
+    st.session_state['_detected_existing_skipped'] = skipped_names
+    return kept, skipped_names
 
 
 def run_character_detection():
@@ -893,15 +904,54 @@ def commit_detected_characters(rows):
     st.rerun()
 
 
+def _edit_saved_character(character_id):
+    """Route from a saved-cast Edit button (#201) into the manage view with the
+    character's inline edit form open."""
+    start_editing_character(character_id)
+    st.session_state['now_entering'] = 'manage'
+
+
+def _render_saved_cast(element):
+    """Render the book's already-saved characters with per-character Edit
+    buttons (#201), so wherever suggestions (or the add form) appear the FULL
+    cast is visible and editable — "saved" no longer reads as "not detected",
+    and a character needing changes is one click away (reuses the manage
+    view's edit form, #129).
+    """
+    character_dict = st.session_state['current_book'].get_character_dict()
+    if not character_dict:
+        return
+    element.markdown(EnterText.saved_cast_header)
+    for name, character_ref in character_dict.items():
+        name_col, button_col = element.columns([3, 1])
+        name_col.write(name)
+        button_col.button(
+            EnterText.saved_cast_edit_button,
+            key=f"saved_cast_edit_{character_ref.id}",
+            on_click=_edit_saved_character,
+            args=(character_ref.id,),
+        )
+
+
+def _skipped_existing_info(element):
+    """Name the detected-but-already-saved characters (#201) — an st.info, not
+    the old easily-missed caption with a bare count."""
+    skipped_names = st.session_state.get('_detected_existing_skipped') or []
+    if skipped_names:
+        element.info(
+            EnterText.detect_existing_skipped.format(names=", ".join(skipped_names))
+        )
+
+
 def character_review_form(element):
     suggestions = st.session_state['_detected_characters']
     if not suggestions:
         element.info(EnterText.detect_none_found)
-        skipped_existing = st.session_state.get('_detected_existing_skipped', 0)
-        if skipped_existing:
-            # Everything detected was already entered for this book (#182) —
-            # say so explicitly rather than implying the AI found nothing.
-            element.caption(EnterText.detect_existing_skipped.format(count=skipped_existing))
+        # Everything detected may already be entered for this book (#182) —
+        # say WHICH, and show the saved cast, rather than implying the AI
+        # found nothing (#201).
+        _skipped_existing_info(element)
+        _render_saved_cast(element)
         element.button(
             EnterText.back_to_text_button, width="stretch", on_click=adding_text, key="detect_back_none"
         )
@@ -911,9 +961,8 @@ def character_review_form(element):
         element.info(EnterText.auto_detect_banner)
     # Explicit, visible outcome (#183): say the run finished and what it found.
     element.success(EnterText.detect_success.format(count=len(suggestions)))
-    skipped_existing = st.session_state.get('_detected_existing_skipped', 0)
-    if skipped_existing:
-        element.caption(EnterText.detect_existing_skipped.format(count=skipped_existing))
+    _skipped_existing_info(element)
+    _render_saved_cast(element)
     element.write(EnterText.review_instruction)
     names = [s['name'] for s in suggestions]
     # Characters already defined for this book are also valid merge targets, so a

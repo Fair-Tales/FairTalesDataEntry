@@ -441,12 +441,18 @@ class EnterText:
     # Explicit success line above the review form (#183) — detection must never
     # finish silently.
     detect_success = "Character detection finished — review the {count} suggestion(s) below."
-    # Additive-run note (#182): how many detected characters were dropped from
-    # the suggestions because they already exist in this book (left unchanged).
+    # Additive-run note (#182/#201): WHICH detected characters were dropped
+    # from the suggestions because they already exist in this book. Naming them
+    # (in an st.info, not a caption) stops "saved" reading as "not detected" —
+    # the pilot confusion where a re-run "found the others but not Little Red".
     detect_existing_skipped = (
-        "{count} detected character(s) already exist in this book and were left "
-        "unchanged."
+        "Already saved for this book, so not suggested again: {names}. "
+        "They are listed below — use Edit if one needs changes."
     )
+    # Read-only saved-cast block (#201) shown with the suggestions/add form so
+    # the full cast is always visible and editable from one place.
+    saved_cast_header = "**Already saved for this book:**"
+    saved_cast_edit_button = "Edit"
     rerun_detect_button = "Re-run character detection"
     rerun_detect_help = """
         Run AI character detection again now, using the current page text (e.g. after you have edited it).
@@ -592,6 +598,14 @@ class CharacterForm:
             If you want to create a new alias for an existing character, please
             cancel this entry and select `Add alias`.
         """
+    # Same-name add routes to editing the existing character (#201): after the
+    # AI review has created the cast, re-entering a detected name used to hit a
+    # quiet warning that made the Save button look dead.
+    character_exists_editing = (
+        "'{name}' already exists in this book — you are now editing the "
+        "existing character. To add another name for them, use 'Add alias' "
+        "instead."
+    )
     rename_exists = """
             Another character with that name already exists in this book.
             Please choose a different name.
