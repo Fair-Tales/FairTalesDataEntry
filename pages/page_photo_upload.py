@@ -1,12 +1,10 @@
-import s3fs
 import streamlit as st
 from six import BytesIO
 from streamlit_option_menu import option_menu
 from text_content import Alerts, PhotoUpload
 from utilities import page_layout, check_authentication_status
 from text_content import Instructions
-from data_structures import Page
-from pages.uploader import upload_widget
+from pages.uploader import upload_widget, append_photos_widget
 import qrcode
 from requests.models import PreparedRequest
 
@@ -68,11 +66,16 @@ def already_uploaded_options():
     page_count = getattr(st.session_state.current_book, 'page_count', None)
     count_str = f" ({page_count} pages)" if page_count else ""
     st.info(Instructions.photos_already_uploaded.format(count_str=count_str))
-    skip_col, replace_col = st.columns(2)
+    skip_col, append_col, replace_col = st.columns(3)
     if skip_col.button(PhotoUpload.continue_to_text_button, width="stretch", key="photo_upload_skip_continue_button"):
         st.session_state.pop('_replacing_photos', None)
         st.session_state['current_page_number'] = 1
         st.switch_page("./pages/enter_text.py")
+    if append_col.button(PhotoUpload.add_more_photos_button, width="stretch", key="photo_upload_append_button"):
+        # Append forgotten pages after the current last page (#203). Scoped to
+        # this book, mirroring _replacing_photos.
+        st.session_state['_appending_photos'] = st.session_state.current_book.document_id
+        st.rerun()
     if replace_col.button(PhotoUpload.replace_button, width="stretch", key="photo_upload_replace_button"):
         # Scope the override to this book so re-opening a *different* book still
         # offers the skip choice rather than dropping straight into uploading.
@@ -129,6 +132,13 @@ if (
     # through and forward to text entry. The manual flow (no stashed photos)
     # still lands on the upload options below.
     upload_widget(auto_forward=True)
+elif (
+    st.session_state.current_book.photos_uploaded
+    and st.session_state.get('_appending_photos') == _book_id
+):
+    # Append-more-photos flow (#203): upload extra photos that become new pages
+    # AFTER the current last page, leaving every existing page untouched.
+    append_photos_widget()
 elif (
     st.session_state.current_book.photos_uploaded
     and st.session_state.get('_replacing_photos') != _book_id

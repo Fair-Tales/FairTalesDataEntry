@@ -1180,6 +1180,9 @@ class PhotoUpload:
     continue_button = "Continue"
     back_to_menu_button = "Back to menu"
     continue_to_text_button = "Continue to enter text"
+    # Append forgotten pages (#203) vs full replace: appending keeps every
+    # existing page and its entered text; replacing re-uploads the whole set.
+    add_more_photos_button = "Add more photos (append pages)"
     replace_button = "Replace / re-upload photos"
 
     # AI page-extraction failures (#132). Shown after processing so the user knows
@@ -1354,6 +1357,28 @@ class Uploader:
     no_photos_uploaded = (
         "We couldn't find any uploaded photos yet. Please select your page photos "
         "above and wait for every progress bar to finish, then try again."
+    )
+
+    # --- Append additional/forgotten photos to an existing book (#203) ---
+    append_instructions = (
+        "This book currently has **{count} pages**. Photos you upload here are "
+        "added as **new pages after the last one** — your existing pages, and "
+        "any text you have already entered, are not touched. Select the extra "
+        "photos in reading order, wait for every progress bar to finish, then "
+        "click **Add these photos to the book**."
+    )
+    append_phone_expander = "📱 Take the photos on your phone instead"
+    append_process_button = "Add these photos to the book"
+    append_cancel_button = "Cancel — back to options"
+    append_success = (
+        "Added {added} new page(s) to this book — pages {first} to {last}. "
+        "The text has been read from them automatically wherever possible."
+    )
+    append_continue_button = "Enter text for the new pages"
+    append_collision = (
+        "Could not add the photos: a page {page} image already exists where "
+        "the new pages would go (was this book just changed in another "
+        "session?). Please go back to the menu, reopen the book, and try again."
     )
 
 

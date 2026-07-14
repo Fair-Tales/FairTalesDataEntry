@@ -26,12 +26,18 @@ from photo_upload import (
     cleanup_prefix,
     reset_upload_session,
     uploads_settled,
+    render_go_to_phone,
 )
+from s3_constants import book_folder_name, max_folder_page
 
 # Direct-to-S3 upload flow key (#118) for the shared page-photo / QR-phone upload
 # widget. Namespaces its temp prefix (uploads/pages/{session_id}/) so it never
 # collides with the other migrated surfaces (single / batch / collection).
 UPLOAD_FLOW_KEY = "pages"
+
+# Separate flow key for the append-more-photos surface (#203) so an in-flight
+# append upload can never mix with a full page (re-)upload's temp prefix.
+APPEND_FLOW_KEY = "append"
 
 logger = logging.getLogger(__name__)
 
@@ -425,10 +431,16 @@ def _finalize_job_batch(job, raw_bytes_list, total, fs, db, ai_client, model,
     return copyright_text, failed_pages
 
 
-def _inline_ai_batch(raw_bytes_list, total, fs, ai_client, model, status, progress):
+def _inline_ai_batch(raw_bytes_list, total, fs, ai_client, model, status, progress,
+                     start_page=0):
     """Inline (no background job) upload + per-page correction/OCR pipeline —
     the path taken by QR / manual re-upload of an existing book, and the fallback
     when no durable job exists. Returns ``(copyright_text, failed_pages)``.
+
+    ``start_page`` (#203): number of pages the book ALREADY has. The default 0
+    is the fresh-upload case (pages numbered from 1); the append flow passes the
+    current maximum so the new photos become pages ``start_page+1 …
+    start_page+total`` and no existing ``page_N`` file or doc is ever touched.
     """
     current_book = st.session_state['current_book']
     photos_url = f"sawimages/{current_book.title}"
@@ -441,20 +453,20 @@ def _inline_ai_batch(raw_bytes_list, total, fs, ai_client, model, status, progre
         status.update(label=Uploader.saving_photo.format(current=fi + 1, total=total))
         raw_bytes = exif_transpose_bytes(raw_bytes)
         oriented_list.append(raw_bytes)
-        with fs.open(f"{photos_url}/page_{fi + 1}.jpg", 'wb') as f:
+        with fs.open(f"{photos_url}/page_{start_page + fi + 1}.jpg", 'wb') as f:
             f.write(raw_bytes)
         progress.progress((fi + 1) / total)
     raw_bytes_list = oriented_list
 
     current_book.photos_uploaded = True
     current_book.photos_url = photos_url
-    current_book.page_count = total
+    current_book.page_count = start_page + total
     status.update(label=Uploader.photos_saved)
 
     # Phase 2 — image correction + text extraction per page.
     for i, raw_bytes in enumerate(raw_bytes_list):
-        page_number = i + 1
-        report = _make_reporter(status, page_number, total)
+        page_number = start_page + i + 1
+        report = _make_reporter(status, i + 1, total)
 
         def _produce(raw_bytes=raw_bytes, page_number=page_number, report=report):
             bytes_for_extraction, method = _process_page(
@@ -482,9 +494,12 @@ def _inline_ai_batch(raw_bytes_list, total, fs, ai_client, model, status, progre
     return copyright_text, failed_pages
 
 
-def _blank_batch(raw_bytes_list, total, fs, status, progress):
+def _blank_batch(raw_bytes_list, total, fs, status, progress, start_page=0):
     """No-API-key path: upload raw photos and register blank pages (no OCR).
     Returns ``failed_pages``.
+
+    ``start_page`` (#203): as for ``_inline_ai_batch`` — 0 for a fresh upload,
+    the book's current maximum page number when appending.
     """
     current_book = st.session_state['current_book']
     photos_url = f"sawimages/{current_book.title}"
@@ -495,18 +510,18 @@ def _blank_batch(raw_bytes_list, total, fs, status, progress):
     for fi, raw_bytes in enumerate(raw_bytes_list):
         status.update(label=Uploader.saving_photo.format(current=fi + 1, total=total))
         oriented = exif_transpose_bytes(raw_bytes)
-        with fs.open(f"{photos_url}/page_{fi + 1}.jpg", 'wb') as f:
+        with fs.open(f"{photos_url}/page_{start_page + fi + 1}.jpg", 'wb') as f:
             f.write(oriented)
         # Display derivative (#184): no correction runs on this path, so it is
         # derived from the oriented raw page.
-        with fs.open(f"{photos_url}/page_{fi + 1}_display.jpg", 'wb') as f:
+        with fs.open(f"{photos_url}/page_{start_page + fi + 1}_display.jpg", 'wb') as f:
             f.write(make_display_copy(oriented))
         progress.progress((fi + 1) / total)
 
     current_book.photos_uploaded = True
     current_book.photos_url = photos_url
-    current_book.page_count = total
-    for page_number in range(1, total + 1):
+    current_book.page_count = start_page + total
+    for page_number in range(start_page + 1, start_page + total + 1):
         page = Page(page_number=page_number, book=current_book.title)
         # No auto-correction on the no-API-key path, so there is never a cropped
         # image — record corrected=False so enter-text skips the S3 HEAD check.
@@ -639,6 +654,177 @@ def _cleanup_upload_buffer(fs, flow_key):
         return
     cleanup_prefix(fs, flow_key, session_id)
     reset_upload_session(flow_key)
+
+
+def _existing_max_page(fs, current_book):
+    """Highest existing page number for ``current_book`` (#203).
+
+    The maximum of the registered ``page_count`` and the highest ``page_N.jpg``
+    actually present in the book's S3 folder — so appended pages start beyond
+    BOTH, and an existing page file/doc can never be overwritten even if the
+    two have drifted.
+    """
+    page_count = current_book.page_count
+    if not isinstance(page_count, int) or page_count < 0:
+        page_count = 0
+    folder = book_folder_name(current_book.title, current_book.photos_url)
+    return max(page_count, max_folder_page(fs, folder))
+
+
+def append_photo_batch(raw_bytes_list, fs):
+    """Process new photos as pages APPENDED after the book's current last page
+    (#203) — numbered ``N+1 … N+k`` where N is the existing maximum, through the
+    same per-page correction/OCR pipeline as a fresh upload, WITHOUT renumbering
+    or rewriting any existing page.
+
+    Reuses ``_inline_ai_batch`` / ``_blank_batch`` with ``start_page=N``; those
+    update ``page_count`` to ``N+k`` via the Book write-through. The copyright
+    ISBN lookup is deliberately not run here (it seeds the ADD-book form, which
+    this existing book has long since left). Returns
+    ``(start_page, added, failed_pages)`` on success or ``None`` when aborted by
+    the never-overwrite guard.
+    """
+    current_book = st.session_state['current_book']
+    total = len(raw_bytes_list)
+    model = get_ai_settings()['extraction_model']
+    start_page = _existing_max_page(fs, current_book)
+    photos_url = f"sawimages/{current_book.title}"
+
+    # Belt-and-braces never-overwrite guard: _existing_max_page already places
+    # start_page beyond every known page, so this only trips on a genuine race
+    # (e.g. two sessions appending to the same book simultaneously).
+    if fs.exists(f"{photos_url}/page_{start_page + 1}.jpg"):
+        st.error(Uploader.append_collision.format(page=start_page + 1))
+        return None
+
+    # Invalidate enter-text's cached page images (#199) — the append writes new
+    # page_N(.jpg|_cropped|_display) keys, and the book_pages_dict rebuild plus
+    # prefetch must not serve stale cache entries.
+    st.session_state['_invalidate_image_cache'] = True
+
+    ai_client = get_anthropic_client()
+    with st.status(Uploader.status_header, expanded=True) as status:
+        progress = st.progress(0.0)
+        if ai_client is not None:
+            _, failed_pages = _inline_ai_batch(
+                raw_bytes_list, total, fs, ai_client, model, status, progress,
+                start_page=start_page,
+            )
+        else:
+            failed_pages = _blank_batch(
+                raw_bytes_list, total, fs, status, progress, start_page=start_page,
+            )
+
+    if ai_client is None:
+        st.warning(PhotoUpload.no_api_key)
+    return start_page, total, failed_pages
+
+
+def _finish_append(start_page):
+    """Clear the append-flow state and stage enter-text to rebuild its page dict."""
+    st.session_state.pop('_append_result', None)
+    st.session_state.pop('_appending_photos', None)
+    # Force enter-text to rebuild pages 1..new page_count (the dict was built
+    # against the old page_count and would hide the appended pages).
+    st.session_state.pop('book_pages_dict', None)
+    st.session_state['current_page_number'] = start_page + 1
+
+
+def append_photos_widget():
+    """Upload MORE photos for an existing book; they append as new pages after
+    the current last page (#203).
+
+    Rendered by ``pages/page_photo_upload.py`` when the user chooses "Add more
+    photos". Uses the direct-to-S3 uploader (mobile-safe, #114) under its own
+    ``APPEND_FLOW_KEY`` temp prefix with the same manifest block-until-ready +
+    force-proceed affordances as the main widget (#199), plus the phone-QR
+    hand-off (#143) so the extra photos can be taken on a phone.
+    """
+    fs = get_s3_filesystem()
+    current_book = st.session_state['current_book']
+
+    # Post-processing state: show the outcome + where to go next. Keyed by book
+    # id so a stale result from another book can never surface here.
+    result = st.session_state.get('_append_result')
+    if result and result.get('book_id') == current_book.document_id:
+        start_page, added = result['start_page'], result['added']
+        st.success(Uploader.append_success.format(
+            added=added, first=start_page + 1, last=start_page + added,
+        ))
+        failed_pages = result.get('failed_pages') or []
+        if failed_pages:
+            st.warning(PhotoUpload.extraction_partial_fail.format(
+                failed=len(failed_pages), total=added,
+                pages=", ".join(str(p) for p in failed_pages),
+            ))
+        col_go, col_back = st.columns(2)
+        if col_go.button(Uploader.append_continue_button, width="stretch",
+                         key="uploader_append_continue_button"):
+            _finish_append(start_page)
+            st.switch_page("./pages/enter_text.py")
+        if col_back.button(PhotoUpload.back_to_menu_button, width="stretch",
+                           key="uploader_append_back_menu_button"):
+            _finish_append(start_page)
+            st.switch_page("./pages/book_edit_home.py")
+        return
+
+    st.write(Uploader.append_instructions.format(count=max(current_book.page_count, 0)))
+    session_id = get_upload_session_id(APPEND_FLOW_KEY)
+    put_urls = generate_put_urls(APPEND_FLOW_KEY, session_id)
+    manifest_url = generate_manifest_put_url(APPEND_FLOW_KEY, session_id)
+    st.iframe(build_uploader_html(put_urls, manifest_url), height=460)
+
+    with st.expander(Uploader.append_phone_expander):
+        render_go_to_phone(APPEND_FLOW_KEY, session_id)
+
+    process_col, cancel_col = st.columns(2)
+    process = process_col.button(Uploader.append_process_button, width="stretch",
+                                 key="uploader_append_process_button")
+    if cancel_col.button(Uploader.append_cancel_button, width="stretch",
+                         key="uploader_append_cancel_button"):
+        # Abandon the append: drop the temp prefix and return to the options.
+        cleanup_prefix(fs, APPEND_FLOW_KEY, session_id)
+        reset_upload_session(APPEND_FLOW_KEY)
+        st.session_state.pop('_append_incomplete_count', None)
+        st.session_state.pop('_appending_photos', None)
+        st.rerun()
+
+    # Block-until-ready + no-dead-end escape hatch (#199), mirroring the main
+    # widget: reading is gated on the upload confirming completion (manifest,
+    # with the count-stability heuristic as manifest-less fallback).
+    incomplete = st.session_state.get('_append_incomplete_count')
+    force = False
+    if incomplete:
+        st.warning(Uploader.upload_incomplete_prompt.format(n=incomplete))
+        force = st.button(Uploader.force_process_button,
+                          key="uploader_append_force_button")
+    if not (process or force):
+        return
+    if not force:
+        with st.spinner(BookPhotoEntry.checking_uploads):
+            settled, keys = uploads_settled(fs, APPEND_FLOW_KEY, session_id)
+        if keys and not settled:
+            st.session_state['_append_incomplete_count'] = len(keys)
+            st.rerun()
+    st.session_state.pop('_append_incomplete_count', None)
+
+    with st.spinner(BookPhotoEntry.reading_photos):
+        pages = fetch_uploaded_photos(fs, APPEND_FLOW_KEY, session_id)
+    if not pages:
+        st.warning(Uploader.no_photos_uploaded)
+        return
+
+    outcome = append_photo_batch([data for _name, data in pages], fs)
+    _cleanup_upload_buffer(fs, APPEND_FLOW_KEY)
+    if outcome is not None:
+        start_page, added, failed_pages = outcome
+        st.session_state['_append_result'] = {
+            'book_id': current_book.document_id,
+            'start_page': start_page,
+            'added': added,
+            'failed_pages': failed_pages,
+        }
+        st.rerun()
 
 
 def upload_widget(on_submit='enter_text', auto_forward=False):
