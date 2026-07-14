@@ -247,6 +247,26 @@ class BookPhotoEntry:
         "Still waiting for uploads to finish. If they're all done, use the "
         "**Go** button below to read the book now."
     )
+    # Block-until-ready + no-dead-end affordances (#199): completion is now the
+    # explicit upload manifest; when it does not (yet) confirm completion the
+    # user is told what is happening and never left without a way forward.
+    auto_upload_waiting_finish = (
+        "Waiting for the upload to finish… photos are checked automatically as "
+        "they arrive."
+    )
+    upload_stalled_warning = (
+        "The upload looks stalled — no new photos have arrived for a while and "
+        "the upload has not confirmed it finished. You can keep waiting, "
+        "re-select the remaining photos above to retry, or use the **Go** "
+        "button below to proceed with the photos already uploaded."
+    )
+    upload_incomplete_prompt = (
+        "{n} photo(s) have uploaded, but the upload has not confirmed it "
+        "finished — some photos may still be arriving or may have failed. You "
+        "can wait and click **Go** again, re-select the missing photos above, "
+        "or proceed now with just these {n} photo(s)."
+    )
+    force_read_button = "Proceed with the uploaded photos anyway"
     auto_reading = "Photos uploaded — reading your book automatically…"
     manual_read_help = (
         "You don't normally need this — reading starts automatically once your "
@@ -421,12 +441,18 @@ class EnterText:
     # Explicit success line above the review form (#183) — detection must never
     # finish silently.
     detect_success = "Character detection finished — review the {count} suggestion(s) below."
-    # Additive-run note (#182): how many detected characters were dropped from
-    # the suggestions because they already exist in this book (left unchanged).
+    # Additive-run note (#182/#201): WHICH detected characters were dropped
+    # from the suggestions because they already exist in this book. Naming them
+    # (in an st.info, not a caption) stops "saved" reading as "not detected" —
+    # the pilot confusion where a re-run "found the others but not Little Red".
     detect_existing_skipped = (
-        "{count} detected character(s) already exist in this book and were left "
-        "unchanged."
+        "Already saved for this book, so not suggested again: {names}. "
+        "They are listed below — use Edit if one needs changes."
     )
+    # Read-only saved-cast block (#201) shown with the suggestions/add form so
+    # the full cast is always visible and editable from one place.
+    saved_cast_header = "**Already saved for this book:**"
+    saved_cast_edit_button = "Edit"
     rerun_detect_button = "Re-run character detection"
     rerun_detect_help = """
         Run AI character detection again now, using the current page text (e.g. after you have edited it).
@@ -572,6 +598,14 @@ class CharacterForm:
             If you want to create a new alias for an existing character, please
             cancel this entry and select `Add alias`.
         """
+    # Same-name add routes to editing the existing character (#201): after the
+    # AI review has created the cast, re-entering a detected name used to hit a
+    # quiet warning that made the Save button look dead.
+    character_exists_editing = (
+        "'{name}' already exists in this book — you are now editing the "
+        "existing character. To add another name for them, use 'Add alias' "
+        "instead."
+    )
     rename_exists = """
             Another character with that name already exists in this book.
             Please choose a different name.
@@ -1184,6 +1218,38 @@ class ReviewBooks:
     edit_button = "Edit this book."
     cancel_button = "Cancel editing books."
 
+    # Section headers/labels for the three-section layout (#200/#202).
+    in_progress_header = "Books in progress"
+    none_in_progress = "You have no books in progress."
+    submitted_header = "Your submitted books"
+    submitted_intro = (
+        "Books you have submitted are locked for editing. If you spotted a "
+        "mistake, you can reopen a book here as long as it has not yet been "
+        "validated."
+    )
+    submitted_select_label = "Your submitted books:"
+    submitted_validated_info = (
+        "This book has already been validated, so it can no longer be edited. "
+        "Please ask a validator to make any corrections."
+    )
+    submitted_being_validated_info = (
+        "This book is currently being reviewed by a validator, so it cannot be "
+        "reopened right now. Please ask the validation team to make the "
+        "corrections, or try again later."
+    )
+    reopen_button = "Reopen this book for editing."
+    reopen_success = (
+        "'{title}' has been reopened — you can now edit it under "
+        "'Books in progress'."
+    )
+    databot_header = "AI books to finish"
+    databot_intro = (
+        "These books were entered automatically by AI and need a human to "
+        "finish and check them. Anyone can pick one up."
+    )
+    databot_select_label = "AI-generated books:"
+    databot_edit_button = "Finish this book."
+
 
 class Confirm:
     """Strings for the email-confirmation page (pages/confirm.py)."""
@@ -1209,6 +1275,22 @@ class UserHome:
     author_expander = "{name}  —  {gender}"
     no_books_for_author = "No books found for this author."
     books_label = "**Books:**"
+
+    # Ownership/status caption shown in book-search results for books the
+    # current user entered themselves (#200) — explains why a book that is
+    # visible in search may not be sitting under 'Edit my books'.
+    own_book_in_progress_caption = (
+        "You entered this book — it is still in progress. Open it via "
+        "'Edit my books'."
+    )
+    own_book_submitted_caption = (
+        "You entered this book — it has been submitted. If it still needs "
+        "changes you can reopen it from 'Edit my books'."
+    )
+    own_book_validated_caption = (
+        "You entered this book — it has been validated and is locked. Ask a "
+        "validator to make any corrections."
+    )
 
     # option_menu items (also used as the navigation dispatch keys)
     menu_search_books = "Search Books"
@@ -1255,6 +1337,20 @@ class Uploader:
         "then tap **Process photos** once they have all finished."
     )
     process_button = "Process photos"
+    # Block-until-ready + no-dead-end affordances (#199), mirroring
+    # BookPhotoEntry's: reading is gated on the upload confirming completion
+    # (the manifest), with an explicit proceed-anyway escape hatch.
+    uploads_in_progress = (
+        "Your photos are still uploading. Please wait for every progress bar to "
+        "finish, then tap **Process photos** again."
+    )
+    upload_incomplete_prompt = (
+        "{n} photo(s) have uploaded, but the upload has not confirmed it "
+        "finished — some photos may still be arriving or may have failed. You "
+        "can wait and tap **Process photos** again, re-select the missing "
+        "photos above, or proceed now with just these {n} photo(s)."
+    )
+    force_process_button = "Process the uploaded photos anyway"
     no_photos_uploaded = (
         "We couldn't find any uploaded photos yet. Please select your page photos "
         "above and wait for every progress bar to finish, then try again."

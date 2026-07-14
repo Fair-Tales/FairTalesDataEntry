@@ -3,7 +3,10 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 from st_keyup import st_keyup
 from text_content import Alerts, Instructions, BookPhotoEntry, UserHome
-from utilities import check_authentication_status, page_layout, navigate_to, clear_page_history, clear_entity_form_state
+from utilities import (
+    check_authentication_status, page_layout, navigate_to, clear_page_history,
+    clear_entity_form_state, entered_by_username, normalize_username,
+)
 from data_structures import Book
 from photo_upload import reset_upload_session
 from background_pipeline import cancel_page_processing_job
@@ -103,6 +106,21 @@ def book_search():
                     st.write(UserHome.publisher_label.format(name=publisher_name))
                     st.write(UserHome.illustrator_label.format(name=illustrator_name))
 
+                    # Ownership/status affordance (#200): when the found book
+                    # was entered by the CURRENT user, say what state it is in
+                    # and where to act on it — search itself is display-only
+                    # (#131), and without this a user's own submitted book
+                    # looks "visible but gone" (it never appears under Edit
+                    # my books).
+                    owner = entered_by_username(book_data.get('entered_by'))
+                    if owner and owner == normalize_username(st.session_state.get('username')):
+                        if book_data.get('validated', False):
+                            st.caption(UserHome.own_book_validated_caption)
+                        elif book_data.get('entry_status', 'started') == 'started':
+                            st.caption(UserHome.own_book_in_progress_caption)
+                        else:
+                            st.caption(UserHome.own_book_submitted_caption)
+
 def author_search():
     # Live-filter as the user types (issue #72). st_keyup reruns on each keystroke;
     # the 300ms debounce limits how often the author lookup runs while typing.
@@ -177,6 +195,7 @@ def add_book_from_photos():
         'ai_prefilled_publisher', 'ai_prefilled_year',
         'photos_ready_auto', 'photo_extract_empty', 'photo_extract_diag',
         '_auto_last_count', '_auto_polls',
+        '_auto_stall_polls', '_upload_incomplete_count',
         # Stale character-autodetect staging from a previous book's pipeline
         # run (#179/#182): must not fire for (or leak suggestions into) the
         # new entry.

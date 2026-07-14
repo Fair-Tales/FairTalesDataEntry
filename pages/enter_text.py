@@ -10,6 +10,7 @@ from utilities import (
     detect_book_characters, clear_entity_form_state,
     get_s3_filesystem, get_anthropic_client,
     consume_pending_character_autodetect, stage_character_redetect,
+    stage_reextract_refresh, consume_reextract_refresh,
     usable_precomputed_suggestions,
     CHARACTER_AUTODETECT_SOURCE_AUTO, CHARACTER_AUTODETECT_SOURCE_MANUAL,
 )
@@ -145,8 +146,13 @@ def reextract_current_page(page_number):
     already present in session_state from the current render, so simply
     updating ``current_page``'s fields and rerunning would NOT change what the
     widgets display — Streamlit ignores a widget's ``value=`` once its key is
-    already populated. The widgets' own session_state entries are overwritten
-    directly below so the fresh result is visible immediately.
+    already populated. Assigning to those keys here is ALSO illegal (#198):
+    this function runs mid-render, after the checkbox has been instantiated,
+    and Streamlit raises ``StreamlitAPIException`` on assignment to an
+    already-instantiated widget's key. So the refresh is STAGED instead
+    (``stage_reextract_refresh``) and the top of the next script run pops the
+    widget keys before the widgets exist, letting them re-seed from the
+    freshly written-through ``current_page`` values.
     """
     _save_current_page_text()
 
@@ -187,12 +193,9 @@ def reextract_current_page(page_number):
     st.session_state.current_page.contains_story = is_story
     st.session_state.book_pages_dict[page_number] = st.session_state.current_page
 
-    # Overwrite the widgets' own state (see docstring above) so the page shows
-    # the fresh result as soon as it reruns.
-    st.session_state[f"enter_text_page_text_{page_number}"] = text
-    st.session_state[f"enter_text_contains_story_{page_number}"] = is_story
-
-    st.success(EnterText.reextract_success)
+    # Stage the widget-state refresh + success flash for the next run (see
+    # docstring above — assigning to the widget keys here would crash, #198).
+    stage_reextract_refresh(st.session_state, page_number, EnterText.reextract_success)
     st.rerun()
 
 
@@ -457,6 +460,13 @@ def text_entry(element, image_height, delta=50):
     for message in st.session_state.pop('_detected_characters_result', []):
         element.success(message)
 
+    # Success flash from a just-completed re-extract (#198): staged by
+    # stage_reextract_refresh because st.success immediately before st.rerun()
+    # is never seen.
+    _reextract_message = st.session_state.pop('_reextract_result', None)
+    if _reextract_message:
+        element.success(_reextract_message)
+
     # The story toggle and text area are seeded from the current page, so suffix
     # their keys with the page number to re-seed (rather than bleed state) when
     # the user pages through the book (see #80).
@@ -533,6 +543,10 @@ def text_entry(element, image_height, delta=50):
 
 def character_entry(element):
 
+    # Show the cast already saved for this book above the add form (#201), so
+    # the user can see a name is taken (and jump to editing it) before typing.
+    _render_saved_cast(element)
+
     st.session_state['current_character'] = Character(
         book=st.session_state['current_book'].title
     )
@@ -566,6 +580,12 @@ def manage_characters_entry(element):
 
     element.subheader(ManageCharacters.header)
     element.write(ManageCharacters.intro)
+
+    # Flash from a same-name add that was routed here to edit the existing
+    # character instead (#201, see Character.to_form).
+    _manage_flash = st.session_state.pop('_manage_flash', None)
+    if _manage_flash:
+        element.info(_manage_flash)
 
     book = st.session_state['current_book']
     # Rebuild the book-scoped character lookup from the book's reference list so
@@ -642,17 +662,18 @@ def _filter_existing_characters(suggestions):
     still be attached to them as aliases; ``commit_detected_characters``'s
     document_exists checks remain the backstop.
 
-    Returns ``(kept_suggestions, skipped_count)`` and stashes the skipped count
-    for the review form's caption.
+    Returns ``(kept_suggestions, skipped_names)`` and stashes the skipped
+    NAMES (#201) so the review form can say exactly which detected characters
+    were dropped as already-saved — a bare count read as "the AI missed them".
     """
     existing = {
         name.lower()
         for name in st.session_state['current_book'].get_character_dict()
     }
     kept = [s for s in suggestions if s['name'].lower() not in existing]
-    skipped = len(suggestions) - len(kept)
-    st.session_state['_detected_existing_skipped'] = skipped
-    return kept, skipped
+    skipped_names = [s['name'] for s in suggestions if s['name'].lower() in existing]
+    st.session_state['_detected_existing_skipped'] = skipped_names
+    return kept, skipped_names
 
 
 def run_character_detection():
@@ -883,15 +904,54 @@ def commit_detected_characters(rows):
     st.rerun()
 
 
+def _edit_saved_character(character_id):
+    """Route from a saved-cast Edit button (#201) into the manage view with the
+    character's inline edit form open."""
+    start_editing_character(character_id)
+    st.session_state['now_entering'] = 'manage'
+
+
+def _render_saved_cast(element):
+    """Render the book's already-saved characters with per-character Edit
+    buttons (#201), so wherever suggestions (or the add form) appear the FULL
+    cast is visible and editable — "saved" no longer reads as "not detected",
+    and a character needing changes is one click away (reuses the manage
+    view's edit form, #129).
+    """
+    character_dict = st.session_state['current_book'].get_character_dict()
+    if not character_dict:
+        return
+    element.markdown(EnterText.saved_cast_header)
+    for name, character_ref in character_dict.items():
+        name_col, button_col = element.columns([3, 1])
+        name_col.write(name)
+        button_col.button(
+            EnterText.saved_cast_edit_button,
+            key=f"saved_cast_edit_{character_ref.id}",
+            on_click=_edit_saved_character,
+            args=(character_ref.id,),
+        )
+
+
+def _skipped_existing_info(element):
+    """Name the detected-but-already-saved characters (#201) — an st.info, not
+    the old easily-missed caption with a bare count."""
+    skipped_names = st.session_state.get('_detected_existing_skipped') or []
+    if skipped_names:
+        element.info(
+            EnterText.detect_existing_skipped.format(names=", ".join(skipped_names))
+        )
+
+
 def character_review_form(element):
     suggestions = st.session_state['_detected_characters']
     if not suggestions:
         element.info(EnterText.detect_none_found)
-        skipped_existing = st.session_state.get('_detected_existing_skipped', 0)
-        if skipped_existing:
-            # Everything detected was already entered for this book (#182) —
-            # say so explicitly rather than implying the AI found nothing.
-            element.caption(EnterText.detect_existing_skipped.format(count=skipped_existing))
+        # Everything detected may already be entered for this book (#182) —
+        # say WHICH, and show the saved cast, rather than implying the AI
+        # found nothing (#201).
+        _skipped_existing_info(element)
+        _render_saved_cast(element)
         element.button(
             EnterText.back_to_text_button, width="stretch", on_click=adding_text, key="detect_back_none"
         )
@@ -901,9 +961,8 @@ def character_review_form(element):
         element.info(EnterText.auto_detect_banner)
     # Explicit, visible outcome (#183): say the run finished and what it found.
     element.success(EnterText.detect_success.format(count=len(suggestions)))
-    skipped_existing = st.session_state.get('_detected_existing_skipped', 0)
-    if skipped_existing:
-        element.caption(EnterText.detect_existing_skipped.format(count=skipped_existing))
+    _skipped_existing_info(element)
+    _render_saved_cast(element)
     element.write(EnterText.review_instruction)
     names = [s['name'] for s in suggestions]
     # Characters already defined for this book are also valid merge targets, so a
@@ -1015,7 +1074,22 @@ def user_entry_box(element, image_height, delta=50):
 
 page_layout(current_page="./pages/enter_text.py")
 
+# Consume a staged re-extract refresh (#198) BEFORE any of this page's widgets
+# are instantiated: pops the refreshed page's widget-backed keys so the text
+# area and contains-story checkbox re-seed from the freshly extracted
+# current_page values (already persisted via the write-through Fields).
+consume_reextract_refresh(st.session_state)
+
 fs = get_s3_filesystem()
+
+# A (re)processed photo batch invalidates the cached page images (#199): the
+# upload pipeline just (re)wrote sawimages/{title}/page_N* — without this the
+# @st.cache_data image cache keeps serving the PREVIOUS upload's image for each
+# (book, page) key, which reads as wrong page order that slowly "fixes itself"
+# as entries evict. The pipeline (pages/uploader._process_photo_batch) cannot
+# import load_image (it would be a circular import), so it stages this flag.
+if st.session_state.pop('_invalidate_image_cache', False):
+    load_image.clear()
 
 # Rebuild the page cache whenever the current book changes. Without this, the
 # dict for the first book opened persists in session state and is shown for

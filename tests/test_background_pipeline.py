@@ -448,3 +448,90 @@ def test_reconcile_tolerates_empty_working_prefix():
     fs = FakeFs()  # nothing written yet (all pages fell back)
     link = {'job_id': 'job1', 's3_prefix': 'sawimages/__pending__job1'}
     assert bp.reconcile_s3_prefix(fs, link, 'My Book') == 'sawimages/My Book'
+
+
+# ---------------------------------------------------------------------------
+# Two-worker character-detection race (#201): Phase C must never compute the
+# book's characters over PARTIAL story text. Phase B `continue`s past pages
+# freshly claimed by another (overlapping) worker, so a fast worker could
+# previously reach Phase C while those pages were still processing, run
+# detection over the incomplete text, and stamp character_status='done' —
+# permanently blocking recomputation (the review form then silently missed
+# characters). Now detection only runs once EVERY page is terminal.
+# ---------------------------------------------------------------------------
+
+def test_pages_all_terminal_helper():
+    from datetime import datetime, timezone
+
+    db = FakeClient()
+    job_id = _make_job(db)
+
+    # No page docs at all: not terminal.
+    assert bp._pages_all_terminal(db, job_id, 2) is False
+
+    # Page 1 done, page 2 missing: not terminal.
+    bp._page_ref(db, job_id, 1).set({'page_number': 1, 'status': 'done'}, merge=True)
+    assert bp._pages_all_terminal(db, job_id, 2) is False
+
+    # Page 2 processing (claimed by another worker): not terminal.
+    bp._page_ref(db, job_id, 2).set(
+        {'page_number': 2, 'status': 'processing',
+         'claimed_at': datetime.now(timezone.utc)},
+        merge=True,
+    )
+    assert bp._pages_all_terminal(db, job_id, 2) is False
+
+    # A FAILED page is terminal (it will register blank; the book's remaining
+    # story text is final), as is done.
+    bp._page_ref(db, job_id, 2).set({'status': 'failed'}, merge=True)
+    assert bp._pages_all_terminal(db, job_id, 2) is True
+
+
+def test_worker_defers_detection_while_another_worker_owns_a_page(fast_stages, monkeypatch):
+    from datetime import datetime, timezone
+
+    db = FakeClient()
+    fs = FakeFs()
+    job_id = _make_job(db)
+
+    detection_runs = []
+    monkeypatch.setattr(
+        bp, 'detect_book_characters',
+        lambda pages, client, progress_callback=None, model=None: (
+            detection_runs.append(list(pages)) or [{'name': 'Tom'}]
+        ),
+    )
+
+    # Page 2 is FRESH-claimed by another worker (not a stale lease), so this
+    # worker's Phase B skips it and reaches Phase C with page 2 unfinished.
+    bp._page_ref(db, job_id, 2).set(
+        {'page_number': 2, 'status': 'processing',
+         'claimed_by': 'other-worker', 'claimed_at': datetime.now(timezone.utc)},
+        merge=True,
+    )
+
+    bp._run_worker(fs, db, object(), SETTINGS, job_id, 'sawimages/__pending__job1',
+                   2, [b'page-1', b'page-2'], threading.Event())
+
+    # Detection was NOT computed over the partial (page-1-only) text, and the
+    # status is still pending so a later worker / the consumer fallback can
+    # compute it over the full book.
+    assert detection_runs == []
+    assert db.store['pipeline_jobs/job1']['character_status'] == 'pending'
+
+    # The other worker finishes page 2; a resumed worker (no in-memory bytes,
+    # nothing left to claim) now finds every page terminal and runs detection
+    # over the COMPLETE story text.
+    bp._page_ref(db, job_id, 2).set(
+        bp._result_to_fields('ok', ('page-2', True, 'story'), None, False), merge=True,
+    )
+    bp._run_worker(fs, db, object(), SETTINGS, job_id, 'sawimages/__pending__job1',
+                   2, None, threading.Event())
+
+    assert len(detection_runs) == 1
+    assert [text for _n, text in detection_runs[0]] == ['page-1', 'page-2']
+    job_doc = db.store['pipeline_jobs/job1']
+    assert job_doc['character_status'] == 'done'
+    # Diagnostic (#201): the number of story pages that fed the run is recorded
+    # so a partial computation would be detectable after the fact.
+    assert job_doc['character_pages_used'] == 2

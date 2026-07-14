@@ -35,6 +35,7 @@ import qrcode
 import streamlit as st
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
+from google.api_core.exceptions import GoogleAPIError
 from requests.models import PreparedRequest
 
 from text_content import BookPhotoEntry, PhotoUpload, Instructions
@@ -64,6 +65,24 @@ PRESIGN_EXPIRY_SECONDS = 3600
 # policy condition (see DECISIONS-007 follow-up). The matching S3 lifecycle rule
 # (``scripts/set_uploads_lifecycle.py``) expires abandoned ``uploads/`` objects.
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+# Explicit upload-completion manifest (#199). The uploader JS PUTs a
+# ``manifest.json`` into the same temp prefix whenever a selection batch has no
+# PUTs left in flight, listing exactly the page files uploaded so far. The app
+# then treats the batch as READY only when the manifest exists and its file
+# list matches the keys actually present — replacing the old INFERRED
+# completion ("key count stable across two polls"), whose premise was false:
+# the JS PUTs all files CONCURRENTLY, so a stalled connection made a partial
+# batch look settled and an early read renumbered the pages positionally,
+# permanently corrupting page order.
+MANIFEST_FILENAME = "manifest.json"
+
+#: Firestore ``users`` doc field recording each flow's active upload-session id
+#: (#199): ``{flow_key: session_id}``. ``st.session_state`` alone loses the id
+#: on a websocket drop / hard reload / re-login, after which the page watches a
+#: fresh EMPTY prefix while the photos sit (or continue PUTting for up to the
+#: 1h presign expiry) in the old one — "my photos never register".
+USER_UPLOAD_SESSIONS_FIELD = "active_upload_sessions"
 
 
 def _s3_client():
@@ -99,6 +118,49 @@ def _counter_key(flow_key):
     return f"upload_counter_{flow_key}"
 
 
+def _recorded_session_id(flow_key):
+    """The upload-session id last recorded on the user's Firestore doc for
+    ``flow_key`` (#199), or ``None``. Best-effort: any failure (no session
+    firestore, missing user doc, transient API error) is logged and treated as
+    "nothing recorded" so session recovery can never break the upload page.
+    """
+    username = st.session_state.get("username")
+    if not username or "firestore" not in st.session_state:
+        return None
+    try:
+        doc = st.session_state["firestore"].username_to_doc_ref(username).get()
+        data = doc.to_dict() or {}
+    except GoogleAPIError as exc:
+        logger.warning("Could not read recorded upload session (%s): %s", flow_key, exc)
+        return None
+    sessions = data.get(USER_UPLOAD_SESSIONS_FIELD)
+    if not isinstance(sessions, dict):
+        return None
+    session_id = sessions.get(flow_key)
+    return session_id if isinstance(session_id, str) and session_id else None
+
+
+def _record_session_id(flow_key, session_id):
+    """Record (or with ``None`` clear) the active upload-session id for
+    ``flow_key`` on the user's Firestore doc (#199). Best-effort, mirroring
+    :func:`_recorded_session_id` — a failed write only costs recoverability.
+    """
+    username = st.session_state.get("username")
+    if not username or "firestore" not in st.session_state:
+        return
+    firestore_wrapper = st.session_state["firestore"]
+    try:
+        doc_id = firestore_wrapper.username_to_doc_ref(username).id
+        firestore_wrapper.update_field(
+            collection="users",
+            document=doc_id,
+            field=f"{USER_UPLOAD_SESSIONS_FIELD}.{flow_key}",
+            value=session_id,
+        )
+    except GoogleAPIError as exc:
+        logger.warning("Could not record upload session (%s): %s", flow_key, exc)
+
+
 def get_upload_session_id(flow_key):
     """Return a stable per-upload-session id for ``flow_key``, creating one on
     first use.
@@ -112,23 +174,40 @@ def get_upload_session_id(flow_key):
     the counter (bumped by :func:`reset_upload_session`) keeps consecutive
     uploads by the same user in one browser session distinct, and the timestamp
     avoids collisions across separate logins of the same user.
+
+    DURABLE RECOVERY (#199): ``st.session_state`` does NOT survive a websocket
+    drop / hard reload / re-login, and the old behaviour then minted a fresh id
+    — so the page watched a new, EMPTY prefix while the user's photos sat in
+    (or were still PUTting into) the old one, i.e. uploads "never registered".
+    The active id is therefore also recorded on the user's Firestore doc when
+    minted; a fresh session first tries to RESUME that recorded id. The
+    "start a new photo entry" choke points still get a genuinely fresh prefix
+    because :func:`reset_upload_session` clears the durable record too.
     """
     ss_key = _session_state_key(flow_key)
     if ss_key not in st.session_state:
-        username = st.session_state.get("username") or "anon"
-        safe = re.sub(r"[^A-Za-z0-9_-]", "_", username) or "anon"
-        counter_key = _counter_key(flow_key)
-        counter = st.session_state.get(counter_key, 0) + 1
-        st.session_state[counter_key] = counter
-        st.session_state[ss_key] = f"{safe}_{counter}_{int(time.time())}"
+        recovered = _recorded_session_id(flow_key)
+        if recovered:
+            st.session_state[ss_key] = recovered
+        else:
+            username = st.session_state.get("username") or "anon"
+            safe = re.sub(r"[^A-Za-z0-9_-]", "_", username) or "anon"
+            counter_key = _counter_key(flow_key)
+            counter = st.session_state.get(counter_key, 0) + 1
+            st.session_state[counter_key] = counter
+            st.session_state[ss_key] = f"{safe}_{counter}_{int(time.time())}"
+            _record_session_id(flow_key, st.session_state[ss_key])
     return st.session_state[ss_key]
 
 
 def reset_upload_session(flow_key):
     """Drop the current upload-session id for ``flow_key`` so the next session
     mints a fresh prefix. Call at each "start a new photo entry" choke point.
+    Also clears the durable record (#199) so the abandoned/finished prefix can
+    never be resurrected by session recovery.
     """
     st.session_state.pop(_session_state_key(flow_key), None)
+    _record_session_id(flow_key, None)
 
 
 def upload_prefix(flow_key, session_id):
@@ -157,6 +236,87 @@ def generate_put_urls(flow_key, session_id, count=MAX_UPLOAD_PAGES):
             )
         )
     return urls
+
+
+def generate_manifest_put_url(flow_key, session_id):
+    """Return a presigned PUT URL for the flow/session's ``manifest.json``
+    (#199), which the uploader JS writes whenever a selection batch has no PUTs
+    left in flight. Same signing rules as :func:`generate_put_urls`.
+    """
+    client = _s3_client()
+    key = f"{upload_prefix(flow_key, session_id)}/{MANIFEST_FILENAME}"
+    return client.generate_presigned_url(
+        "put_object",
+        Params={"Bucket": S3_BUCKET, "Key": key},
+        ExpiresIn=PRESIGN_EXPIRY_SECONDS,
+    )
+
+
+def read_upload_manifest(fs, flow_key, session_id):
+    """Return the flow/session's upload manifest dict (#199), or ``None`` when
+    absent or unreadable. Absence means the uploader JS has not (yet) finished
+    a selection batch — or the upload predates the manifest mechanism — so
+    callers must treat ``None`` as "completion unknown", not as ready.
+    """
+    path = f"{S3_BUCKET}/{upload_prefix(flow_key, session_id)}/{MANIFEST_FILENAME}"
+    try:
+        with fs.open(path, "rb") as handle:
+            data = json.load(handle)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        # ValueError covers json.JSONDecodeError (a truncated/in-flight PUT).
+        logger.warning("Unreadable upload manifest at %s: %s", path, exc)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def manifest_matches(manifest, keys):
+    """True when ``manifest`` (see :func:`read_upload_manifest`) records exactly
+    the uploaded page files present in ``keys`` (full ``bucket/.../page_N.jpg``
+    paths from :func:`list_uploaded_keys`) — the #199 readiness test.
+
+    ``None``/malformed manifests never match ("completion unknown"). A manifest
+    listing MORE files than present means PUTs are still landing; FEWER means a
+    further selection batch is still uploading. Both are "not ready".
+    """
+    if not isinstance(manifest, dict):
+        return False
+    uploaded = manifest.get("uploaded")
+    if not isinstance(uploaded, list) or not uploaded:
+        return False
+    names = {key.rsplit("/", 1)[-1] for key in keys}
+    return names == {str(name) for name in uploaded}
+
+
+def upload_batch_ready(fs, flow_key, session_id):
+    """One-stop readiness check (#199): returns ``(ready, keys, manifest)``.
+
+    ``ready`` is True only when the manifest exists and lists exactly the page
+    files present — the explicit completion signal that replaces inferring
+    completion from listing samples. ``keys`` is the current (natural-sorted)
+    listing so callers need not re-list.
+    """
+    keys = list_uploaded_keys(fs, flow_key, session_id)
+    manifest = read_upload_manifest(fs, flow_key, session_id)
+    return manifest_matches(manifest, keys), keys, manifest
+
+
+def missing_upload_slots(names):
+    """The page-slot numbers missing from ``names`` (file names like
+    ``page_3.jpg``): e.g. ``["page_1.jpg", "page_2.jpg", "page_5.jpg"]`` →
+    ``[3, 4]``. Non-slot names are ignored. Used to tell the user explicitly
+    which photos have not (yet) landed instead of silently renumbering a
+    hole-y listing (#199).
+    """
+    slots = set()
+    for name in names:
+        match = re.fullmatch(r"page_(\d+)\.jpg", name)
+        if match:
+            slots.add(int(match.group(1)))
+    if not slots:
+        return []
+    return [n for n in range(1, max(slots) + 1) if n not in slots]
 
 
 def list_uploaded_keys(fs, flow_key, session_id):
@@ -230,26 +390,35 @@ UPLOAD_SETTLE_SECONDS = 2.0
 
 
 def uploads_settled(fs, flow_key, session_id, settle_seconds=UPLOAD_SETTLE_SECONDS):
-    """Best-effort check that no more photos are still arriving in the temp prefix.
+    """Check that no more photos are still arriving in the temp prefix.
 
     The direct-to-S3 uploader iframe is intentionally ONE-WAY: it cannot signal
-    "all uploads finished" back to Streamlit. Streamlit 1.58's
-    ``st.context.cookies`` are frozen at the websocket handshake (so a JS-set
-    completion cookie is not readable without a full page reload), and a bespoke
-    bidirectional component is out of scope before this release. So to stop the
-    user reading a PARTIAL batch mid-upload (#142) we sample the prefix twice,
-    ``settle_seconds`` apart: because the browser PUTs the selected photos
-    sequentially, a still-running upload shows up as a growing key count.
+    "all uploads finished" back to Streamlit. The PRIMARY completion signal is
+    now the explicit upload manifest (#199): when one exists, ``settled`` is
+    exactly :func:`manifest_matches` — the manifest lists every page file
+    present, so nothing is still in flight and nothing extra is expected.
 
-    Returns ``(settled, keys)`` where ``settled`` is ``True`` when the count did
-    not grow across the interval, and ``keys`` is the second (latest) listing so
-    the caller need not re-list. ``settled`` is ``True`` for an empty prefix (the
-    caller distinguishes "nothing uploaded" from "still uploading" via ``keys``).
+    FALLBACK (no manifest — the upload predates the manifest JS, or its PUT
+    failed): the legacy two-sample heuristic, kept so the manual read button
+    cannot dead-end. Sample the prefix twice ``settle_seconds`` apart and treat
+    a non-growing count as settled. NOTE its known weakness (the reason for the
+    manifest): the JS PUTs files CONCURRENTLY, so a stall can make a partial
+    batch look settled — callers should treat a fallback "settled" as weaker
+    (see the force-proceed affordances on the read buttons).
+
+    Returns ``(settled, keys)``; ``keys`` is the latest listing so the caller
+    need not re-list. ``settled`` is ``True`` for an empty prefix (the caller
+    distinguishes "nothing uploaded" from "still uploading" via ``keys``).
     """
-    first = list_uploaded_keys(fs, flow_key, session_id)
-    time.sleep(settle_seconds)
     keys = list_uploaded_keys(fs, flow_key, session_id)
-    return len(keys) <= len(first), keys
+    manifest = read_upload_manifest(fs, flow_key, session_id)
+    if manifest is not None:
+        return manifest_matches(manifest, keys), keys
+    if not keys:
+        return True, keys
+    time.sleep(settle_seconds)
+    second = list_uploaded_keys(fs, flow_key, session_id)
+    return len(second) <= len(keys), second
 
 
 def _app_base_url():
@@ -376,6 +545,17 @@ def render_uploaded_photos_list(fs, flow_key, session_id, container=None):
                 names=", ".join(duplicates)
             )
         )
+    # Gap guard (#199): name the page slots that have not landed (still
+    # uploading, or their PUT failed) instead of silently renumbering around
+    # the holes — a hole-y listing shown renumbered 1..N is what read as
+    # "wrong page order" mid-upload.
+    gaps = missing_upload_slots(names)
+    if gaps:
+        target.warning(
+            BookPhotoEntry.uploaded_gaps_warning.format(
+                slots=", ".join(str(n) for n in gaps)
+            )
+        )
     target.write(
         "\n".join(f"{i}. {name}" for i, name in enumerate(names, start=1))
     )
@@ -424,11 +604,34 @@ _UPLOADER_TEMPLATE = """
   var URLS = __URLS__;
   var TEXT = __TEXT__;
   var MAX_BYTES = __MAX_BYTES__;
+  var MANIFEST_URL = __MANIFEST_URL__;
   var MAX_MB = Math.round(MAX_BYTES / (1024 * 1024));
   var input = document.getElementById("ftu-input");
   var list = document.getElementById("ftu-list");
   var summary = document.getElementById("ftu-summary");
   var nextIndex = 0, total = 0, done = 0, failed = 0;
+  // Explicit completion manifest (#199): the names of every slot successfully
+  // PUT so far, plus how many PUTs are still in flight. Whenever the in-flight
+  // count drains to zero the manifest is (re)written, so the app can require
+  // "manifest lists exactly the keys present" instead of inferring completion
+  // from listing samples. A further selection batch makes the manifest stale
+  // (fewer names than keys) until it finishes — which correctly reads as
+  // "not ready".
+  var uploadedNames = [];
+  var inFlight = 0;
+
+  function writeManifest() {
+    if (!MANIFEST_URL || inFlight !== 0) { return; }
+    var xhr = new XMLHttpRequest();
+    xhr.open("PUT", MANIFEST_URL, true);
+    // Best-effort: a failed manifest PUT only means the app falls back to the
+    // manual read path; the photo PUTs themselves are unaffected.
+    xhr.send(JSON.stringify({
+      uploaded: uploadedNames.slice(),
+      count: uploadedNames.length,
+      failed: failed
+    }));
+  }
 
   function showError(label) {
     // Render a per-file error row (no progress bar) in the existing list UI.
@@ -448,7 +651,7 @@ _UPLOADER_TEMPLATE = """
     summary.textContent = msg;
   }
 
-  function uploadFile(file, url) {
+  function uploadFile(file, url, slotName) {
     var row = document.createElement("div"); row.className = "ftu-row";
     var name = document.createElement("span"); name.className = "ftu-name";
     name.textContent = file.name;
@@ -457,6 +660,7 @@ _UPLOADER_TEMPLATE = """
     row.appendChild(name); row.appendChild(bar); row.appendChild(status);
     list.appendChild(row);
 
+    inFlight += 1;
     var xhr = new XMLHttpRequest();
     xhr.open("PUT", url, true);
     xhr.upload.onprogress = function (ev) {
@@ -466,13 +670,18 @@ _UPLOADER_TEMPLATE = """
       if (xhr.status >= 200 && xhr.status < 300) {
         bar.value = 100; status.textContent = "✓"; status.className = "ftu-status ok";
         done += 1;
+        uploadedNames.push(slotName);
       } else {
         status.textContent = "✗"; status.className = "ftu-status err"; failed += 1;
       }
+      inFlight -= 1;
+      writeManifest();
       refresh();
     };
     xhr.onerror = function () {
       status.textContent = "✗"; status.className = "ftu-status err"; failed += 1;
+      inFlight -= 1;
+      writeManifest();
       refresh();
     };
     xhr.send(file);
@@ -510,7 +719,8 @@ _UPLOADER_TEMPLATE = """
         return;
       }
       total += 1;
-      uploadFile(file, URLS[nextIndex++]);
+      nextIndex += 1;
+      uploadFile(file, URLS[nextIndex - 1], "page_" + nextIndex + ".jpg");
     });
     refresh();
   });
@@ -519,10 +729,13 @@ _UPLOADER_TEMPLATE = """
 """
 
 
-def build_uploader_html(put_urls):
+def build_uploader_html(put_urls, manifest_url=None):
     """Return the HTML/JS string for the direct-to-S3 uploader component.
 
-    ``put_urls`` is the presigned-PUT URL list from :func:`generate_put_urls`.
+    ``put_urls`` is the presigned-PUT URL list from :func:`generate_put_urls`;
+    ``manifest_url`` the presigned manifest PUT URL from
+    :func:`generate_manifest_put_url` (#199 — ``None`` disables the manifest
+    write, leaving callers on the legacy inferred-completion fallback).
     All user-facing strings are sourced from :class:`BookPhotoEntry`.
     """
     text = {
@@ -536,6 +749,7 @@ def build_uploader_html(put_urls):
         .replace("__URLS__", json.dumps(put_urls))
         .replace("__TEXT__", json.dumps(text))
         .replace("__MAX_BYTES__", str(MAX_UPLOAD_BYTES))
+        .replace("__MANIFEST_URL__", json.dumps(manifest_url))
         .replace("__SELECT_LABEL__", BookPhotoEntry.upload_select_button)
         .replace("__HINT__", BookPhotoEntry.upload_component_hint)
     )
