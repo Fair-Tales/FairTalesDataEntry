@@ -691,6 +691,14 @@ def _filter_existing_characters(suggestions):
         for name in st.session_state['current_book'].get_character_dict()
     }
     kept = [s for s in suggestions if s['name'].lower() not in existing]
+    # Normalise each kept suggestion's aliases the SAME way commit_detected_
+    # characters will (strip a leading article, drop blanks/dupes and the
+    # character's own name), so the review form shows EXACTLY what gets saved —
+    # e.g. "the Butterfly" displays as "Butterfly" rather than only being
+    # stripped silently on save. Both detection paths (live re-run and the
+    # precomputed auto-detect) route through here before the review form.
+    for s in kept:
+        s['aliases'] = _parse_aliases(", ".join(s.get('aliases', [])), s.get('name') or '')
     skipped_names = [s['name'] for s in suggestions if s['name'].lower() in existing]
     st.session_state['_detected_existing_skipped'] = skipped_names
     return kept, skipped_names

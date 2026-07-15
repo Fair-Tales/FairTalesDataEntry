@@ -7,6 +7,8 @@ removed, so real names that merely START with those letters ("Theodore",
 "Anna", "Andrew") are never truncated. Pure helper — no Streamlit, no network.
 """
 
+from pathlib import Path
+
 import pytest
 
 from utilities import strip_leading_article
@@ -50,3 +52,22 @@ def test_bare_article_is_kept():
 def test_non_string_is_returned_unchanged():
     assert strip_leading_article(None) is None
     assert strip_leading_article(123) == 123
+
+
+def test_review_form_suggestions_are_alias_normalised():
+    """Regression lock: the character-detection review form must DISPLAY aliases
+    the way they'll be SAVED (leading article stripped), not just strip silently
+    on save. pages/enter_text.py runs Streamlit page code at import so it can't
+    be imported here; assert instead that _filter_existing_characters — which
+    both detection paths (live re-run and precomputed auto-detect) route through
+    before the review form — normalises each kept suggestion's aliases via
+    _parse_aliases.
+    """
+    src = (
+        Path(__file__).resolve().parent.parent / "pages" / "enter_text.py"
+    ).read_text()
+    body = src.split("def _filter_existing_characters", 1)[1].split("\ndef ", 1)[0]
+    assert "_parse_aliases(" in body and "['aliases'] =" in body, (
+        "_filter_existing_characters must normalise each kept suggestion's "
+        "aliases (via _parse_aliases) so the review form matches what commit saves"
+    )
