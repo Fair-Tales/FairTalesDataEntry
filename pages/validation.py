@@ -146,19 +146,32 @@ def render_list():
         key="validation_scope_radio",
     )
 
-    docs = st.session_state.firestore.get_all_documents_stream(collection="books")
+    # Projection (#78): this list renders labels from a handful of small fields,
+    # but previously streamed every book document IN FULL on every rerun —
+    # including each book's large embedded lists (characters, themes, …). The
+    # ``select`` fetches only what the list logic below reads; opening a book
+    # fetches its full document once, by id, at that point. ``(doc.id, data)``
+    # pairs are carried so the open step doesn't have to re-derive the id from
+    # the title.
+    docs = st.session_state.firestore.get_all_documents_stream(
+        collection="books",
+        select=[
+            'title', 'validated', 'entry_status', 'needs_review',
+            'review_pages', 'high_priority_review', 'entered_by',
+        ],
+    )
     # Filter in Python (rather than a Firestore query) so missing legacy fields
     # ('validated' / 'entry_status') fall back to a default instead of excluding a
     # document or raising.
     pending = [
-        data
-        for data in (doc.to_dict() for doc in docs)
+        (doc.id, data)
+        for doc, data in ((doc, doc.to_dict()) for doc in docs)
         if (show_validated or not data.get('validated', False))
         and (not submitted_only or data.get('entry_status') == 'completed')
     ]
 
     if only_flagged:
-        pending = [data for data in pending if data.get('needs_review', False)]
+        pending = [(doc_id, data) for doc_id, data in pending if data.get('needs_review', False)]
 
     # "Just mine": keep only books the current validator originally entered.
     # entered_by may be a DocumentReference or a plain string, so normalise both
@@ -166,17 +179,17 @@ def render_list():
     if scope == Validation.scope_mine:
         username = st.session_state['username']
         pending = [
-            data for data in pending
+            (doc_id, data) for doc_id, data in pending
             if entered_by_username(data.get('entered_by')) == username
         ]
 
     # Flagged/high-priority books float to the top so a validator can prioritise
     # them, then the rest fall back to the existing alphabetical order.
     pending.sort(
-        key=lambda d: (
-            not d.get('high_priority_review', False),
-            not d.get('needs_review', False),
-            (d.get('title') or '').lower(),
+        key=lambda row: (
+            not row[1].get('high_priority_review', False),
+            not row[1].get('needs_review', False),
+            (row[1].get('title') or '').lower(),
         )
     )
 
@@ -187,13 +200,25 @@ def render_list():
     selected_index = st.selectbox(
         Validation.select_book_label,
         options=list(range(len(pending))),
-        format_func=lambda i: _book_flag_label(pending[i]),
+        format_func=lambda i: _book_flag_label(pending[i][1]),
         key="validation_select_book",
     )
 
     if st.button(Validation.open_review_button, key="validation_open_review_button"):
-        row = pending[selected_index]
-        book = Book(db_object=row)
+        # The list rows are PROJECTED (#78) — fetch the full document for the
+        # one book actually being opened, so the Book object (and its editors)
+        # see every field.
+        doc_id, _row = pending[selected_index]
+        snap = st.session_state.firestore.get_by_reference(
+            collection='books', document_ref=doc_id
+        )
+        if not snap.exists:
+            # Guard the stale-list race (book deleted since the stream above)
+            # rather than constructing a Book from None (lookup-guarding
+            # convention).
+            st.warning(Validation.book_no_longer_exists)
+            return
+        book = Book(db_object=snap.to_dict())
         st.session_state['_validation_book_id'] = book.document_id
         st.session_state['current_book'] = book
         st.rerun()
