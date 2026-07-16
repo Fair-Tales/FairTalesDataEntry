@@ -176,7 +176,7 @@ def test_one_bad_page_does_not_blank_the_rest_of_the_book(wired_session, monkeyp
             # the kind of failure the old loop had NO catch-all for.
             raise RuntimeError("corrupt photo: cannot decode")
         processed_pages.append(page_number)
-        return raw_bytes, None
+        return raw_bytes, None, False
 
     monkeypatch.setattr(uploader, "_process_page", fake_process_page)
 
@@ -263,7 +263,7 @@ def test_extraction_failure_and_isolation_failure_share_the_same_log_helper(
     monkeypatch.setattr(uploader, "get_ai_settings", lambda: dict(AI_SETTINGS_DEFAULTS))
     monkeypatch.setattr(
         uploader, "_process_page",
-        lambda raw_bytes, page_number, photos_url, fs, ai_client, report=None: (raw_bytes, None),
+        lambda raw_bytes, page_number, photos_url, fs, ai_client, report=None: (raw_bytes, None, False),
     )
 
     def fake_vision_json(*a, **k):

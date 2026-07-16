@@ -29,7 +29,7 @@ def calls(monkeypatch):
 
     def fake_rotation(image_bytes, client, model=None):
         record["rotation_checked_on"].append(image_bytes)
-        return record.get("angle", 0)
+        return record.get("angle", 0), record.get("uncertain", False)
 
     def fake_rotate(image_bytes, angle):
         record["rotated"].append((image_bytes, angle))
@@ -49,7 +49,7 @@ def _stub_opencv(monkeypatch, ok, high_confidence):
 def test_high_confidence_path_checks_and_fixes_rotation(calls, settings, monkeypatch):
     _stub_opencv(monkeypatch, ok=True, high_confidence=True)
     calls["angle"] = 180
-    for_extraction, corrected, method = ip.correct_page_image(RAW, object(), settings)
+    for_extraction, corrected, method, uncertain = ip.correct_page_image(RAW, object(), settings)
     assert calls["rotation_checked_on"] == [CROP]
     assert calls["rotated"] == [(CROP, 180)]
     assert corrected == b"rotated-180" and for_extraction == b"rotated-180"
@@ -63,7 +63,7 @@ def test_gate_approved_path_still_checks_rotation(calls, settings, monkeypatch):
     _stub_opencv(monkeypatch, ok=True, high_confidence=False)
     monkeypatch.setattr(ip, "check_crop_quality", lambda *a, **k: True)
     calls["angle"] = 180
-    for_extraction, corrected, method = ip.correct_page_image(RAW, object(), settings)
+    for_extraction, corrected, method, uncertain = ip.correct_page_image(RAW, object(), settings)
     assert calls["rotation_checked_on"] == [CROP]
     assert corrected == b"rotated-180"
     assert method == "opencv"
@@ -73,7 +73,7 @@ def test_gate_off_path_checks_rotation(calls, settings, monkeypatch):
     settings["enable_crop_quality_gate"] = False
     _stub_opencv(monkeypatch, ok=True, high_confidence=False)
     calls["angle"] = 90
-    _, corrected, method = ip.correct_page_image(RAW, object(), settings)
+    _, corrected, method, uncertain = ip.correct_page_image(RAW, object(), settings)
     assert calls["rotation_checked_on"] == [CROP]
     assert corrected == b"rotated-90"
     assert method == "opencv"
@@ -83,7 +83,7 @@ def test_upright_gate_approved_crop_is_untouched(calls, settings, monkeypatch):
     _stub_opencv(monkeypatch, ok=True, high_confidence=False)
     monkeypatch.setattr(ip, "check_crop_quality", lambda *a, **k: True)
     calls["angle"] = 0
-    _, corrected, method = ip.correct_page_image(RAW, object(), settings)
+    _, corrected, method, uncertain = ip.correct_page_image(RAW, object(), settings)
     assert calls["rotation_checked_on"] == [CROP]
     assert calls["rotated"] == []
     assert corrected == CROP
@@ -93,7 +93,7 @@ def test_gate_rejected_falls_back_to_rotating_the_raw(calls, settings, monkeypat
     _stub_opencv(monkeypatch, ok=True, high_confidence=False)
     monkeypatch.setattr(ip, "check_crop_quality", lambda *a, **k: False)
     calls["angle"] = 180
-    for_extraction, corrected, method = ip.correct_page_image(RAW, object(), settings)
+    for_extraction, corrected, method, uncertain = ip.correct_page_image(RAW, object(), settings)
     assert calls["rotation_checked_on"] == [RAW]
     assert corrected == b"rotated-180"
     assert method == "rotation"
@@ -103,6 +103,6 @@ def test_rotation_disabled_never_calls_the_check(calls, settings, monkeypatch):
     settings["enable_rotation_correction"] = False
     _stub_opencv(monkeypatch, ok=True, high_confidence=False)
     monkeypatch.setattr(ip, "check_crop_quality", lambda *a, **k: True)
-    _, corrected, method = ip.correct_page_image(RAW, object(), settings)
+    _, corrected, method, uncertain = ip.correct_page_image(RAW, object(), settings)
     assert calls["rotation_checked_on"] == []
     assert corrected == CROP

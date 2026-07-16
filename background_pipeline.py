@@ -156,8 +156,15 @@ def _page_ref(db, job_id, page_number):
 # uploader.attempt_page_extraction produces, so the consume path stays uniform.
 # ---------------------------------------------------------------------------
 
-def _result_to_fields(outcome, payload, method, corrected):
-    common = {'method': method, 'corrected': bool(corrected), 'updated_at': _now()}
+def _result_to_fields(outcome, payload, method, corrected, rotation_uncertain=False):
+    common = {
+        'method': method,
+        'corrected': bool(corrected),
+        # Orientation check could not be trusted for this page (#217) — carried
+        # through to the Page doc by the consumer so it can be surfaced.
+        'rotation_uncertain': bool(rotation_uncertain),
+        'updated_at': _now(),
+    }
     if outcome == 'ok':
         text, is_story, page_type = payload
         common.update(
@@ -172,8 +179,9 @@ def _result_to_fields(outcome, payload, method, corrected):
 
 
 def _fields_to_result(data):
-    """Reconstruct ``(outcome, payload, method, corrected)`` from a page doc, or
-    ``None`` when the page has no terminal result yet."""
+    """Reconstruct ``(outcome, payload, method, corrected, rotation_uncertain)``
+    from a page doc, or ``None`` when the page has no terminal result yet.
+    ``rotation_uncertain`` defaults False for results persisted before #217."""
     status = data.get('status')
     if status == 'done':
         return (
@@ -181,6 +189,7 @@ def _fields_to_result(data):
             (data.get('text', ''), bool(data.get('is_story', False)), data.get('page_type', '')),
             data.get('method'),
             bool(data.get('corrected', False)),
+            bool(data.get('rotation_uncertain', False)),
         )
     if status == 'failed':
         return (
@@ -188,6 +197,7 @@ def _fields_to_result(data):
             (data.get('error_type', 'Error'), data.get('error_message', '')),
             data.get('method'),
             bool(data.get('corrected', False)),
+            bool(data.get('rotation_uncertain', False)),
         )
     return None
 
@@ -294,8 +304,8 @@ def _run_worker(fs, db, client, settings, job_id, s3_prefix, page_count,
                 else:
                     raw_bytes = _s3_read(fs, f"{s3_prefix}/page_{page_number}.jpg")
                 oriented = exif_transpose_bytes(raw_bytes)  # idempotent
-                bytes_for_extraction, corrected, method = correct_page_image(
-                    oriented, client, settings
+                bytes_for_extraction, corrected, method, rotation_uncertain = (
+                    correct_page_image(oriented, client, settings)
                 )
                 if corrected is not None:
                     _s3_write(fs, f"{s3_prefix}/page_{page_number}_cropped.jpg", corrected)
@@ -310,7 +320,13 @@ def _run_worker(fs, db, client, settings, job_id, s3_prefix, page_count,
                 outcome, payload = attempt_page_extraction(
                     bytes_for_extraction, client, settings, label=_WORKER_EXTRACTION_LABEL,
                 )
-                page_ref.set(_result_to_fields(outcome, payload, method, corrected is not None), merge=True)
+                page_ref.set(
+                    _result_to_fields(
+                        outcome, payload, method, corrected is not None,
+                        rotation_uncertain,
+                    ),
+                    merge=True,
+                )
             except Exception as exc:  # noqa: BLE001 - per-page isolation boundary, see docstring
                 logger.warning("background job %s: page %s failed: %s", job_id, page_number, exc)
                 page_ref.set(

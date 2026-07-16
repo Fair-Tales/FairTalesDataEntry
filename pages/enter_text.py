@@ -303,6 +303,12 @@ def manual_correction_dialog():
         # toggle. Covers a page the auto-pipeline left uncorrected (corrected
         # False/None) as well as re-correcting a bad auto-correction.
         st.session_state.current_page.corrected = True
+        # A saved manual correction resolves any orientation uncertainty the
+        # automatic check flagged (#217) — the user has now seen and fixed (or
+        # confirmed) the page. Guarded so the common flag-not-set case costs no
+        # extra Firestore write (each assignment writes through).
+        if getattr(st.session_state.current_page, 'rotation_uncertain', False):
+            st.session_state.current_page.rotation_uncertain = False
         # Invalidate the @st.cache_data image cache so the freshly written
         # _cropped/_display bytes are re-fetched from S3 (the cache would
         # otherwise return the pre-save image for these keys).
@@ -344,6 +350,14 @@ def display_image():
             col1.caption(EnterText.auto_corrected_caption)
     else:
         col1.caption(EnterText.auto_correction_unavailable_caption)
+
+    # The automatic orientation check couldn't decide which way up this page is
+    # (#217): no rotation was applied at processing time, so prompt the user to
+    # check rather than leaving a possibly-rotated page silent. Cleared when a
+    # manual crop-and-rotate is saved. getattr-guarded for pre-#217 Page objects
+    # still held in an open session.
+    if getattr(st.session_state.current_page, 'rotation_uncertain', False):
+        col1.warning(EnterText.rotation_uncertain_warning)
 
     if use_cropped:
         # Default view: ship the small display derivative (#184) — it is built

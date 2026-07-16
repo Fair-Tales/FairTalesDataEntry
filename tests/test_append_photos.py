@@ -204,7 +204,7 @@ def _stub_ai(monkeypatch):
     monkeypatch.setattr(
         uploader, "_process_page",
         lambda raw_bytes, page_number, photos_url, fs, ai_client, report=None:
-        (raw_bytes, None),
+        (raw_bytes, None, False),
     )
     monkeypatch.setattr(
         uploader, "extract_page_info",
