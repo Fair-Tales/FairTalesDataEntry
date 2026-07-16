@@ -2342,6 +2342,27 @@ def split_name(full_name):
     return " ".join(parts[:-1]), parts[-1]
 
 
+@st.cache_resource(show_spinner=False)
+def get_firestore_client():
+    """The app's single, cached ``firestore.Client``.
+
+    Constructing a client is expensive (~400 ms — service-account credential
+    setup + gRPC channel), and ``FirestoreWrapper`` previously built a fresh one
+    on EVERY operation (opening a book paid it per page; each ``Field``
+    write-through paid it twice). Caching the client as a resource — mirroring
+    ``get_s3_filesystem`` — means it is created once and reused, so every DB
+    operation drops from ~400 ms of setup to just the query round-trip. The
+    ``firestore.Client`` is thread-safe and designed to be long-lived, so a
+    single shared instance is correct. ``@st.cache_resource`` (not
+    ``cache_data``) because the live client cannot be pickled (see the note by
+    the lookup caches below).
+    """
+    creds = service_account.Credentials.from_service_account_info(
+        json.loads(st.secrets["firestore_key"])
+    )
+    return firestore.Client(credentials=creds, project="sawdataentry")
+
+
 class FirestoreWrapper:
     """
     Wrapper class to handle interacting with
@@ -2353,10 +2374,13 @@ class FirestoreWrapper:
         self.firestore_key = json.loads(st.secrets["firestore_key"])
 
     def _connect(self, auth=None):
+        # Reuse the cached client (get_firestore_client) rather than building a
+        # new one per call — the single biggest app-wide latency win (#78/#53).
+        # The auth gate is preserved: unauthenticated callers that require auth
+        # still get None.
         auth = self.auth if auth is None else auth
         if is_authenticated() or not auth:
-            creds = service_account.Credentials.from_service_account_info(self.firestore_key)
-            return firestore.Client(credentials=creds, project="sawdataentry")
+            return get_firestore_client()
         else:
             return None
 
