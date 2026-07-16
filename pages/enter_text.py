@@ -24,16 +24,23 @@ logger = logging.getLogger(__name__)
 check_authentication_status()
 
 def create_page_dict_from_db():
+    """Load every page doc for the current book in ONE batched read (#78).
 
-    st.session_state['book_pages_dict'] = {
-        page_num: Page(
-            st.session_state.firestore.get_by_reference(
-                collection='pages',
-                document_ref=f"{st.session_state.current_book.document_id}_{page_num}"
-            ).to_dict()
-        )
-        for page_num in range(1, st.session_state.current_book.page_count + 1)
-    }
+    Previously this issued a serial ``get_by_reference`` per page — N full
+    network round trips at book open (the single slowest interaction in the
+    app: 12+ s for a 30-page book). One ``get_all`` fetches the same snapshots
+    in a single round trip. Missing-doc semantics are unchanged: a page id
+    with no document yields ``to_dict() is None``, exactly as before.
+    """
+    book_id = st.session_state.current_book.document_id
+    page_count = st.session_state.current_book.page_count
+    doc_ids = [f"{book_id}_{page_num}" for page_num in range(1, page_count + 1)]
+    snaps = st.session_state.firestore.get_all_by_ids('pages', doc_ids)
+    pages_dict = {}
+    for page_num in range(1, page_count + 1):
+        snap = snaps.get(f"{book_id}_{page_num}")
+        pages_dict[page_num] = Page(snap.to_dict() if snap is not None else None)
+    st.session_state['book_pages_dict'] = pages_dict
 
 def _save_current_page_text():
     """Persist the current page's text-area contents through to the page (#152).
@@ -617,19 +624,32 @@ def manage_characters_entry(element):
     if not character_dict:
         element.info(ManageCharacters.no_characters)
     else:
+        # Batch the per-render reads (#78): the previous loop issued one
+        # ``ref.get()`` PLUS one alias query PER character on every rerun of
+        # the manage view (2N round trips). One ``get_all`` resolves all
+        # character docs and one chunked ``in`` query fetches every alias of
+        # every character; both are grouped locally below. Semantics match the
+        # per-character queries exactly (an alias row is grouped by the same
+        # ``character`` reference the ``==`` filter matched on).
+        character_refs = list(character_dict.values())
+        character_snaps = dict(zip(
+            (ref.path for ref in character_refs),
+            st.session_state['firestore'].get_all_by_references(character_refs),
+        ))
+        aliases_by_character = {}
+        for alias_doc in st.session_state['firestore'].query_stream_in(
+            collection='aliases', field='character', values=character_refs,
+        ):
+            alias_character = alias_doc.to_dict().get('character')
+            if alias_character is not None:
+                aliases_by_character.setdefault(alias_character.path, []).append(alias_doc)
+
         for name, character_ref in character_dict.items():
-            character_doc = character_ref.get()
-            if not character_doc.exists:
+            character_doc = character_snaps.get(character_ref.path)
+            if character_doc is None or not character_doc.exists:
                 continue
             with element.expander(name):
-                aliases = list(
-                    st.session_state['firestore'].query_stream(
-                        collection='aliases',
-                        field='character',
-                        op='==',
-                        value=character_ref,
-                    )
-                )
+                aliases = aliases_by_character.get(character_ref.path, [])
                 st.write(ManageCharacters.aliases_label)
                 if not aliases:
                     st.caption(ManageCharacters.no_aliases)

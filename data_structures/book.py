@@ -357,10 +357,16 @@ class Book(DataStructureBase):
                 )
             ]
 
+        # Resolve every reference in ONE batched read (#78): this method runs on
+        # nearly every enter-text render (saved cast, alias form, manage view,
+        # detection filtering), and the previous serial ``ref.get()`` per
+        # character cost a full network round trip each — 10 characters meant 10
+        # sequential reads per rerun. ``get_all_by_references`` preserves the
+        # reference order, so the dict's insertion order is unchanged.
         character_dict = {}
         existing_refs = []
-        for ref in refs:
-            doc = ref.get()
+        snaps = st.session_state['firestore'].get_all_by_references(refs)
+        for ref, doc in zip(refs, snaps):
             if doc.exists:
                 character_dict[doc.to_dict()['name']] = ref
                 existing_refs.append(ref)

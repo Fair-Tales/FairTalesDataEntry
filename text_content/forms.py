@@ -1481,6 +1481,12 @@ class Validation:
         "been validated appears here."
     )
     none_pending = "There are no books awaiting validation right now."
+    # Shown when the selected book's document no longer exists by the time it
+    # is opened (deleted since the list was rendered, #78).
+    book_no_longer_exists = (
+        "That book no longer exists — it may have been deleted since the list "
+        "was loaded. Please pick another."
+    )
     select_book_label = "Books:"
     open_review_button = "Open for review"
     submitted_only_toggle = "Show only books submitted for validation"
