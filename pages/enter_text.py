@@ -570,16 +570,20 @@ def text_entry(element, image_height, delta=50):
 
     # A second "Next page" control at the bottom of the text column, directly
     # above the Finish/Submit row rendered further down the page (#169) — a
-    # natural continuation once the user has finished this page's text. Reuses
-    # the same auto-saving on_click handler as the top nav button; only the key
-    # differs (#80).
-    element.button(
+    # natural continuation once the user has finished this page's text. Same
+    # auto-saving page_change handler as the top nav button; only the key
+    # differs (#80). Handled INLINE rather than via on_click (#78): this button
+    # lives inside the entry-column fragment, where an on_click callback would
+    # trigger only a FRAGMENT rerun — the page image and indicator outside the
+    # fragment would keep showing the previous page. st.rerun() defaults to
+    # scope="app", forcing the full rerun a page change requires.
+    if element.button(
         EnterText.next_page_button,
         width="stretch",
-        on_click=page_change,
-        args=(1,),
         key="enter_text_next_page_bottom_button",
-    )
+    ):
+        page_change(1)
+        st.rerun()
 
 
 def character_entry(element):
@@ -1130,6 +1134,48 @@ def user_entry_box(element, image_height, delta=50):
     elif st.session_state.now_entering == 'detect':
         detect_entry(element)
 
+
+@st.fragment
+def _entry_column_fragment(image_height):
+    """The right-hand entry column as a fragment (#78) — the app's hottest
+    interactive section. Interacting with a widget inside a fragment reruns
+    ONLY the fragment, so the frequent entry-column interactions (the
+    contains-story checkbox, the text area's blur/commit, and every
+    view-switch: add character/alias, manage, detect, edit/cancel, done) stop
+    re-executing the whole script — page_layout, the sidebar, the image column
+    and its ``st_dimensions`` component round trip.
+
+    Why this boundary is safe — every path out of the column was audited:
+
+    - The ``now_entering`` dispatch (``user_entry_box``) lives INSIDE the
+      fragment, so view-switch ``on_click`` handlers need only a fragment
+      rerun; nothing outside the column reads ``now_entering``.
+    - Every flow that must refresh the page OUTSIDE the column already ends in
+      an explicit ``st.rerun()``, which defaults to ``scope="app"`` (a full
+      rerun) even when called from inside a fragment: the character/alias/edit
+      form submits, the character-review commit, the detect run, the
+      re-extract button, and the manage view's delete-confirmation dialogs
+      (dialogs may be opened from a sequential fragment rerun).
+    - The one control that previously relied on a bare ``on_click`` with an
+      app-wide effect — the bottom "Next page" button (the page image and
+      indicator outside must change) — is handled inline in ``text_entry``
+      with an explicit app-scope ``st.rerun()``.
+    - ``element`` is a container created INSIDE the fragment body (fragments
+      cannot render widgets into externally created containers), positioned in
+      ``col2`` by the ``with col2:`` at the call site.
+    - ``image_height`` is a plain int captured at the last full run; fragment
+      reruns replay it unchanged, which is correct — it only changes when the
+      window/image changes, which itself triggers a full rerun.
+
+    Deliberately NOT fragmented (risk outweighs the win, #78): the image
+    column (its show-original toggle is a rare interaction, and the column
+    both returns the layout height used here and hosts the crop/enlarge
+    dialogs), and full-page Prev/Next paging (the top nav buttons must rerun
+    the whole page anyway — image, indicator and entry column all change).
+    """
+    element = st.container()
+    user_entry_box(element, image_height)
+
 # def create_current_page_from_db():
 #     st.session_state.current_page = Page(
 #         st.session_state.firestore.get_by_reference(
@@ -1239,7 +1285,11 @@ image_height = display_image()
 if '_page_text_editing' not in st.session_state:
     st.session_state['_page_text_editing'] = None
 
-user_entry_box(col2, image_height)
+# Entry column as a fragment (#78): positioned in col2 here; the fragment body
+# creates its own container (see _entry_column_fragment for the full boundary
+# rationale and what is deliberately not fragmented).
+with col2:
+    _entry_column_fragment(image_height)
 
 # Finish/Submit sits directly below the text-entry column (#169); "Back to
 # menu" is deliberately separated from it below by a visible gap so it is not
