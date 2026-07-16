@@ -17,6 +17,13 @@ class Page(DataStructureBase):
         # on every render. ``None`` means "unknown" — a legacy page saved before
         # this field existed — for which enter-text falls back to the S3 check.
         'corrected': None,
+        # Whether the automatic orientation check (#217) could NOT decide which
+        # way up this page is (API error, unparseable reply, or an aspect-gate
+        # disagreement — see image_processing.get_rotation_angle). No rotation
+        # was applied in that case; enter-text surfaces a "check this page's
+        # orientation" warning, and a manual crop-and-rotate save clears it.
+        # Defaults False for legacy pages (missing key -> declared default).
+        'rotation_uncertain': False,
         'datetime_created': -1,
         'entered_by': None,
         'last_updated': -1

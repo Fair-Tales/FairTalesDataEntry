@@ -512,6 +512,13 @@ class EnterText:
     auto_correction_unavailable_caption = "⚠ Auto-correction unavailable — showing original photo"
     edit_image_button = "✏ Crop and rotate"
     enlarge_button = "🔍 Enlarge"
+    # Shown when the automatic orientation check could not decide which way up
+    # this page is (#217) — no rotation was applied, so ask the user to check.
+    rotation_uncertain_warning = (
+        "The automatic orientation check couldn't decide which way up this "
+        "page is, so it was left as photographed. If it looks rotated, please "
+        "fix it with \"Crop and rotate\" below."
+    )
 
     # --- Text entry / navigation controls ---
     contains_story_label = "Does this page contain story text?"

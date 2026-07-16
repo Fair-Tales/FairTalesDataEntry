@@ -194,12 +194,14 @@ def _process_page(raw_bytes, page_number, photos_url, fs, ai_client, report=None
     ``_make_reporter``) invoked before each model call so the frontend keeps
     receiving updates (#110).
 
-    Returns (image_bytes_for_extraction, method) where method is
-    'opencv', 'rotation', or None (no correction applied).
+    Returns (image_bytes_for_extraction, method, rotation_uncertain) where
+    method is 'opencv', 'rotation', or None (no correction applied) and
+    rotation_uncertain (#217) is True when the orientation check could not be
+    trusted for this page (persisted onto the Page doc by the caller).
     Saves page_{n}_cropped.jpg to S3 whenever a stage produces a corrected
     image — including a rotation-only result with no crop.
     """
-    bytes_for_extraction, corrected, method = correct_page_image(
+    bytes_for_extraction, corrected, method, rotation_uncertain = correct_page_image(
         raw_bytes, ai_client, get_ai_settings(), report
     )
     if corrected is not None:
@@ -210,7 +212,7 @@ def _process_page(raw_bytes, page_number, photos_url, fs, ai_client, report=None
     # (what enter-text shows by default), else the oriented raw page.
     with fs.open(f"{photos_url}/page_{page_number}_display.jpg", 'wb') as f:
         f.write(make_display_copy(corrected if corrected is not None else raw_bytes))
-    return bytes_for_extraction, method
+    return bytes_for_extraction, method, rotation_uncertain
 
 
 def _consume_background_result(result, page_number, model):
@@ -225,7 +227,7 @@ def _consume_background_result(result, page_number, model):
     re-raised as :class:`PageExtractionError` so the caller's existing
     blank-page/failed-pages handling applies unchanged (#132).
     """
-    outcome, payload, _method, corrected = result
+    outcome, payload, _method, corrected, rotation_uncertain = result
     if outcome != 'ok':
         error_type, error_message = payload
         log_extraction_error(
@@ -239,7 +241,7 @@ def _consume_background_result(result, page_number, model):
         )
         raise PageExtractionError(error_type, error_message)
     text, is_story, page_type = payload
-    return text, is_story, page_type, bool(corrected)
+    return text, is_story, page_type, bool(corrected), bool(rotation_uncertain)
 
 
 def _register_placeholder_page(page, page_number):
@@ -276,10 +278,12 @@ def _register_processed_page(page_number, produce, model):
     identical error handling lives in one place).
 
     ``produce`` is a zero-arg callable returning
-    ``(text, is_story, page_type, corrected)`` or raising
+    ``(text, is_story, page_type, corrected, rotation_uncertain)`` or raising
     :class:`PageExtractionError`. ``corrected`` (whether an auto-corrected image
     was written, #184) is recorded on the Page so enter-text can skip the S3 HEAD
-    check. Returns ``(status, copyright_text)``
+    check; ``rotation_uncertain`` (#217) is recorded so enter-text/validation can
+    surface pages whose orientation the automatic check could not decide.
+    Returns ``(status, copyright_text)``
     where ``status`` is ``'ok'`` / ``'failed'`` and ``copyright_text`` is the
     page's text when it is the copyright page (else ``None``). Never raises.
 
@@ -300,7 +304,7 @@ def _register_processed_page(page_number, produce, model):
     page = Page(page_number=page_number, book=current_book.title)
     try:
         try:
-            text, is_story, page_type, corrected = produce()
+            text, is_story, page_type, corrected, rotation_uncertain = produce()
         except PageExtractionError:
             # Detail already logged to extraction_errors; keep the blank page in
             # the sequence and record it for the user (#132). ``corrected`` stays
@@ -311,6 +315,7 @@ def _register_processed_page(page_number, produce, model):
             page.text = text
         page.contains_story = is_story
         page.corrected = corrected
+        page.rotation_uncertain = rotation_uncertain
         page.register()
         return 'ok', (text if (page_type == 'copyright' and text) else None)
     except Exception as exc:  # noqa: BLE001 - per-page isolation boundary, see docstring
@@ -354,8 +359,9 @@ def _finalize_job_batch(job, raw_bytes_list, total, fs, db, ai_client, model,
 
     # Wait for EVERY page's durable result before touching the S3 layout, so the
     # worker is guaranteed to have stopped writing into the working prefix by the
-    # time we reconcile it. Each result is (outcome, payload, method, corrected)
-    # or None (worker could not produce it -> inline fallback below).
+    # time we reconcile it. Each result is (outcome, payload, method, corrected,
+    # rotation_uncertain) or None (worker could not produce it -> inline
+    # fallback below).
     results = {}
     for page_number in range(1, total + 1):
         status.update(label=Uploader.substep_collecting_result.format(page=page_number, total=total))
@@ -393,7 +399,7 @@ def _finalize_job_batch(job, raw_bytes_list, total, fs, db, ai_client, model,
             raw_bytes = exif_transpose_bytes(raw_bytes_list[page_number - 1])
             with fs.open(f"{photos_url}/page_{page_number}.jpg", 'wb') as f:
                 f.write(raw_bytes)
-            bytes_for_extraction, method = _process_page(
+            bytes_for_extraction, method, rotation_uncertain = _process_page(
                 raw_bytes, page_number, photos_url, fs, ai_client, report
             )
             report(Uploader.substep_extracting)
@@ -402,7 +408,7 @@ def _finalize_job_batch(job, raw_bytes_list, total, fs, db, ai_client, model,
                 page_number=page_number, page_name=f"page_{page_number}.jpg",
                 flow=ExtractionErrorLog.FLOW_SINGLE,
             )
-            return text, is_story, page_type, method is not None
+            return text, is_story, page_type, method is not None, rotation_uncertain
 
         page_status, cp = _register_processed_page(page_number, _produce, model)
         if page_status == 'failed':
@@ -469,7 +475,7 @@ def _inline_ai_batch(raw_bytes_list, total, fs, ai_client, model, status, progre
         report = _make_reporter(status, i + 1, total)
 
         def _produce(raw_bytes=raw_bytes, page_number=page_number, report=report):
-            bytes_for_extraction, method = _process_page(
+            bytes_for_extraction, method, rotation_uncertain = _process_page(
                 raw_bytes, page_number, photos_url, fs, ai_client, report
             )
             report(Uploader.substep_extracting)
@@ -478,7 +484,7 @@ def _inline_ai_batch(raw_bytes_list, total, fs, ai_client, model, status, progre
                 page_number=page_number, page_name=f"page_{page_number}.jpg",
                 flow=ExtractionErrorLog.FLOW_SINGLE,
             )
-            return text, is_story, page_type, method is not None
+            return text, is_story, page_type, method is not None, rotation_uncertain
 
         page_status, cp = _register_processed_page(page_number, _produce, model)
         if page_status == 'failed':

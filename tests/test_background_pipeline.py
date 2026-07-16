@@ -134,7 +134,7 @@ def fast_stages(monkeypatch):
     monkeypatch.setattr(bp, 'exif_transpose_bytes', lambda raw: raw)
     monkeypatch.setattr(
         bp, 'correct_page_image',
-        lambda raw, client, settings, report=None: (raw, b'corrected-' + raw, 'opencv'),
+        lambda raw, client, settings, report=None: (raw, b'corrected-' + raw, 'opencv', False),
     )
     monkeypatch.setattr(
         uploader, 'attempt_page_extraction',
@@ -171,13 +171,30 @@ def _make_job(db, job_id='job1', s3_prefix='sawimages/__pending__job1', page_cou
 def test_result_field_roundtrip_ok():
     fields = bp._result_to_fields('ok', ('hello', True, 'story'), 'opencv', True)
     assert fields['status'] == 'done'
-    assert bp._fields_to_result(fields) == ('ok', ('hello', True, 'story'), 'opencv', True)
+    assert bp._fields_to_result(fields) == (
+        'ok', ('hello', True, 'story'), 'opencv', True, False
+    )
 
 
 def test_result_field_roundtrip_error():
     fields = bp._result_to_fields('error', ('AnthropicError', 'boom'), None, False)
     assert fields['status'] == 'failed'
-    assert bp._fields_to_result(fields) == ('error', ('AnthropicError', 'boom'), None, False)
+    assert bp._fields_to_result(fields) == (
+        'error', ('AnthropicError', 'boom'), None, False, False
+    )
+
+
+def test_result_field_roundtrip_rotation_uncertain():
+    """The #217 uncertainty flag survives the durable-result round trip, and a
+    pre-#217 persisted result (no key) reads back as not-uncertain."""
+    fields = bp._result_to_fields('ok', ('hello', True, 'story'), 'opencv', True, True)
+    assert fields['rotation_uncertain'] is True
+    assert bp._fields_to_result(fields) == (
+        'ok', ('hello', True, 'story'), 'opencv', True, True
+    )
+    legacy = dict(fields)
+    del legacy['rotation_uncertain']
+    assert bp._fields_to_result(legacy)[4] is False
 
 
 def test_fields_to_result_pending_is_none():
@@ -224,7 +241,7 @@ def test_worker_processes_pages_to_s3_and_firestore(fast_stages):
     # Per-page results persisted.
     link = {'job_id': job_id}
     assert bp.wait_for_page_result(db, link, 1, worker_alive=lambda: False) == (
-        'ok', ('page-1', True, 'story'), 'opencv', True,
+        'ok', ('page-1', True, 'story'), 'opencv', True, False,
     )
     # Parent doc: character detection + status complete.
     job_doc = db.store['pipeline_jobs/job1']
@@ -259,7 +276,7 @@ def test_worker_page_failure_recorded_as_failed(fast_stages, monkeypatch):
     def _boom(raw, client, settings, report=None):
         if raw == b'page-2':
             raise RuntimeError('corrupt photo')
-        return raw, b'corrected-' + raw, 'opencv'
+        return raw, b'corrected-' + raw, 'opencv', False
 
     monkeypatch.setattr(bp, 'correct_page_image', _boom)
     db = FakeClient()
@@ -271,7 +288,7 @@ def test_worker_page_failure_recorded_as_failed(fast_stages, monkeypatch):
 
     link = {'job_id': job_id}
     assert bp.wait_for_page_result(db, link, 1, worker_alive=lambda: False)[0] == 'ok'
-    outcome, (etype, emsg), _m, _c = bp.wait_for_page_result(db, link, 2, worker_alive=lambda: False)
+    outcome, (etype, emsg), _m, _c, _u = bp.wait_for_page_result(db, link, 2, worker_alive=lambda: False)
     assert outcome == 'error'
     assert etype == 'RuntimeError' and 'corrupt photo' in emsg
 
