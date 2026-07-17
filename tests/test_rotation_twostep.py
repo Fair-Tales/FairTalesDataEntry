@@ -223,3 +223,23 @@ def test_pipeline_rotation_disabled_is_not_uncertain(settings, monkeypatch):
     monkeypatch.setattr(ip, "correct_book_page", lambda raw: (None, False, False))
     result = ip.correct_page_image(b"raw", object(), settings)
     assert result == (b"raw", None, None, False)
+
+
+def test_triage_prompt_keys_on_line_direction():
+    """Regression lock: the triage prompt must decide by the DIRECTION the text
+    lines run (vertical = SIDEWAYS), NOT by an abstract "quarter turn vs half
+    turn" amount. On portrait-shot double-page spreads the turn-amount wording
+    made the model confuse SIDEWAYS (90°) with UPSIDEDOWN (180°) non-
+    deterministically, leaving spreads sideways; keying on horizontal-vs-vertical
+    line direction fixed it (38/38 vs 29/38 on a production sample). Do not revert
+    to the turn-amount framing without re-measuring.
+    """
+    from text_content import AIPrompts
+
+    prompt = AIPrompts.rotation_triage.lower()
+    # Decision is anchored on line direction...
+    assert "horizontal" in prompt and "vertical" in prompt
+    assert "lines of text" in prompt or "lines of printed text" in prompt
+    # ...and still names all three verdicts for the strict parser.
+    for word in ("upright", "upsidedown", "sideways"):
+        assert word in prompt

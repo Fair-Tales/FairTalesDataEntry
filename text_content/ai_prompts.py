@@ -12,13 +12,31 @@ class AIPrompts:
     # triage UPRIGHT -> 0, UPSIDEDOWN -> 180; after the +90° code rotation,
     # binary UPRIGHT -> 90, UPSIDEDOWN -> 270.
 
+    # Triage keys the decision on the DIRECTION the lines of text run, not on
+    # "how much of a turn" the page needs. On portrait-shot double-page spreads
+    # (student holds the phone upright to photograph a landscape spread, so the
+    # text lines run vertically) the "half turn vs quarter turn" wording made the
+    # model confuse SIDEWAYS (90°) with UPSIDEDOWN (180°) — and non-
+    # deterministically: the same page flipped answers between calls, so whether
+    # a spread came out landscape or was left sideways was a coin-flip. Framing
+    # the three cases as horizontal-upright / horizontal-inverted / vertical
+    # scored 38/38 (deterministic) on a production sample where the old wording
+    # scored 29/38 (see the diagnostic in planning/). The letter-orientation
+    # detail keeps UPSIDEDOWN distinct from UPRIGHT.
     rotation_triage = (
-        "This is a photo of a book page. Look at the printed text (if there is "
-        "no text, use the picture: people upright, sky at the top).\n"
-        "Which best describes the image?\n"
-        "UPRIGHT    - it reads normally\n"
-        "UPSIDEDOWN - it is rotated a half turn\n"
-        "SIDEWAYS   - the text lines run vertically (rotated a quarter turn)\n"
+        "This is a photo of one book page or a two-page spread. Find the lines "
+        "of printed text and decide how they are oriented.\n"
+        "- UPRIGHT: the lines of text run HORIZONTALLY (left to right) and the "
+        "letters are the right way up and readable.\n"
+        "- UPSIDEDOWN: the lines of text still run HORIZONTALLY, but every letter "
+        "is inverted — you would rotate the whole page a HALF turn (180 degrees) "
+        "to read it.\n"
+        "- SIDEWAYS: the lines of text run VERTICALLY (up and down the page); you "
+        "would rotate the page a QUARTER turn (90 degrees) so the lines become "
+        "horizontal and readable.\n"
+        "The key cue is the DIRECTION the lines of text run: horizontal means "
+        "UPRIGHT or UPSIDEDOWN, vertical means SIDEWAYS. If there is no text, use "
+        "the picture (people/objects upright, sky at the top).\n"
         "Answer with exactly one word: UPRIGHT, UPSIDEDOWN, or SIDEWAYS."
     )
 
