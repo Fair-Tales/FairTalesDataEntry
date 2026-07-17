@@ -28,6 +28,22 @@ def test_leading_article_is_stripped(raw, expected):
     assert strip_leading_article(raw) == expected
 
 
+@pytest.mark.parametrize("raw,expected", [
+    ("my mum", "mum"),             # exact report examples
+    ("the narrator", "narrator"),
+    ("My Mum", "Mum"),
+    ("your dad", "dad"),
+    ("his brother", "brother"),
+    ("her sister", "sister"),
+    ("its owner", "owner"),
+    ("our teacher", "teacher"),
+    ("their friend", "friend"),
+    ("Their Dog", "Dog"),
+])
+def test_leading_possessive_is_stripped(raw, expected):
+    assert strip_leading_article(raw) == expected
+
+
 @pytest.mark.parametrize("name", [
     "Butterfly",
     "Peter",
@@ -37,6 +53,11 @@ def test_leading_article_is_stripped(raw, expected):
     "Aardvark",
     "Jack the Ripper",   # only a LEADING article is stripped, not interior
     "Little Red",
+    "Myra",         # must NOT become "ra" — "my" needs a following space
+    "Hisham",       # must NOT become "ham"
+    "Herbert",      # must NOT become "bert"
+    "Ourania",      # must NOT become "ania"
+    "Yourself",
 ])
 def test_names_without_a_leading_article_are_unchanged(name):
     assert strip_leading_article(name) == name

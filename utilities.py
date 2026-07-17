@@ -1789,19 +1789,28 @@ def consume_reextract_refresh(session_state):
     return page_number
 
 
-#: Leading article stripped from alias names so an auto-detected alias like
-#: "the Butterfly" is stored as "Butterfly" (hotfix). Matches a single leading
-#: "the"/"a"/"an" (case-insensitive) followed by whitespace.
-_LEADING_ARTICLE_RE = re.compile(r"^\s*(the|an|a)\s+", re.IGNORECASE)
+#: Leading article or possessive determiner stripped from alias names so an
+#: auto-detected alias like "the Butterfly" is stored as "Butterfly" and "my mum"
+#: as "mum" (hotfix). Matches a single leading "the"/"a"/"an" article OR a
+#: "my"/"your"/"his"/"her"/"its"/"our"/"their" possessive (case-insensitive)
+#: followed by whitespace. The required trailing whitespace protects real names
+#: that merely start with those letters ("Theodore", "Myra", "Hisham").
+_LEADING_ARTICLE_RE = re.compile(
+    r"^\s*(the|an|a|my|your|his|her|its|our|their)\s+", re.IGNORECASE
+)
 
 
 def strip_leading_article(name):
-    """Strip a single leading article ("the"/"a"/"an") from an alias ``name``.
+    """Strip a single leading article or possessive determiner from an alias
+    ``name``.
 
-    So a detected alias "the Butterfly" is stored as "Butterfly". Non-string or
-    article-less names are returned unchanged; if stripping would leave nothing
-    (e.g. the name is literally "the"), the original is kept. Only the FIRST
-    leading article is removed — an interior "a"/"the" is untouched.
+    So a detected alias "the Butterfly" is stored as "Butterfly", and a
+    relational alias "my mum"/"the narrator" as "mum"/"narrator". Stripped words
+    are the articles "the"/"a"/"an" and the possessives
+    "my"/"your"/"his"/"her"/"its"/"our"/"their". Non-string or bare names are
+    returned unchanged; if stripping would leave nothing (e.g. the name is
+    literally "the" or "my"), the original is kept. Only the FIRST leading word
+    is removed — an interior "a"/"the"/"my" is untouched.
     """
     if not isinstance(name, str):
         return name
