@@ -494,6 +494,16 @@ class EnterText:
     crop_top_label = "Top"
     crop_bottom_label = "Bottom"
     preview_caption = "Preview"
+    # Which image the crop/rotate editor starts from (#209): always the image
+    # the user is currently looking at, so "rotate 180°" means "rotate what I
+    # see by 180°". Toggle "Show original photo" before opening the editor to
+    # start from the unedited original instead.
+    editing_corrected_caption = (
+        "Editing the corrected image you are currently viewing. To start from "
+        "the original photo instead, close this, switch on \"Show original "
+        "photo\", and reopen."
+    )
+    editing_original_caption = "Editing the original photo."
     save_corrected_button = "💾 Save as corrected image"
     discard_button = "✕ Discard"
     show_original_toggle = "Show original photo"
@@ -502,6 +512,13 @@ class EnterText:
     auto_correction_unavailable_caption = "⚠ Auto-correction unavailable — showing original photo"
     edit_image_button = "✏ Crop and rotate"
     enlarge_button = "🔍 Enlarge"
+    # Shown when the automatic orientation check could not decide which way up
+    # this page is (#217) — no rotation was applied, so ask the user to check.
+    rotation_uncertain_warning = (
+        "The automatic orientation check couldn't decide which way up this "
+        "page is, so it was left as photographed. If it looks rotated, please "
+        "fix it with \"Crop and rotate\" below."
+    )
 
     # --- Text entry / navigation controls ---
     contains_story_label = "Does this page contain story text?"
@@ -876,6 +893,20 @@ class Login:
     # Brief notice shown for the one intermediate run while the remember-me
     # cookie is written before the redirect completes (#174).
     signing_in = "Signing you in…"
+    # Brief notice for the one intermediate run while the remember-me cookie is
+    # DELETED after Sign Out (#207) — the deferred-delete mirror of the above.
+    signing_out = "Signing you out…"
+    # Shown when Confirm is clicked with an empty email or password (#174).
+    # This most commonly happens when a browser/password-manager AUTOFILLED the
+    # fields visually but never synced the values into the page: the submit then
+    # carries empty strings even though the fields LOOK filled. Distinct from
+    # Alerts.invalid_credentials so the user gets an actionable hint (and so
+    # future bug reports distinguish the two cases).
+    missing_fields = (
+        "Please enter your email and password. If your browser filled them in "
+        "for you, click into each field first (or re-type the password) — "
+        "auto-filled values are sometimes not registered until you do."
+    )
     resend_button = "Resend confirmation email"
     forgot_password_expander = "Forgot your password?"
     register_header = "Register"
@@ -1180,7 +1211,47 @@ class PhotoUpload:
     continue_button = "Continue"
     back_to_menu_button = "Back to menu"
     continue_to_text_button = "Continue to enter text"
+    # Append forgotten pages (#203) vs full replace: appending keeps every
+    # existing page and its entered text; replacing re-uploads the whole set.
+    add_more_photos_button = "Add more photos (append pages)"
     replace_button = "Replace / re-upload photos"
+
+    # --- Reorder pages (#148): fix a wrong upload/sort order in place ---
+    reorder_button = "Reorder pages"
+    reorder_header = "Reorder this book's pages"
+    reorder_instructions = (
+        "This book has **{count} pages**. Pick the page that is in the wrong "
+        "place and the position it should be at — the pages in between shift "
+        "along by one. Any text already entered moves with its photo. Repeat "
+        "for further moves."
+    )
+    reorder_from_label = "Move page"
+    reorder_to_label = "To position"
+    reorder_preview_caption = "Page {page} (the page being moved)"
+    reorder_no_preview = "No preview available for page {page}."
+    reorder_apply_button = "Move the page"
+    reorder_working = "Moving the page (photos and text)…"
+    reorder_success = (
+        "Done — the old page {page} is now page {position}. The preview above "
+        "shows the NEW page {page}; keep moving pages, or use Done to leave."
+    )
+    reorder_noop = "That page is already at that position — nothing to do."
+    reorder_done_button = "Done reordering"
+    reorder_too_few_pages = "This book has fewer than two pages — nothing to reorder."
+    # Interrupted-migration recovery: a previous reorder died mid-flight (e.g.
+    # the browser closed). Resolving either completes it (if its database
+    # commit happened) or discards it untouched.
+    reorder_pending_warning = (
+        "A previous reorder of this book did not finish. It must be resolved "
+        "before making further changes — click below to complete it (if it "
+        "had already been committed) or discard it (if it had not)."
+    )
+    reorder_resolve_button = "Resolve the unfinished reorder"
+    reorder_resolved_finished = "The unfinished reorder has been completed."
+    reorder_resolved_discarded = (
+        "The unfinished reorder had not been committed — it was discarded and "
+        "nothing was changed."
+    )
 
     # AI page-extraction failures (#132). Shown after processing so the user knows
     # which pages the AI couldn't read and therefore need entering by hand. The raw
@@ -1356,6 +1427,28 @@ class Uploader:
         "above and wait for every progress bar to finish, then try again."
     )
 
+    # --- Append additional/forgotten photos to an existing book (#203) ---
+    append_instructions = (
+        "This book currently has **{count} pages**. Photos you upload here are "
+        "added as **new pages after the last one** — your existing pages, and "
+        "any text you have already entered, are not touched. Select the extra "
+        "photos in reading order, wait for every progress bar to finish, then "
+        "click **Add these photos to the book**."
+    )
+    append_phone_expander = "📱 Take the photos on your phone instead"
+    append_process_button = "Add these photos to the book"
+    append_cancel_button = "Cancel — back to options"
+    append_success = (
+        "Added {added} new page(s) to this book — pages {first} to {last}. "
+        "The text has been read from them automatically wherever possible."
+    )
+    append_continue_button = "Enter text for the new pages"
+    append_collision = (
+        "Could not add the photos: a page {page} image already exists where "
+        "the new pages would go (was this book just changed in another "
+        "session?). Please go back to the menu, reopen the book, and try again."
+    )
+
 
 class BookDataEntry:
     """Strings for the legacy book-data-entry page (pages/book_data_entry.py)."""
@@ -1395,6 +1488,12 @@ class Validation:
         "been validated appears here."
     )
     none_pending = "There are no books awaiting validation right now."
+    # Shown when the selected book's document no longer exists by the time it
+    # is opened (deleted since the list was rendered, #78).
+    book_no_longer_exists = (
+        "That book no longer exists — it may have been deleted since the list "
+        "was loaded. Please pick another."
+    )
     select_book_label = "Books:"
     open_review_button = "Open for review"
     submitted_only_toggle = "Show only books submitted for validation"

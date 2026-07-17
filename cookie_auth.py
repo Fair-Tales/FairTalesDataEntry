@@ -51,6 +51,7 @@ from datetime import datetime, timezone, timedelta
 
 import streamlit as st
 import extra_streamlit_components as stx
+from google.api_core import exceptions as google_exceptions
 from streamlit.errors import StreamlitSecretNotFoundError
 
 from utilities import get_user, get_role, ROLE_ADMIN, normalize_username
@@ -69,14 +70,16 @@ _COOKIE_MANAGER_KEY = "_cookie_manager"
 # login page can redirect a freshly-restored user home instead of showing the
 # sign-out prompt.
 RESTORED_FLAG = "_remember_restored"
-# One-shot session_state flag set by ``pages/login.logout()`` to defeat the
-# Sign-Out vs remember-me race (#125). Restore reads the cookie SYNCHRONOUSLY from
-# ``st.context.cookies`` (request headers) while logout deletes it via the ASYNC
-# CookieManager, so the ``st.rerun()`` after Sign Out would otherwise re-read the
-# not-yet-expired request cookie and re-authenticate — making Sign Out a no-op
-# while 'Remember me' is active. The flag lives only in in-memory ``session_state``
-# so it survives that same-session rerun; ``restore_session_from_cookie`` consumes
-# it once (pop) and skips, so Sign Out actually sticks.
+# Session flag set by ``pages/login.logout()`` to defeat the Sign-Out vs
+# remember-me race (#125/#207). Restore reads the cookie SYNCHRONOUSLY from
+# ``st.context.cookies`` — headers captured when the websocket connected, which
+# keep carrying the deleted cookie for the REST of the session — while logout
+# deletes it via the browser-side CookieManager component. The flag therefore
+# persists for the whole remainder of the signed-out session (PEEKED, never
+# popped, by ``restore_session_from_cookie``); only an explicit new login
+# (``pages/login.confirm``) pops it. It lives only in in-memory
+# ``session_state``, so a fresh session (reload) starts clean and reads fresh
+# request cookies — by then the deferred delete has actually executed.
 JUST_LOGGED_OUT_FLAG = "_just_logged_out"
 
 
@@ -190,7 +193,17 @@ def set_remember_cookie(username):
         return
     expiry = datetime.now(timezone.utc) + REMEMBER_DURATION
     token = _make_token(username, expiry, key)
-    # same_site="strict" limits CSRF exposure; ``secure`` is left unset so the
+    # same_site="lax" (#207): Streamlit Cloud fronts every cold visit with a
+    # cross-site auth bounce (app -> share.streamlit.io/-/auth/app -> app), and
+    # links/QR codes arriving from other sites are cross-site top-level
+    # navigations too. A SameSite=Strict cookie is NOT sent on those document
+    # requests, which is exactly the deployed "refresh logs me out" failure
+    # mode; Lax sends the cookie on top-level GET navigations while still
+    # blocking cross-site subresource/POST sends. This mirrors Streamlit's own
+    # ``streamlit_session`` cookie (Lax), and CSRF exposure is nil: the token
+    # only re-establishes a read session (every mutation rides the websocket
+    # session), is HMAC-signed, and never carries privileges (role is
+    # re-resolved server-side on restore). ``secure`` is left unset so the
     # cookie also works over plain HTTP in local development (Streamlit Cloud
     # serves over HTTPS regardless).
     manager.set(
@@ -198,19 +211,33 @@ def set_remember_cookie(username):
         token,
         key="remember_set",
         expires_at=expiry,
-        same_site="strict",
+        same_site="lax",
     )
 
 
 def clear_remember_cookie():
-    """Delete the remember-me cookie (called on Sign Out). No-op when absent."""
+    """Render the delete-cookie component for the remember-me cookie.
+
+    IMPORTANT (#207): the delete is executed by the component's IFRAME in the
+    browser, so the script run that renders it must survive long enough for
+    that iframe to load and run — an ``st.rerun()`` issued in the same run
+    replaces the page before the delete JS executes and the cookie SURVIVES
+    (empirically reproduced: sign-out left the cookie in the browser and a
+    later reload silently re-authenticated the signed-out user). Callers must
+    therefore render this on a run that ENDS with ``st.stop()`` and let the
+    component's own value-change rerun continue the flow — the same deferred
+    pattern as the #174 login cookie write. See ``pages/login.py``.
+    """
     manager = _cookie_manager()
     if manager is None:
         return
-    # CookieManager.delete() does ``del self.cookies[name]`` and would KeyError if
-    # the cookie is not currently known, so guard on membership first.
-    if COOKIE_NAME in manager.cookies:
-        manager.delete(COOKIE_NAME, key="remember_delete")
+    # Render the delete component even when this run's getAll snapshot does not
+    # list the cookie (the snapshot can lag reality; deleting a cookie that is
+    # already absent is a browser-side no-op). CookieManager.delete() ends with
+    # ``del self.cookies[name]`` which would KeyError on a missing entry, so
+    # seed the entry first instead of skipping the delete.
+    manager.cookies.setdefault(COOKIE_NAME, None)
+    manager.delete(COOKIE_NAME, key="remember_delete")
 
 
 def restore_session_from_cookie():
@@ -222,14 +249,17 @@ def restore_session_from_cookie():
     from the Firestore user document (never trusting the cookie) and confirms the
     user still exists, then sets the session authentication state.
     """
-    # One-shot guard for the Sign-Out vs remember-me race (#125). logout() sets
-    # JUST_LOGGED_OUT_FLAG just before its st.rerun(); because the cookie is
-    # deleted via the ASYNC CookieManager but read here SYNCHRONOUSLY from
-    # st.context.cookies, that rerun would otherwise still see the request cookie
-    # and re-authenticate, turning Sign Out into a no-op. Consume the flag (pop) and
-    # skip restore exactly once so the user lands on — and stays on — the login
-    # page. Checked first so the flag is always cleared on the post-logout rerun.
-    if st.session_state.pop(JUST_LOGGED_OUT_FLAG, False):
+    # Sign-Out vs remember-me guard (#125/#207). logout() sets
+    # JUST_LOGGED_OUT_FLAG; because the cookie delete is executed by a browser
+    # component while this function reads SYNCHRONOUSLY from st.context.cookies
+    # (headers captured at connection time, which still carry the deleted
+    # cookie for the REST of this websocket session), the flag must persist for
+    # the whole remainder of the session — not just one rerun as before. A
+    # PEEK (get), never a pop: after Sign Out, only an explicit new login
+    # (pages/login.confirm pops the flag) may re-authenticate this session. A
+    # fresh session (reload) reads fresh request cookies, by which time the
+    # deferred delete (#207, see clear_remember_cookie) has executed.
+    if st.session_state.get(JUST_LOGGED_OUT_FLAG, False):
         return
     if st.session_state.get("authentication_status"):
         return
@@ -256,6 +286,20 @@ def restore_session_from_cookie():
     cookies = getattr(st.context, "cookies", None)
     raw = cookies.get(COOKIE_NAME) if cookies else None
     if not raw:
+        # Fallback (#207): read the CookieManager component's snapshot of
+        # document.cookie. On a deployment where the request headers reach the
+        # script without the cookie (proxy stripping, or a cross-site
+        # navigation quirk in the Cloud auth bounce), the browser-side
+        # component still sees it. The component returns nothing on its very
+        # first run of a cold load — that case restores a rerun later, when the
+        # component hydrates and triggers its value-change rerun (the login
+        # page then redirects home via RESTORED_FLAG). The synchronous
+        # st.context read above stays primary so the normal cold-reload restore
+        # (#111) is still immediate.
+        manager = _cookie_manager()
+        if manager is not None:
+            raw = (manager.cookies or {}).get(COOKIE_NAME)
+    if not raw:
         return
     username = _verify_token(raw)
     if username is None:
@@ -268,7 +312,21 @@ def restore_session_from_cookie():
     # Re-resolve from the database. Never trust a role baked into the cookie: a
     # forged/stale cookie must not be able to escalate privileges, and a deleted
     # user must not be restored.
-    if get_user(username) is None:
+    #
+    # Transient-failure hardening (#207): a Firestore outage / exhausted quota
+    # here must NOT destroy the user's remember-me cookie — only a CLEAN
+    # "user does not exist" answer may clear it. On a transient error skip the
+    # restore for this run (the user can retry / the next rerun retries) and
+    # log it. GoogleAPIError covers the google-cloud client's call failures.
+    try:
+        user_exists = get_user(username) is not None
+    except google_exceptions.GoogleAPIError as exc:
+        logger.warning(
+            "Session restore for user=%s skipped: user lookup failed "
+            "transiently (%s). Cookie left intact.", username, exc,
+        )
+        return
+    if not user_exists:
         clear_remember_cookie()
         return
     role = get_role(username)

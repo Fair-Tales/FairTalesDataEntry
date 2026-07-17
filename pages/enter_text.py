@@ -15,7 +15,7 @@ from utilities import (
     CHARACTER_AUTODETECT_SOURCE_AUTO, CHARACTER_AUTODETECT_SOURCE_MANUAL,
 )
 from data_structures import Page, Character, Alias, ExtractionErrorLog
-from image_processing import make_display_copy
+from image_processing import make_display_copy, apply_manual_correction
 from pages.uploader import extract_page_info, PageExtractionError
 from text_content import EnterText, ManageCharacters, AliasForm, CharacterForm
 
@@ -24,16 +24,23 @@ logger = logging.getLogger(__name__)
 check_authentication_status()
 
 def create_page_dict_from_db():
+    """Load every page doc for the current book in ONE batched read (#78).
 
-    st.session_state['book_pages_dict'] = {
-        page_num: Page(
-            st.session_state.firestore.get_by_reference(
-                collection='pages',
-                document_ref=f"{st.session_state.current_book.document_id}_{page_num}"
-            ).to_dict()
-        )
-        for page_num in range(1, st.session_state.current_book.page_count + 1)
-    }
+    Previously this issued a serial ``get_by_reference`` per page — N full
+    network round trips at book open (the single slowest interaction in the
+    app: 12+ s for a 30-page book). One ``get_all`` fetches the same snapshots
+    in a single round trip. Missing-doc semantics are unchanged: a page id
+    with no document yields ``to_dict() is None``, exactly as before.
+    """
+    book_id = st.session_state.current_book.document_id
+    page_count = st.session_state.current_book.page_count
+    doc_ids = [f"{book_id}_{page_num}" for page_num in range(1, page_count + 1)]
+    snaps = st.session_state.firestore.get_all_by_ids('pages', doc_ids)
+    pages_dict = {}
+    for page_num in range(1, page_count + 1):
+        snap = snaps.get(f"{book_id}_{page_num}")
+        pages_dict[page_num] = Page(snap.to_dict() if snap is not None else None)
+    st.session_state['book_pages_dict'] = pages_dict
 
 def _save_current_page_text():
     """Persist the current page's text-area contents through to the page (#152).
@@ -224,7 +231,22 @@ def manual_correction_dialog():
     book = st.session_state['current_book'].title
     page_number = st.session_state.current_page_number
 
-    raw_image = load_image(book, page_number, use_cropped=False)
+    # #209: edit the image the user is CURRENTLY LOOKING AT, not unconditionally
+    # the raw original. The dialog previously always started from the original
+    # photo while the main view showed the auto-corrected image — so when
+    # auto-correction had already rotated the page, the rotate buttons appeared
+    # to apply the wrong amount (the reported "180° only rotates 90°": raw+180
+    # differs from the on-screen image by the auto-rotation). Basing the editor
+    # on the displayed variant makes "rotate 180°" mean "rotate what I see by
+    # 180°". Full resolution in both branches (display=False). Toggling "Show
+    # original photo" before opening still edits the original from scratch.
+    show_raw = bool(st.session_state.get(f"show_raw_{page_number}", False))
+    editing_corrected = _page_has_cropped(book, page_number) and not show_raw
+    base_image = load_image(book, page_number, use_cropped=editing_corrected)
+    st.caption(
+        EnterText.editing_corrected_caption if editing_corrected
+        else EnterText.editing_original_caption
+    )
 
     if '_manual_rotation' not in st.session_state:
         st.session_state['_manual_rotation'] = 0
@@ -250,20 +272,18 @@ def manual_correction_dialog():
     crop_top = st.slider(EnterText.crop_top_label, 0, 40, 0, key="crop_top")
     crop_bottom = st.slider(EnterText.crop_bottom_label, 0, 40, 0, key="crop_bottom")
 
-    img = raw_image.copy()
-    total_angle = st.session_state['_manual_rotation'] + fine_angle
-
-    if total_angle != 0:
-        img = img.rotate(-total_angle, expand=True)
-
-    w, h = img.size
-    if crop_left + crop_right < 100 and crop_top + crop_bottom < 100:
-        left = int(w * crop_left / 100)
-        right = int(w * (1 - crop_right / 100))
-        top_px = int(h * crop_top / 100)
-        bottom_px = int(h * (1 - crop_bottom / 100))
-        if right > left and bottom_px > top_px:
-            img = img.crop((left, top_px, right, bottom_px))
+    # Shared, unit-tested transform (#209): quarter-turn buttons accumulate in
+    # _manual_rotation (clockwise positive); apply_manual_correction never
+    # mutates base_image (safe with load_image's st.cache_data).
+    img = apply_manual_correction(
+        base_image,
+        rotation=st.session_state['_manual_rotation'],
+        fine_angle=fine_angle,
+        crop_left=crop_left,
+        crop_right=crop_right,
+        crop_top=crop_top,
+        crop_bottom=crop_bottom,
+    )
 
     st.image(img, width="stretch", caption=EnterText.preview_caption)
 
@@ -290,6 +310,12 @@ def manual_correction_dialog():
         # toggle. Covers a page the auto-pipeline left uncorrected (corrected
         # False/None) as well as re-correcting a bad auto-correction.
         st.session_state.current_page.corrected = True
+        # A saved manual correction resolves any orientation uncertainty the
+        # automatic check flagged (#217) — the user has now seen and fixed (or
+        # confirmed) the page. Guarded so the common flag-not-set case costs no
+        # extra Firestore write (each assignment writes through).
+        if getattr(st.session_state.current_page, 'rotation_uncertain', False):
+            st.session_state.current_page.rotation_uncertain = False
         # Invalidate the @st.cache_data image cache so the freshly written
         # _cropped/_display bytes are re-fetched from S3 (the cache would
         # otherwise return the pre-save image for these keys).
@@ -332,6 +358,14 @@ def display_image():
     else:
         col1.caption(EnterText.auto_correction_unavailable_caption)
 
+    # The automatic orientation check couldn't decide which way up this page is
+    # (#217): no rotation was applied at processing time, so prompt the user to
+    # check rather than leaving a possibly-rotated page silent. Cleared when a
+    # manual crop-and-rotate is saved. getattr-guarded for pre-#217 Page objects
+    # still held in an open session.
+    if getattr(st.session_state.current_page, 'rotation_uncertain', False):
+        col1.warning(EnterText.rotation_uncertain_warning)
+
     if use_cropped:
         # Default view: ship the small display derivative (#184) — it is built
         # from the corrected image, so it matches the auto-corrected view and
@@ -347,9 +381,10 @@ def display_image():
     # Crop/rotate (#169): rendered below the photo, consistently with Enlarge
     # below. ALWAYS shown (#181) — it was previously hidden whenever an
     # auto-corrected version existed, which left a BAD auto-correction (wrong
-    # rotation, bad crop) impossible to fix. The dialog starts from the original
-    # photo and overwrites page_{n}_cropped.jpg, so it doubles as the
-    # fix-a-bad-auto-correction tool.
+    # rotation, bad crop) impossible to fix. The dialog starts from the image
+    # CURRENTLY DISPLAYED (#209: corrected by default, the original when "Show
+    # original photo" is on) and overwrites page_{n}_cropped.jpg, so it doubles
+    # as the fix-a-bad-auto-correction tool.
     if col1.button(EnterText.edit_image_button, width="stretch", key="enter_text_edit_image_button"):
         # Start each editing session from a clean slate: clear any rotation/
         # crop state left from a previous open (including closing via the
@@ -535,16 +570,20 @@ def text_entry(element, image_height, delta=50):
 
     # A second "Next page" control at the bottom of the text column, directly
     # above the Finish/Submit row rendered further down the page (#169) — a
-    # natural continuation once the user has finished this page's text. Reuses
-    # the same auto-saving on_click handler as the top nav button; only the key
-    # differs (#80).
-    element.button(
+    # natural continuation once the user has finished this page's text. Same
+    # auto-saving page_change handler as the top nav button; only the key
+    # differs (#80). Handled INLINE rather than via on_click (#78): this button
+    # lives inside the entry-column fragment, where an on_click callback would
+    # trigger only a FRAGMENT rerun — the page image and indicator outside the
+    # fragment would keep showing the previous page. st.rerun() defaults to
+    # scope="app", forcing the full rerun a page change requires.
+    if element.button(
         EnterText.next_page_button,
         width="stretch",
-        on_click=page_change,
-        args=(1,),
         key="enter_text_next_page_bottom_button",
-    )
+    ):
+        page_change(1)
+        st.rerun()
 
 
 def character_entry(element):
@@ -603,19 +642,32 @@ def manage_characters_entry(element):
     if not character_dict:
         element.info(ManageCharacters.no_characters)
     else:
+        # Batch the per-render reads (#78): the previous loop issued one
+        # ``ref.get()`` PLUS one alias query PER character on every rerun of
+        # the manage view (2N round trips). One ``get_all`` resolves all
+        # character docs and one chunked ``in`` query fetches every alias of
+        # every character; both are grouped locally below. Semantics match the
+        # per-character queries exactly (an alias row is grouped by the same
+        # ``character`` reference the ``==`` filter matched on).
+        character_refs = list(character_dict.values())
+        character_snaps = dict(zip(
+            (ref.path for ref in character_refs),
+            st.session_state['firestore'].get_all_by_references(character_refs),
+        ))
+        aliases_by_character = {}
+        for alias_doc in st.session_state['firestore'].query_stream_in(
+            collection='aliases', field='character', values=character_refs,
+        ):
+            alias_character = alias_doc.to_dict().get('character')
+            if alias_character is not None:
+                aliases_by_character.setdefault(alias_character.path, []).append(alias_doc)
+
         for name, character_ref in character_dict.items():
-            character_doc = character_ref.get()
-            if not character_doc.exists:
+            character_doc = character_snaps.get(character_ref.path)
+            if character_doc is None or not character_doc.exists:
                 continue
             with element.expander(name):
-                aliases = list(
-                    st.session_state['firestore'].query_stream(
-                        collection='aliases',
-                        field='character',
-                        op='==',
-                        value=character_ref,
-                    )
-                )
+                aliases = aliases_by_character.get(character_ref.path, [])
                 st.write(ManageCharacters.aliases_label)
                 if not aliases:
                     st.caption(ManageCharacters.no_aliases)
@@ -677,6 +729,14 @@ def _filter_existing_characters(suggestions):
         for name in st.session_state['current_book'].get_character_dict()
     }
     kept = [s for s in suggestions if s['name'].lower() not in existing]
+    # Normalise each kept suggestion's aliases the SAME way commit_detected_
+    # characters will (strip a leading article, drop blanks/dupes and the
+    # character's own name), so the review form shows EXACTLY what gets saved —
+    # e.g. "the Butterfly" displays as "Butterfly" rather than only being
+    # stripped silently on save. Both detection paths (live re-run and the
+    # precomputed auto-detect) route through here before the review form.
+    for s in kept:
+        s['aliases'] = _parse_aliases(", ".join(s.get('aliases', [])), s.get('name') or '')
     skipped_names = [s['name'] for s in suggestions if s['name'].lower() in existing]
     st.session_state['_detected_existing_skipped'] = skipped_names
     return kept, skipped_names
@@ -1074,6 +1134,48 @@ def user_entry_box(element, image_height, delta=50):
     elif st.session_state.now_entering == 'detect':
         detect_entry(element)
 
+
+@st.fragment
+def _entry_column_fragment(image_height):
+    """The right-hand entry column as a fragment (#78) — the app's hottest
+    interactive section. Interacting with a widget inside a fragment reruns
+    ONLY the fragment, so the frequent entry-column interactions (the
+    contains-story checkbox, the text area's blur/commit, and every
+    view-switch: add character/alias, manage, detect, edit/cancel, done) stop
+    re-executing the whole script — page_layout, the sidebar, the image column
+    and its ``st_dimensions`` component round trip.
+
+    Why this boundary is safe — every path out of the column was audited:
+
+    - The ``now_entering`` dispatch (``user_entry_box``) lives INSIDE the
+      fragment, so view-switch ``on_click`` handlers need only a fragment
+      rerun; nothing outside the column reads ``now_entering``.
+    - Every flow that must refresh the page OUTSIDE the column already ends in
+      an explicit ``st.rerun()``, which defaults to ``scope="app"`` (a full
+      rerun) even when called from inside a fragment: the character/alias/edit
+      form submits, the character-review commit, the detect run, the
+      re-extract button, and the manage view's delete-confirmation dialogs
+      (dialogs may be opened from a sequential fragment rerun).
+    - The one control that previously relied on a bare ``on_click`` with an
+      app-wide effect — the bottom "Next page" button (the page image and
+      indicator outside must change) — is handled inline in ``text_entry``
+      with an explicit app-scope ``st.rerun()``.
+    - ``element`` is a container created INSIDE the fragment body (fragments
+      cannot render widgets into externally created containers), positioned in
+      ``col2`` by the ``with col2:`` at the call site.
+    - ``image_height`` is a plain int captured at the last full run; fragment
+      reruns replay it unchanged, which is correct — it only changes when the
+      window/image changes, which itself triggers a full rerun.
+
+    Deliberately NOT fragmented (risk outweighs the win, #78): the image
+    column (its show-original toggle is a rare interaction, and the column
+    both returns the layout height used here and hosts the crop/enlarge
+    dialogs), and full-page Prev/Next paging (the top nav buttons must rerun
+    the whole page anyway — image, indicator and entry column all change).
+    """
+    element = st.container()
+    user_entry_box(element, image_height)
+
 # def create_current_page_from_db():
 #     st.session_state.current_page = Page(
 #         st.session_state.firestore.get_by_reference(
@@ -1183,7 +1285,11 @@ image_height = display_image()
 if '_page_text_editing' not in st.session_state:
     st.session_state['_page_text_editing'] = None
 
-user_entry_box(col2, image_height)
+# Entry column as a fragment (#78): positioned in col2 here; the fragment body
+# creates its own container (see _entry_column_fragment for the full boundary
+# rationale and what is deliberately not fragmented).
+with col2:
+    _entry_column_fragment(image_height)
 
 # Finish/Submit sits directly below the text-entry column (#169); "Back to
 # menu" is deliberately separated from it below by a visible gap so it is not

@@ -293,26 +293,96 @@ def correct_book_page(image_bytes):
     return None, False, False
 
 
-def get_rotation_angle(image_bytes, client, model=None):
+#: Aspect ratio (w/h) at or above which a page photo is treated as a LANDSCAPE
+#: image for the spine-vertical gate (#217). Students photograph double-page
+#: spreads in landscape (spine vertical — see ``Instructions``), and every
+#: upright spread sampled from production is landscape (~4:3), so a landscape
+#: image is EXPECTED to be an upright/upside-down spread — for which only 0 or
+#: 180 is geometrically possible. A SIDEWAYS verdict on a landscape image is
+#: therefore a disagreement between the model and the aspect expectation: it is
+#: only possible for a portrait single page photographed sideways (rare — pages
+#: and covers are shot portrait per the instructions). Rather than risking a
+#: chirality rotation on what is almost certainly an upright spread, the
+#: disagreement is NOT auto-rotated and is flagged ``rotation_uncertain`` for
+#: human review.
+LANDSCAPE_SPREAD_MIN_ASPECT = 1.15
+
+#: Answer vocabularies for the two orientation questions (#217).
+_TRIAGE_WORDS = ("UPRIGHT", "UPSIDEDOWN", "SIDEWAYS")
+_BINARY_WORDS = ("UPRIGHT", "UPSIDEDOWN")
+
+
+def parse_orientation_word(raw, allowed):
+    """Strictly parse a one-word orientation reply (#217).
+
+    Normalises case and strips every non-letter (so ``"upside down."`` parses
+    as ``UPSIDEDOWN``) and returns the word ONLY when the whole reply is
+    exactly one of ``allowed``. Anything else — empty reply, a different word,
+    hedging text — returns ``None`` so the caller treats it as *uncertain*
+    rather than silently assuming "no rotation" (root cause #4 of the #217
+    analysis: uncertainty must never turn into a wrong 0).
     """
-    Ask Claude (a cheap routing/QC vision call) for the clockwise rotation
-    needed to make the book page text read the RIGHT WAY UP — including the
-    full 180° upside-down case, not just 90° sideways (#154).
+    if not raw:
+        return None
+    word = re.sub(r"[^A-Z]", "", raw.upper())
+    return word if word in allowed else None
 
-    The prompt (``AIPrompts.rotation_angle``) asks for exactly one of
-    0/90/180/270. This parses the first integer out of the reply, normalises it
-    modulo 360 (so a stray ``-90`` becomes ``270`` and ``360`` becomes ``0``),
-    and snaps it to the nearest quarter turn. Snapping keeps a slightly-off
-    estimate (e.g. ``178``) from failing to correct an upside-down page, and
-    matches the granularity of a page-orientation fix — the fine-perspective
-    deskew is handled geometrically upstream in ``correct_book_page``.
 
-    Returns 0/90/180/270. Returns 0 when no rotation is needed, the model is
-    uncertain / gives no number, or the API call fails.
+def _image_aspect(image_bytes):
+    """Width/height of the image, or ``None`` when the bytes are undecodable
+    (in which case the aspect gate simply does not apply)."""
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            width, height = img.size
+    except (UnidentifiedImageError, OSError):
+        return None
+    return (width / height) if height else None
 
-    ``model`` defaults to the admin-configured ``rotation_model`` (falling back to
-    ``claude-sonnet-4-6``) so the routing model can be re-tuned globally without a
-    deploy; callers may still pass an explicit model.
+
+def get_rotation_angle(image_bytes, client, model=None):
+    """Detect the clockwise rotation needed to make a book page read the RIGHT
+    WAY UP, using the validated two-step scheme (#217; supersedes the single
+    0/90/180/270 question of #154/#181).
+
+    The old single question conflated three judgments — is anything wrong?,
+    sideways or inverted?, and which direction? — and the model systematically
+    failed the last one (90-vs-270 chirality: 4/14 on sideways production
+    images). The two questions it answers near-perfectly are kept, and the
+    chirality question is engineered away:
+
+    Step 1 — triage (``AIPrompts.rotation_triage``): UPRIGHT / UPSIDEDOWN /
+        SIDEWAYS. UPRIGHT -> 0, UPSIDEDOWN -> 180.
+    Step 2 — only for SIDEWAYS: the image is rotated 90° CLOCKWISE *in code*
+        and the near-perfect binary question (``AIPrompts.rotation_binary``) is
+        asked of the result. UPRIGHT now -> the correction is 90; UPSIDEDOWN
+        now -> the correction is 270. (Scored 56/56 on the production sample
+        vs 18/28 for the old prompt — planning/rotation_analysis_2026-07-15.md.)
+
+    Spine-vertical / aspect gate: a landscape image (w/h >=
+    ``LANDSCAPE_SPREAD_MIN_ASPECT``) is expected to be a double-page spread,
+    which can only ever need 0 or 180. A SIDEWAYS triage verdict on one is a
+    model/aspect disagreement: no rotation is applied and the result is flagged
+    uncertain instead (see the constant's comment). The portrait direction of
+    the gate (a portrait-aspect *spread* MUST be 90/270) is not enforced,
+    because nothing in the pipeline knows whether a portrait image is a spread
+    or an ordinary single page — detecting a horizontal spine line to tell them
+    apart is a possible follow-up.
+
+    Returns ``(angle, uncertain)`` where ``angle`` is 0/90/180/270 and
+    ``uncertain`` is True when the answer could not be trusted — an API error,
+    an unparseable/hedged reply (parsing is STRICT: exactly one expected word),
+    or an aspect-gate disagreement. On uncertainty the angle is always 0 (no
+    rotation is applied) and the caller should surface the page for human
+    review via the ``rotation_uncertain`` Page flag rather than trusting it.
+
+    TODO(#217 follow-up): add Tesseract OSD (``--psm 0``) as a deterministic,
+    local second opinion for text-bearing pages — requires ``pytesseract`` +
+    the ``tesseract-ocr`` system package (``packages.txt`` on Streamlit Cloud),
+    so it is deliberately not bundled into this change.
+
+    ``model`` defaults to the admin-configured ``rotation_model`` (falling back
+    to ``claude-sonnet-4-6``) so the routing model can be re-tuned globally
+    without a deploy; callers may still pass an explicit model.
     """
     import anthropic
     from utilities import vision_text, get_ai_settings
@@ -320,26 +390,45 @@ def get_rotation_angle(image_bytes, client, model=None):
     if model is None:
         model = get_ai_settings()['rotation_model']
 
-    try:
-        raw = vision_text(
-            client, [image_bytes], AIPrompts.rotation_angle,
-            model=model, max_tokens=10,
+    def _ask(image, prompt, allowed):
+        """One vision call, strictly parsed; ``None`` means uncertain."""
+        try:
+            raw = vision_text(client, [image], prompt, model=model, max_tokens=5)
+        except anthropic.AnthropicError as exc:
+            # Narrowed exception (#127): a transient API failure is logged and
+            # surfaces as *uncertain* — never silently as "no rotation" (#217).
+            logger.warning("get_rotation_angle: vision call failed: %s", exc)
+            return None
+        return parse_orientation_word(raw, allowed)
+
+    verdict = _ask(image_bytes, AIPrompts.rotation_triage, _TRIAGE_WORDS)
+    if verdict == "UPRIGHT":
+        return 0, False
+    if verdict == "UPSIDEDOWN":
+        return 180, False
+    if verdict == "SIDEWAYS":
+        aspect = _image_aspect(image_bytes)
+        if aspect is not None and aspect >= LANDSCAPE_SPREAD_MIN_ASPECT:
+            # Aspect-gate disagreement: a landscape image should be a spread,
+            # and a spread cannot be sideways. Do not rotate; flag for review.
+            logger.warning(
+                "get_rotation_angle: SIDEWAYS verdict on a landscape image "
+                "(aspect %.2f) — flagging rotation_uncertain instead of rotating",
+                aspect,
+            )
+            return 0, True
+        # Deterministic disambiguation: rotate +90° clockwise in code, then ask
+        # the binary question the model answers near-perfectly.
+        binary = _ask(
+            rotate_image(image_bytes, 90), AIPrompts.rotation_binary, _BINARY_WORDS
         )
-    except anthropic.AnthropicError as exc:
-        # Narrowed from a broad ``except`` (#127): a transient API failure means
-        # "assume no rotation", but is logged rather than silently swallowed.
-        logger.warning("get_rotation_angle: vision call failed: %s", exc)
-        return 0
-    if not raw:
-        return 0
-    match = re.search(r'-?\d+', raw)
-    if not match:
-        return 0
-    # Normalise to [0, 360) then snap to the nearest quarter turn. Candidate 360
-    # collapses back to 0 via the modulo, so angles just under a full turn
-    # (e.g. 350) round to 0 rather than an invalid 360.
-    angle = int(match.group()) % 360
-    return min((0, 90, 180, 270, 360), key=lambda q: abs(q - angle)) % 360
+        if binary == "UPRIGHT":
+            return 90, False
+        if binary == "UPSIDEDOWN":
+            return 270, False
+        return 0, True
+    # API error, empty or unparseable reply.
+    return 0, True
 
 
 def rotate_image(image_bytes, angle_degrees):
@@ -352,6 +441,53 @@ def rotate_image(image_bytes, angle_degrees):
     buf = io.BytesIO()
     rotated.save(buf, format='JPEG', quality=95)
     return buf.getvalue()
+
+
+def apply_manual_correction(
+    img,
+    rotation=0,
+    fine_angle=0,
+    crop_left=0,
+    crop_right=0,
+    crop_top=0,
+    crop_bottom=0,
+):
+    """Apply the manual crop-and-rotate editor's transform to a PIL image.
+
+    This is the SINGLE implementation of the enter-text "Crop and rotate"
+    dialog's preview/save transform (#209) — extracted from
+    ``pages/enter_text.manual_correction_dialog`` so the option→transform
+    mapping is pure and unit-testable (no Streamlit).
+
+    Args:
+        img: source PIL image. Never mutated — PIL ``rotate``/``crop`` return
+            new images (callers may pass a cached image safely).
+        rotation: accumulated quarter-turn rotation in degrees, CLOCKWISE
+            positive (the dialog's "90° right" adds +90, "90° left" adds -90,
+            "180°" adds +180).
+        fine_angle: fine-adjustment angle in degrees, clockwise positive.
+        crop_left/right/top/bottom: percentage (0-100) to trim from each edge.
+            Ignored when an axis' pair sums to >= 100 or would invert.
+
+    Returns the transformed PIL image (the input object itself when every
+    parameter is zero/no-op).
+    """
+    total_angle = rotation + fine_angle
+    if total_angle != 0:
+        # PIL rotates counter-clockwise for positive angles; the editor's
+        # convention is clockwise positive, hence the negation. expand=True so
+        # no content is lost on non-quarter angles.
+        img = img.rotate(-total_angle, expand=True)
+
+    w, h = img.size
+    if crop_left + crop_right < 100 and crop_top + crop_bottom < 100:
+        left = int(w * crop_left / 100)
+        right = int(w * (1 - crop_right / 100))
+        top_px = int(h * crop_top / 100)
+        bottom_px = int(h * (1 - crop_bottom / 100))
+        if right > left and bottom_px > top_px:
+            img = img.crop((left, top_px, right, bottom_px))
+    return img
 
 
 def correct_page_image(raw_bytes, ai_client, ai_settings, report=None):
@@ -380,10 +516,14 @@ def correct_page_image(raw_bytes, ai_client, ai_settings, report=None):
     before the crop is accepted. Orientation is never skipped while rotation
     correction is enabled.
 
-    Returns ``(bytes_for_extraction, corrected_bytes_or_None, method)`` where
-    ``method`` is ``'opencv'``, ``'rotation'`` or ``None`` (no correction).
-    ``corrected_bytes`` is the artifact to persist as ``page_{n}_cropped.jpg``
-    when not ``None``.
+    Returns ``(bytes_for_extraction, corrected_bytes_or_None, method,
+    rotation_uncertain)`` where ``method`` is ``'opencv'``, ``'rotation'`` or
+    ``None`` (no correction). ``corrected_bytes`` is the artifact to persist as
+    ``page_{n}_cropped.jpg`` when not ``None``. ``rotation_uncertain`` (#217)
+    is True when the orientation check ran but could not be trusted (API error,
+    unparseable reply, or an aspect-gate disagreement — see
+    ``get_rotation_angle``): no rotation was applied and the caller should
+    persist the flag on the Page so a human can review the orientation.
     """
     from text_content import Uploader
 
@@ -401,14 +541,15 @@ def correct_page_image(raw_bytes, ai_client, ai_settings, report=None):
         if high_confidence:
             # Trust the geometry (skip the Haiku crop verification, #110) but
             # never the orientation (#181): verify/fix the rotation of the crop.
+            uncertain = False
             if rotation_on:
                 report(Uploader.substep_detecting_rotation)
-                angle = get_rotation_angle(
+                angle, uncertain = get_rotation_angle(
                     corrected_bytes, ai_client, model=rotation_model
                 )
                 if angle != 0:
                     corrected_bytes = rotate_image(corrected_bytes, angle)
-            return corrected_bytes, corrected_bytes, 'opencv'
+            return corrected_bytes, corrected_bytes, 'opencv', uncertain
         if crop_gate_on:
             report(Uploader.substep_checking_crop)
             crop_ok = check_crop_quality(corrected_bytes, ai_client, model=crop_model)
@@ -416,21 +557,28 @@ def correct_page_image(raw_bytes, ai_client, ai_settings, report=None):
             # Gate disabled by the admin: trust the geometric result directly.
             crop_ok = True
         if crop_ok:
-            # The crop-quality gate (when ON) also vets orientation and rejects
-            # an upside-down crop, routing it to the Stage-2 rotation fallback
-            # below. But with the gate OFF that safety net is gone, so an
-            # upside-down page/cover that OpenCV cropped cleanly would be saved
-            # uncorrected. Honour the "orientation is never skipped while
-            # rotation correction is enabled" invariant by running the cheap
-            # rotation check on the accepted crop here too (#181 follow-up).
-            if rotation_on and not crop_gate_on:
+            # Run the dedicated rotation check on EVERY accepted crop (#181).
+            # Previously this was skipped when the crop-quality gate was ON, on
+            # the theory that the gate's single yes/no "properly cropped AND
+            # right way up?" answer also vetted orientation — but that combined
+            # binary judgment misses 180° pages the dedicated 0/90/180/270
+            # question catches (its prompt makes the upside-down case explicit),
+            # and a gate-approved upside-down page was then saved uncorrected
+            # with NO later check. This was the last path where a saved
+            # corrected image could skip rotation detection; the invariant is
+            # now uniform across the high-confidence, gate-approved and gate-off
+            # paths: while rotation correction is enabled, orientation is never
+            # trusted (costs one extra cheap rotation call per gate-approved
+            # page; disable via the admin enable_rotation_correction toggle).
+            uncertain = False
+            if rotation_on:
                 report(Uploader.substep_detecting_rotation)
-                angle = get_rotation_angle(
+                angle, uncertain = get_rotation_angle(
                     corrected_bytes, ai_client, model=rotation_model
                 )
                 if angle != 0:
                     corrected_bytes = rotate_image(corrected_bytes, angle)
-            return corrected_bytes, corrected_bytes, 'opencv'
+            return corrected_bytes, corrected_bytes, 'opencv', uncertain
 
     # Stage 2 — rotation-only fallback.
     #
@@ -444,12 +592,13 @@ def correct_page_image(raw_bytes, ai_client, ai_settings, report=None):
     # failed) rotated-only -> (rotation also not detected) raw.
     if rotation_on:
         report(Uploader.substep_detecting_rotation)
-        angle = get_rotation_angle(raw_bytes, ai_client, model=rotation_model)
+        angle, uncertain = get_rotation_angle(raw_bytes, ai_client, model=rotation_model)
         if angle != 0:
             rotated_bytes = rotate_image(raw_bytes, angle)
-            return rotated_bytes, rotated_bytes, 'rotation'
+            return rotated_bytes, rotated_bytes, 'rotation', uncertain
+        return raw_bytes, None, None, uncertain
 
-    return raw_bytes, None, None
+    return raw_bytes, None, None, False
 
 
 def check_crop_quality(image_bytes, client, model=None):

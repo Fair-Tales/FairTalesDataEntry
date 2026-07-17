@@ -25,11 +25,28 @@ def confirm(username, password, remember=False):
     # is always the canonical lowercase form, even if this is ever called with
     # un-normalized input.
     username = normalize_username(username)
+    # Residual #174 root cause (empirically confirmed, 2026-07-14): when a
+    # browser/password-manager AUTOFILLS the login fields, the values can be
+    # painted into the DOM without the input events Streamlit needs to sync
+    # widget state — so the FIRST Confirm click submits empty strings ("no
+    # result"/invalid credentials), while the second click (after the rerun
+    # re-registers the fields) succeeds. Guard the empty submit with a specific,
+    # actionable message instead of a misleading "Invalid credentials", and skip
+    # the pointless Firestore lookup + bcrypt check. The autocomplete attributes
+    # on the form inputs below are the actual fix (they make Chrome/password
+    # managers fill via real input events); this guard is the safety net.
+    if not username or not password:
+        st.warning(Login.missing_fields)
+        return
     result = authenticate_user(username, password)
     if result == "ok":
         st.session_state['authentication_status'] = True
         st.session_state['username'] = username
         st.session_state.pop('unconfirmed_username', None)
+        # A successful explicit login ends the signed-out state: release the
+        # session-persistent just-logged-out guard (#125/#207) so cookie
+        # restore works normally again for the rest of this session.
+        st.session_state.pop(JUST_LOGGED_OUT_FLAG, None)
         # Resolve the three-tier role (#83) and store it on the session. Keep the
         # legacy 'admin' flag in sync so existing admin-gated pages and the
         # sidebar Admin link keep working unchanged.
@@ -131,11 +148,6 @@ _LOGOUT_KEEP = {
 
 
 def logout():
-    # Clear the persistent remember-me cookie (#111) BEFORE wiping session state,
-    # so a signed-out user is not silently re-authenticated on the next reload.
-    # Done first because the cookie component is read from session_state, which the
-    # wipe loop below clears.
-    clear_remember_cookie()
     # Wipe ALL per-session state except the shared infrastructure above, then
     # re-seed the empty working entities. Without this, one user's in-progress
     # state — e.g. a validator's open book review (`_validation_book_id`), a
@@ -153,16 +165,25 @@ def logout():
     st.session_state['publisher'] = Publisher()
     st.session_state['illustrator'] = Illustrator()
     st.session_state['active_form_to_confirm'] = None
-    # Defeat the Sign-Out vs remember-me race (#125): clear_remember_cookie() above
-    # deletes the cookie via the ASYNC CookieManager, but restore_session_from_cookie()
-    # reads SYNCHRONOUSLY from st.context.cookies, so the st.rerun() below would
-    # otherwise re-read the not-yet-expired request cookie and re-authenticate —
-    # making Sign Out a no-op while 'Remember me' is active. This one-shot flag
-    # survives the rerun (it is in-session state) and is consumed by restore on the
-    # next run, which then skips re-authenticating. Set AFTER the wipe loop above so
-    # the wipe cannot delete it; it is not in _LOGOUT_KEEP because it must not
-    # persist beyond the single post-logout rerun.
+    # Defeat the Sign-Out vs remember-me race (#125/#207). The flag now persists
+    # for the remainder of this session (restore PEEKS it; a new login pops it)
+    # because st.context.cookies keeps serving the connection-time cookie for
+    # the rest of the websocket session. Set AFTER the wipe loop above so the
+    # wipe cannot delete it.
     st.session_state[JUST_LOGGED_OUT_FLAG] = True
+    # The actual browser-cookie delete is DEFERRED to the next run (#207): the
+    # CookieManager delete is executed by a component iframe, and the
+    # st.rerun() below would replace the page before that iframe ever ran —
+    # empirically the cookie then SURVIVED sign-out and a later reload
+    # re-authenticated the user (a shared-device hazard). The login page
+    # renders the delete on the next run and st.stop()s so it completes —
+    # the exact mirror of the #174 deferred cookie WRITE. Only staged when
+    # remember-me is actually enabled: with no signing key there is no cookie
+    # AND no CookieManager component, so the stop-and-wait run would render no
+    # component, nothing would trigger the follow-on rerun, and the user would
+    # sit on "Signing you out…" until they clicked something.
+    if remember_me_available():
+        st.session_state['_pending_remember_clear'] = True
     clear_page_history()
     st.rerun()
 
@@ -203,14 +224,37 @@ if is_authenticated():
         logout()
 
 else:
+    # Deferred remember-me cookie DELETE (#207), mirroring the deferred write
+    # above: logout() cannot render the delete component itself (its st.rerun()
+    # would unmount the component's iframe before the delete JS ran, leaving
+    # the cookie in the browser — verified empirically). Render it here, on the
+    # first signed-out run, and stop; the component's value-change rerun brings
+    # the user to the normal login form below with the cookie actually gone.
+    if st.session_state.pop('_pending_remember_clear', False):
+        clear_remember_cookie()
+        st.info(Login.signing_out)
+        st.stop()
     st.title(Login.sign_in_title)
     selected = option_menu("", options = [Login.menu_login, Login.menu_register], orientation="horizontal")
 
     if selected == Login.menu_login:
         st.header(Login.login_header)
         with st.form('LoginForm'):
-            username = normalize_username(st.text_input(Login.email_label, value="", key='login_email'))
-            password = st.text_input(Login.password_label, type="password", value="", key='login_password')
+            # autocomplete attributes (#174): Streamlit defaults password inputs
+            # to autocomplete="new-password", which makes Chrome/password
+            # managers treat this as a REGISTRATION form — saved credentials get
+            # painted in without the input events Streamlit needs, so the first
+            # Confirm submits empty values and only the second click works.
+            # "username" + "current-password" mark this as a LOGIN form, making
+            # browsers fill via real input events that sync widget state.
+            username = normalize_username(st.text_input(
+                Login.email_label, value="", key='login_email',
+                autocomplete="username",
+            ))
+            password = st.text_input(
+                Login.password_label, type="password", value="",
+                key='login_password', autocomplete="current-password",
+            )
             # "Remember me" persistent login (#111). Only offered when a signing
             # key is configured; otherwise the feature is disabled and the box is
             # hidden so login behaves exactly as before.

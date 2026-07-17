@@ -1,35 +1,31 @@
 class AIPrompts:
 
-    rotation_angle = (
-        "This is a photo of a single page from a children's picture book, OR its "
-        "front or back COVER. It may have been captured rotated sideways, or "
-        "completely upside down.\n"
-        "By how many degrees CLOCKWISE must the whole image be rotated so that it "
-        "reads the right way up — upright and left-to-right, as you would hold "
-        "the book to read it (NOT upside down and NOT sideways)?\n"
-        "Judge which way is up from EVERY cue available, in this order:\n"
-        "1. The shapes of the letters (title text on a cover counts). Upside-down "
-        "text still lies along horizontal lines, so 'the lines look horizontal' "
-        "is NOT enough — the individual letters must be the right way up "
-        "(ascenders point UP, not down).\n"
-        "2. The illustration / cover artwork: people and animals stand with head "
-        "above feet, the sky/sun/clouds are at the TOP and the ground is at the "
-        "BOTTOM. A cover often has little or no body text, so on a cover the "
-        "artwork orientation is usually the strongest cue — use it.\n"
-        "The single most commonly missed case is an image photographed UPSIDE "
-        "DOWN: before answering 0, explicitly check whether letters are inverted "
-        "(ascenders pointing down, letterforms mirrored top-to-bottom) AND "
-        "whether any illustration is hanging the wrong way up (figures on their "
-        "heads, sky at the bottom) — if either is true, the answer is 180, not "
-        "0.\n"
-        "Answer with EXACTLY one of these four numbers and nothing else:\n"
-        "0   = already upright, no rotation needed\n"
-        "90  = rotate a quarter turn clockwise\n"
-        "180 = upside down; rotate a half turn\n"
-        "270 = rotate a quarter turn anticlockwise (i.e. three-quarters "
-        "clockwise)\n"
-        "If the image is blank or you genuinely cannot tell which way is up, "
-        "answer 0."
+    # Two-step orientation detection (#217). The previous single
+    # "how many degrees clockwise?" question scored 64% on a production sample:
+    # perfect on 0°/180° but near-chance on 90-vs-270 — VLMs reliably SEE that a
+    # page is sideways but cannot reliably tell clockwise from anticlockwise,
+    # however the question is worded. The validated replacement (100% on the
+    # same sample, see planning/rotation_analysis_2026-07-15.md §4-5) never asks
+    # the model a chirality question: step 1 triages upright / upside-down /
+    # sideways; for sideways images the code rotates the image 90° clockwise
+    # and asks the near-perfect binary question again. Mapping:
+    # triage UPRIGHT -> 0, UPSIDEDOWN -> 180; after the +90° code rotation,
+    # binary UPRIGHT -> 90, UPSIDEDOWN -> 270.
+
+    rotation_triage = (
+        "This is a photo of a book page. Look at the printed text (if there is "
+        "no text, use the picture: people upright, sky at the top).\n"
+        "Which best describes the image?\n"
+        "UPRIGHT    - it reads normally\n"
+        "UPSIDEDOWN - it is rotated a half turn\n"
+        "SIDEWAYS   - the text lines run vertically (rotated a quarter turn)\n"
+        "Answer with exactly one word: UPRIGHT, UPSIDEDOWN, or SIDEWAYS."
+    )
+
+    rotation_binary = (
+        "This is a photo of a book page. Is it the RIGHT WAY UP (text reads "
+        "normally; if no text, people/objects upright) or UPSIDE DOWN?\n"
+        "Answer with exactly one word: UPRIGHT or UPSIDEDOWN."
     )
 
     crop_quality_check = (

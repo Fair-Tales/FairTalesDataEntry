@@ -2342,6 +2342,27 @@ def split_name(full_name):
     return " ".join(parts[:-1]), parts[-1]
 
 
+@st.cache_resource(show_spinner=False)
+def get_firestore_client():
+    """The app's single, cached ``firestore.Client``.
+
+    Constructing a client is expensive (~400 ms — service-account credential
+    setup + gRPC channel), and ``FirestoreWrapper`` previously built a fresh one
+    on EVERY operation (opening a book paid it per page; each ``Field``
+    write-through paid it twice). Caching the client as a resource — mirroring
+    ``get_s3_filesystem`` — means it is created once and reused, so every DB
+    operation drops from ~400 ms of setup to just the query round-trip. The
+    ``firestore.Client`` is thread-safe and designed to be long-lived, so a
+    single shared instance is correct. ``@st.cache_resource`` (not
+    ``cache_data``) because the live client cannot be pickled (see the note by
+    the lookup caches below).
+    """
+    creds = service_account.Credentials.from_service_account_info(
+        json.loads(st.secrets["firestore_key"])
+    )
+    return firestore.Client(credentials=creds, project="sawdataentry")
+
+
 class FirestoreWrapper:
     """
     Wrapper class to handle interacting with
@@ -2353,10 +2374,13 @@ class FirestoreWrapper:
         self.firestore_key = json.loads(st.secrets["firestore_key"])
 
     def _connect(self, auth=None):
+        # Reuse the cached client (get_firestore_client) rather than building a
+        # new one per call — the single biggest app-wide latency win (#78/#53).
+        # The auth gate is preserved: unauthenticated callers that require auth
+        # still get None.
         auth = self.auth if auth is None else auth
         if is_authenticated() or not auth:
-            creds = service_account.Credentials.from_service_account_info(self.firestore_key)
-            return firestore.Client(credentials=creds, project="sawdataentry")
+            return get_firestore_client()
         else:
             return None
 
@@ -2401,9 +2425,75 @@ class FirestoreWrapper:
         doc_ref = db.collection(collection).document(document_ref)
         return doc_ref.get()
 
-    def get_all_documents_stream(self, collection):
+    def get_all_documents_stream(self, collection, select=None):
+        """Stream every document in ``collection``.
+
+        ``select`` (#78): optional list of field paths — when given, a Firestore
+        PROJECTION is applied so only those fields travel over the wire. Used by
+        list views (e.g. the validation book list) that render labels from a
+        handful of small fields and must not pay for each document's large
+        embedded lists (a book's ``characters``/``review_pages``) on every
+        rerun. Filtering semantics are unchanged — callers still receive one
+        snapshot per document and keep filtering in Python, so documents with
+        missing legacy fields are never silently excluded (which a server-side
+        ``where`` on those fields would do).
+        """
         db = self.connect_book()
-        return db.collection(collection).stream()
+        query = db.collection(collection)
+        if select is not None:
+            query = query.select(select)
+        return query.stream()
+
+    def get_all_by_ids(self, collection, doc_ids):
+        """Batch-read many documents from ``collection`` in ONE round trip (#78).
+
+        Replaces serial per-document ``get_by_reference`` loops (e.g. the
+        per-page loop opening a book in enter-text: N sequential reads, each a
+        full network round trip, become a single ``get_all``). Returns
+        ``{doc_id: DocumentSnapshot}`` covering EVERY requested id — a missing
+        document yields a snapshot with ``exists`` False / ``to_dict()`` None,
+        exactly matching ``get_by_reference``'s per-id semantics.
+        """
+        doc_ids = list(doc_ids)
+        if not doc_ids:
+            return {}
+        db = self.connect_book()
+        refs = [db.collection(collection).document(doc_id) for doc_id in doc_ids]
+        return {snap.id: snap for snap in db.get_all(refs)}
+
+    def get_all_by_references(self, references):
+        """Batch-resolve ``DocumentReference``s in ONE round trip (#78).
+
+        Replaces serial ``ref.get()`` loops (e.g. resolving a book's character
+        references on every render). Returns a list of ``DocumentSnapshot``s in
+        the SAME ORDER as ``references`` (``get_all`` itself returns documents
+        in arbitrary order); a missing document's snapshot has ``exists`` False.
+        """
+        references = list(references)
+        if not references:
+            return []
+        db = self.connect_book()
+        by_path = {snap.reference.path: snap for snap in db.get_all(references)}
+        return [by_path[ref.path] for ref in references]
+
+    def query_stream_in(self, collection, field, values, chunk_size=30):
+        """Stream documents where ``field`` matches ANY of ``values`` (#78).
+
+        Equivalent to running ``query_stream(collection, field, '==', v)`` once
+        per value — but issued as chunked Firestore ``in`` queries (the server
+        caps ``in`` at 30 values per query), so e.g. fetching the aliases of
+        every character in a book costs one query per 30 characters instead of
+        one per character. Yields raw snapshots, like ``query_stream``.
+        """
+        values = list(values)
+        db = self.connect_book()
+        for start in range(0, len(values), chunk_size):
+            chunk = values[start:start + chunk_size]
+            yield from (
+                db.collection(collection)
+                .where(filter=FieldFilter(field, "in", chunk))
+                .stream()
+            )
 
     def query_stream(self, collection, field, op, value):
         """Stream documents from ``collection`` matching a single field filter.
