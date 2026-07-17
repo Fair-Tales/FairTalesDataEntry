@@ -243,6 +243,11 @@ class BookPhotoEntry:
         "twice: {names}. If so, re-select the photos (newest batch replaces the "
         "old one) or start again."
     )
+    uploaded_gaps_warning = (
+        "Still waiting on page(s) {slots} — they haven't finished uploading yet. "
+        "Give them a moment; if they don't appear, re-select those photos or "
+        "start again."
+    )
     auto_upload_timeout = (
         "Still waiting for uploads to finish. If they're all done, use the "
         "**Go** button below to read the book now."
