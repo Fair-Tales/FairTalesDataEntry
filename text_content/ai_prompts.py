@@ -20,9 +20,32 @@ class AIPrompts:
     # deterministically: the same page flipped answers between calls, so whether
     # a spread came out landscape or was left sideways was a coin-flip. Framing
     # the three cases as horizontal-upright / horizontal-inverted / vertical
-    # scored 38/38 (deterministic) on a production sample where the old wording
-    # scored 29/38 (see the diagnostic in planning/). The letter-orientation
-    # detail keeps UPSIDEDOWN distinct from UPRIGHT.
+    # fixed that (38/38 vs 29/38 on one production book — see
+    # planning/rotation_triage_fix_2026-07-17.md).
+    #
+    # Validated 2026-07-18 across a RANDOM production sample: 72 raw page
+    # images from 18 randomly-chosen books (seed 20260718 + supplement
+    # 20260719; 65 scoreable — blanks and no-defined-upright wordless art
+    # excluded), hand-labelled by visual inspection; eval assets in
+    # scripts/rotation_prompt_eval/. Two load-bearing cues were ADDED on top
+    # of the line-direction framing, each fixing a measured failure class:
+    #   1. "Never answer UPSIDEDOWN for vertical text" — a sideways spread of
+    #      stylised/decorative text (Little Red's author page) was deterministically
+    #      called UPSIDEDOWN, leaving the spread sideways at 180°.
+    #   2. The spread FOLD cue (horizontal fold / pages stacked top-and-bottom
+    #      = SIDEWAYS) — a text- and illustration-independent signal that fixed
+    #      WORDLESS sideways spreads (Little Red's wolf-eyes spread), which the
+    #      text-only prompt called UPRIGHT. Worded as a spatial description and
+    #      scoped to "mostly pictures" spreads: a stronger override-style fold
+    #      rule measurably regressed upright pages, and a vertical fold cannot
+    #      distinguish 0° from 180°, so it must never outrank the letter cues.
+    # Scores (triage+binary pipeline, 2-3 runs/image, claude-sonnet-4-6):
+    #   this prompt 195/195 (100%, deterministic) vs the previous line-direction
+    #   wording 126/130 (96.9%) — per-class 100% on spreads, singles, covers,
+    #   sparse/decorative/WORDLESS text, and 0/90/180/270 true orientations.
+    #   Synthetic 4-orientation triage check: 46/48 vs 42/48. The "no
+    #   explanation" ending suppresses hedged multi-word replies the strict
+    #   parser would reject (observed with wordier variants).
     rotation_triage = (
         "This is a photo of one book page or a two-page spread. Find the lines "
         "of printed text and decide how they are oriented.\n"
@@ -35,9 +58,19 @@ class AIPrompts:
         "would rotate the page a QUARTER turn (90 degrees) so the lines become "
         "horizontal and readable.\n"
         "The key cue is the DIRECTION the lines of text run: horizontal means "
-        "UPRIGHT or UPSIDEDOWN, vertical means SIDEWAYS. If there is no text, use "
-        "the picture (people/objects upright, sky at the top).\n"
-        "Answer with exactly one word: UPRIGHT, UPSIDEDOWN, or SIDEWAYS."
+        "UPRIGHT or UPSIDEDOWN, vertical means SIDEWAYS. Never answer UPSIDEDOWN "
+        "for text whose lines run vertically (top to bottom of the photo) — "
+        "vertical lines mean SIDEWAYS even when the letters also look inverted "
+        "or strange.\n"
+        "Also check for a sideways spread: if the photo shows TWO pages of an "
+        "open book with the fold between them running HORIZONTALLY across the "
+        "middle — one page filling the top half of the photo and the other page "
+        "filling the bottom half — then the spread is SIDEWAYS, even when it is "
+        "mostly pictures with little or no text.\n"
+        "If there is no text, use the picture (people/objects upright, sky at "
+        "the top).\n"
+        "Reply with exactly one word and no explanation: UPRIGHT, UPSIDEDOWN, "
+        "or SIDEWAYS."
     )
 
     rotation_binary = (

@@ -1,0 +1,459 @@
+{
+ "seed": 20260718,
+ "n_books": 18,
+ "books": [
+  "sawimages/Knock Knock Dinosaur",
+  "sawimages/Born to be a Butterfly",
+  "sawimages/Who Will Save Us",
+  "sawimages/Martha Maps It Out",
+  "sawimages/If I had a Kangaroo",
+  "sawimages/Lost in Snow",
+  "sawimages/The Storm Whale",
+  "sawimages/The Bad-Tempered Ladybird",
+  "sawimages/Bottoms Up!",
+  "sawimages/The Smartest Giant in Town",
+  "sawimages/Little Red",
+  "sawimages/Bea's Bad Day",
+  "sawimages/Elmer on Stilts",
+  "sawimages/__pending__0acea94404824fee9072c723bd234596",
+  "sawimages/Kipper's A to Z",
+  "sawimages/The Cave",
+  "sawimages/The Gingerbread Man (2)",
+  "sawimages/Lenny Makes A Wish"
+ ],
+ "images": [
+  {
+   "id": "Knock_Knock_Dinosaur__page_30",
+   "s3_key": "sawimages/Knock Knock Dinosaur/page_30.jpg",
+   "book": "Knock Knock Dinosaur",
+   "page": 30
+  },
+  {
+   "id": "Knock_Knock_Dinosaur__page_9",
+   "s3_key": "sawimages/Knock Knock Dinosaur/page_9.jpg",
+   "book": "Knock Knock Dinosaur",
+   "page": 9
+  },
+  {
+   "id": "Knock_Knock_Dinosaur__page_34",
+   "s3_key": "sawimages/Knock Knock Dinosaur/page_34.jpg",
+   "book": "Knock Knock Dinosaur",
+   "page": 34
+  },
+  {
+   "id": "Knock_Knock_Dinosaur__page_3",
+   "s3_key": "sawimages/Knock Knock Dinosaur/page_3.jpg",
+   "book": "Knock Knock Dinosaur",
+   "page": 3
+  },
+  {
+   "id": "Born_to_be_a_Butterfly__page_29",
+   "s3_key": "sawimages/Born to be a Butterfly/page_29.jpg",
+   "book": "Born to be a Butterfly",
+   "page": 29
+  },
+  {
+   "id": "Born_to_be_a_Butterfly__page_8",
+   "s3_key": "sawimages/Born to be a Butterfly/page_8.jpg",
+   "book": "Born to be a Butterfly",
+   "page": 8
+  },
+  {
+   "id": "Born_to_be_a_Butterfly__page_26",
+   "s3_key": "sawimages/Born to be a Butterfly/page_26.jpg",
+   "book": "Born to be a Butterfly",
+   "page": 26
+  },
+  {
+   "id": "Born_to_be_a_Butterfly__page_30",
+   "s3_key": "sawimages/Born to be a Butterfly/page_30.jpg",
+   "book": "Born to be a Butterfly",
+   "page": 30
+  },
+  {
+   "id": "Who_Will_Save_Us__page_46",
+   "s3_key": "sawimages/Who Will Save Us/page_46.jpg",
+   "book": "Who Will Save Us",
+   "page": 46
+  },
+  {
+   "id": "Who_Will_Save_Us__page_25",
+   "s3_key": "sawimages/Who Will Save Us/page_25.jpg",
+   "book": "Who Will Save Us",
+   "page": 25
+  },
+  {
+   "id": "Who_Will_Save_Us__page_29",
+   "s3_key": "sawimages/Who Will Save Us/page_29.jpg",
+   "book": "Who Will Save Us",
+   "page": 29
+  },
+  {
+   "id": "Who_Will_Save_Us__page_52",
+   "s3_key": "sawimages/Who Will Save Us/page_52.jpg",
+   "book": "Who Will Save Us",
+   "page": 52
+  },
+  {
+   "id": "Martha_Maps_It_Out__page_8",
+   "s3_key": "sawimages/Martha Maps It Out/page_8.jpg",
+   "book": "Martha Maps It Out",
+   "page": 8
+  },
+  {
+   "id": "Martha_Maps_It_Out__page_19",
+   "s3_key": "sawimages/Martha Maps It Out/page_19.jpg",
+   "book": "Martha Maps It Out",
+   "page": 19
+  },
+  {
+   "id": "Martha_Maps_It_Out__page_6",
+   "s3_key": "sawimages/Martha Maps It Out/page_6.jpg",
+   "book": "Martha Maps It Out",
+   "page": 6
+  },
+  {
+   "id": "Martha_Maps_It_Out__page_5",
+   "s3_key": "sawimages/Martha Maps It Out/page_5.jpg",
+   "book": "Martha Maps It Out",
+   "page": 5
+  },
+  {
+   "id": "If_I_had_a_Kangaroo__page_2",
+   "s3_key": "sawimages/If I had a Kangaroo/page_2.jpg",
+   "book": "If I had a Kangaroo",
+   "page": 2
+  },
+  {
+   "id": "If_I_had_a_Kangaroo__page_8",
+   "s3_key": "sawimages/If I had a Kangaroo/page_8.jpg",
+   "book": "If I had a Kangaroo",
+   "page": 8
+  },
+  {
+   "id": "If_I_had_a_Kangaroo__page_16",
+   "s3_key": "sawimages/If I had a Kangaroo/page_16.jpg",
+   "book": "If I had a Kangaroo",
+   "page": 16
+  },
+  {
+   "id": "If_I_had_a_Kangaroo__page_7",
+   "s3_key": "sawimages/If I had a Kangaroo/page_7.jpg",
+   "book": "If I had a Kangaroo",
+   "page": 7
+  },
+  {
+   "id": "Lost_in_Snow__page_25",
+   "s3_key": "sawimages/Lost in Snow/page_25.jpg",
+   "book": "Lost in Snow",
+   "page": 25
+  },
+  {
+   "id": "Lost_in_Snow__page_22",
+   "s3_key": "sawimages/Lost in Snow/page_22.jpg",
+   "book": "Lost in Snow",
+   "page": 22
+  },
+  {
+   "id": "Lost_in_Snow__page_16",
+   "s3_key": "sawimages/Lost in Snow/page_16.jpg",
+   "book": "Lost in Snow",
+   "page": 16
+  },
+  {
+   "id": "Lost_in_Snow__page_23",
+   "s3_key": "sawimages/Lost in Snow/page_23.jpg",
+   "book": "Lost in Snow",
+   "page": 23
+  },
+  {
+   "id": "The_Storm_Whale__page_27",
+   "s3_key": "sawimages/The Storm Whale/page_27.jpg",
+   "book": "The Storm Whale",
+   "page": 27
+  },
+  {
+   "id": "The_Storm_Whale__page_34",
+   "s3_key": "sawimages/The Storm Whale/page_34.jpg",
+   "book": "The Storm Whale",
+   "page": 34
+  },
+  {
+   "id": "The_Storm_Whale__page_33",
+   "s3_key": "sawimages/The Storm Whale/page_33.jpg",
+   "book": "The Storm Whale",
+   "page": 33
+  },
+  {
+   "id": "The_Storm_Whale__page_5",
+   "s3_key": "sawimages/The Storm Whale/page_5.jpg",
+   "book": "The Storm Whale",
+   "page": 5
+  },
+  {
+   "id": "The_Bad-Tempered_Ladybird__page_38",
+   "s3_key": "sawimages/The Bad-Tempered Ladybird/page_38.jpg",
+   "book": "The Bad-Tempered Ladybird",
+   "page": 38
+  },
+  {
+   "id": "The_Bad-Tempered_Ladybird__page_8",
+   "s3_key": "sawimages/The Bad-Tempered Ladybird/page_8.jpg",
+   "book": "The Bad-Tempered Ladybird",
+   "page": 8
+  },
+  {
+   "id": "The_Bad-Tempered_Ladybird__page_15",
+   "s3_key": "sawimages/The Bad-Tempered Ladybird/page_15.jpg",
+   "book": "The Bad-Tempered Ladybird",
+   "page": 15
+  },
+  {
+   "id": "The_Bad-Tempered_Ladybird__page_10",
+   "s3_key": "sawimages/The Bad-Tempered Ladybird/page_10.jpg",
+   "book": "The Bad-Tempered Ladybird",
+   "page": 10
+  },
+  {
+   "id": "Bottoms_Up!__page_19",
+   "s3_key": "sawimages/Bottoms Up!/page_19.jpg",
+   "book": "Bottoms Up!",
+   "page": 19
+  },
+  {
+   "id": "Bottoms_Up!__page_6",
+   "s3_key": "sawimages/Bottoms Up!/page_6.jpg",
+   "book": "Bottoms Up!",
+   "page": 6
+  },
+  {
+   "id": "Bottoms_Up!__page_7",
+   "s3_key": "sawimages/Bottoms Up!/page_7.jpg",
+   "book": "Bottoms Up!",
+   "page": 7
+  },
+  {
+   "id": "Bottoms_Up!__page_14",
+   "s3_key": "sawimages/Bottoms Up!/page_14.jpg",
+   "book": "Bottoms Up!",
+   "page": 14
+  },
+  {
+   "id": "The_Smartest_Giant_in_Town__page_35",
+   "s3_key": "sawimages/The Smartest Giant in Town/page_35.jpg",
+   "book": "The Smartest Giant in Town",
+   "page": 35
+  },
+  {
+   "id": "The_Smartest_Giant_in_Town__page_8",
+   "s3_key": "sawimages/The Smartest Giant in Town/page_8.jpg",
+   "book": "The Smartest Giant in Town",
+   "page": 8
+  },
+  {
+   "id": "The_Smartest_Giant_in_Town__page_27",
+   "s3_key": "sawimages/The Smartest Giant in Town/page_27.jpg",
+   "book": "The Smartest Giant in Town",
+   "page": 27
+  },
+  {
+   "id": "The_Smartest_Giant_in_Town__page_14",
+   "s3_key": "sawimages/The Smartest Giant in Town/page_14.jpg",
+   "book": "The Smartest Giant in Town",
+   "page": 14
+  },
+  {
+   "id": "Little_Red__page_18",
+   "s3_key": "sawimages/Little Red/page_18.jpg",
+   "book": "Little Red",
+   "page": 18
+  },
+  {
+   "id": "Little_Red__page_7",
+   "s3_key": "sawimages/Little Red/page_7.jpg",
+   "book": "Little Red",
+   "page": 7
+  },
+  {
+   "id": "Little_Red__page_15",
+   "s3_key": "sawimages/Little Red/page_15.jpg",
+   "book": "Little Red",
+   "page": 15
+  },
+  {
+   "id": "Little_Red__page_6",
+   "s3_key": "sawimages/Little Red/page_6.jpg",
+   "book": "Little Red",
+   "page": 6
+  },
+  {
+   "id": "Bea's_Bad_Day__page_13",
+   "s3_key": "sawimages/Bea's Bad Day/page_13.jpg",
+   "book": "Bea's Bad Day",
+   "page": 13
+  },
+  {
+   "id": "Bea's_Bad_Day__page_10",
+   "s3_key": "sawimages/Bea's Bad Day/page_10.jpg",
+   "book": "Bea's Bad Day",
+   "page": 10
+  },
+  {
+   "id": "Bea's_Bad_Day__page_1",
+   "s3_key": "sawimages/Bea's Bad Day/page_1.jpg",
+   "book": "Bea's Bad Day",
+   "page": 1
+  },
+  {
+   "id": "Bea's_Bad_Day__page_18",
+   "s3_key": "sawimages/Bea's Bad Day/page_18.jpg",
+   "book": "Bea's Bad Day",
+   "page": 18
+  },
+  {
+   "id": "Elmer_on_Stilts__page_2",
+   "s3_key": "sawimages/Elmer on Stilts/page_2.jpg",
+   "book": "Elmer on Stilts",
+   "page": 2
+  },
+  {
+   "id": "Elmer_on_Stilts__page_25",
+   "s3_key": "sawimages/Elmer on Stilts/page_25.jpg",
+   "book": "Elmer on Stilts",
+   "page": 25
+  },
+  {
+   "id": "Elmer_on_Stilts__page_22",
+   "s3_key": "sawimages/Elmer on Stilts/page_22.jpg",
+   "book": "Elmer on Stilts",
+   "page": 22
+  },
+  {
+   "id": "Elmer_on_Stilts__page_34",
+   "s3_key": "sawimages/Elmer on Stilts/page_34.jpg",
+   "book": "Elmer on Stilts",
+   "page": 34
+  },
+  {
+   "id": "__pending__0acea94404824fee9072c723bd234596__page_1",
+   "s3_key": "sawimages/__pending__0acea94404824fee9072c723bd234596/page_1.jpg",
+   "book": "__pending__0acea94404824fee9072c723bd234596",
+   "page": 1
+  },
+  {
+   "id": "__pending__0acea94404824fee9072c723bd234596__page_7",
+   "s3_key": "sawimages/__pending__0acea94404824fee9072c723bd234596/page_7.jpg",
+   "book": "__pending__0acea94404824fee9072c723bd234596",
+   "page": 7
+  },
+  {
+   "id": "__pending__0acea94404824fee9072c723bd234596__page_9",
+   "s3_key": "sawimages/__pending__0acea94404824fee9072c723bd234596/page_9.jpg",
+   "book": "__pending__0acea94404824fee9072c723bd234596",
+   "page": 9
+  },
+  {
+   "id": "__pending__0acea94404824fee9072c723bd234596__page_10",
+   "s3_key": "sawimages/__pending__0acea94404824fee9072c723bd234596/page_10.jpg",
+   "book": "__pending__0acea94404824fee9072c723bd234596",
+   "page": 10
+  },
+  {
+   "id": "Kipper's_A_to_Z__page_22",
+   "s3_key": "sawimages/Kipper's A to Z/page_22.jpg",
+   "book": "Kipper's A to Z",
+   "page": 22
+  },
+  {
+   "id": "Kipper's_A_to_Z__page_50",
+   "s3_key": "sawimages/Kipper's A to Z/page_50.jpg",
+   "book": "Kipper's A to Z",
+   "page": 50
+  },
+  {
+   "id": "Kipper's_A_to_Z__page_47",
+   "s3_key": "sawimages/Kipper's A to Z/page_47.jpg",
+   "book": "Kipper's A to Z",
+   "page": 47
+  },
+  {
+   "id": "Kipper's_A_to_Z__page_18",
+   "s3_key": "sawimages/Kipper's A to Z/page_18.jpg",
+   "book": "Kipper's A to Z",
+   "page": 18
+  },
+  {
+   "id": "The_Cave__page_27",
+   "s3_key": "sawimages/The Cave/page_27.jpg",
+   "book": "The Cave",
+   "page": 27
+  },
+  {
+   "id": "The_Cave__page_31",
+   "s3_key": "sawimages/The Cave/page_31.jpg",
+   "book": "The Cave",
+   "page": 31
+  },
+  {
+   "id": "The_Cave__page_21",
+   "s3_key": "sawimages/The Cave/page_21.jpg",
+   "book": "The Cave",
+   "page": 21
+  },
+  {
+   "id": "The_Cave__page_10",
+   "s3_key": "sawimages/The Cave/page_10.jpg",
+   "book": "The Cave",
+   "page": 10
+  },
+  {
+   "id": "The_Gingerbread_Man_(2)__page_19",
+   "s3_key": "sawimages/The Gingerbread Man (2)/page_19.jpg",
+   "book": "The Gingerbread Man (2)",
+   "page": 19
+  },
+  {
+   "id": "The_Gingerbread_Man_(2)__page_10",
+   "s3_key": "sawimages/The Gingerbread Man (2)/page_10.jpg",
+   "book": "The Gingerbread Man (2)",
+   "page": 10
+  },
+  {
+   "id": "The_Gingerbread_Man_(2)__page_16",
+   "s3_key": "sawimages/The Gingerbread Man (2)/page_16.jpg",
+   "book": "The Gingerbread Man (2)",
+   "page": 16
+  },
+  {
+   "id": "The_Gingerbread_Man_(2)__page_5",
+   "s3_key": "sawimages/The Gingerbread Man (2)/page_5.jpg",
+   "book": "The Gingerbread Man (2)",
+   "page": 5
+  },
+  {
+   "id": "Lenny_Makes_A_Wish__page_23",
+   "s3_key": "sawimages/Lenny Makes A Wish/page_23.jpg",
+   "book": "Lenny Makes A Wish",
+   "page": 23
+  },
+  {
+   "id": "Lenny_Makes_A_Wish__page_13",
+   "s3_key": "sawimages/Lenny Makes A Wish/page_13.jpg",
+   "book": "Lenny Makes A Wish",
+   "page": 13
+  },
+  {
+   "id": "Lenny_Makes_A_Wish__page_30",
+   "s3_key": "sawimages/Lenny Makes A Wish/page_30.jpg",
+   "book": "Lenny Makes A Wish",
+   "page": 30
+  },
+  {
+   "id": "Lenny_Makes_A_Wish__page_12",
+   "s3_key": "sawimages/Lenny Makes A Wish/page_12.jpg",
+   "book": "Lenny Makes A Wish",
+   "page": 12
+  }
+ ],
+ "supplement_seed": 20260719
+}
