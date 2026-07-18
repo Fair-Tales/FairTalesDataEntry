@@ -1,0 +1,382 @@
+{
+ "description": "Ground-truth rotation labels for randomly sampled raw page images (seed 20260718 main batch, seed 20260719 supplement). true_angle = clockwise rotation the pipeline SHOULD output. Labelled by visual inspection of the exact downscale_for_vision(1568px) bytes the production pipeline sends to the model. excluded=true pages have no defined upright (blank pages / ambiguous top-down wordless art) and are not scored.",
+ "labels": {
+  "Knock_Knock_Dinosaur__page_30": {
+   "angle": 0,
+   "layout": "spread",
+   "text": "decorative"
+  },
+  "Knock_Knock_Dinosaur__page_9": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  },
+  "Knock_Knock_Dinosaur__page_34": {
+   "angle": 0,
+   "layout": "single",
+   "text": "wordless",
+   "excluded": true,
+   "note": "blank page"
+  },
+  "Knock_Knock_Dinosaur__page_3": {
+   "angle": 0,
+   "layout": "cover",
+   "text": "normal"
+  },
+  "Born_to_be_a_Butterfly__page_29": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  },
+  "Born_to_be_a_Butterfly__page_8": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  },
+  "Born_to_be_a_Butterfly__page_26": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  },
+  "Born_to_be_a_Butterfly__page_30": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  },
+  "Who_Will_Save_Us__page_46": {
+   "angle": 0,
+   "layout": "single",
+   "text": "normal"
+  },
+  "Who_Will_Save_Us__page_25": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  },
+  "Who_Will_Save_Us__page_29": {
+   "angle": 0,
+   "layout": "single",
+   "text": "normal"
+  },
+  "Who_Will_Save_Us__page_52": {
+   "angle": 0,
+   "layout": "cover",
+   "text": "normal"
+  },
+  "Martha_Maps_It_Out__page_8": {
+   "angle": 270,
+   "layout": "spread",
+   "text": "decorative"
+  },
+  "Martha_Maps_It_Out__page_19": {
+   "angle": 0,
+   "layout": "cover",
+   "text": "normal"
+  },
+  "Martha_Maps_It_Out__page_6": {
+   "angle": 270,
+   "layout": "spread",
+   "text": "decorative"
+  },
+  "Martha_Maps_It_Out__page_5": {
+   "angle": 270,
+   "layout": "spread",
+   "text": "decorative"
+  },
+  "If_I_had_a_Kangaroo__page_2": {
+   "angle": 0,
+   "layout": "spread",
+   "text": "sparse"
+  },
+  "If_I_had_a_Kangaroo__page_8": {
+   "angle": 270,
+   "layout": "spread",
+   "text": "sparse"
+  },
+  "If_I_had_a_Kangaroo__page_16": {
+   "angle": 180,
+   "layout": "spread",
+   "text": "sparse"
+  },
+  "If_I_had_a_Kangaroo__page_7": {
+   "angle": 270,
+   "layout": "spread",
+   "text": "sparse"
+  },
+  "Lost_in_Snow__page_25": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  },
+  "Lost_in_Snow__page_22": {
+   "angle": 0,
+   "layout": "single",
+   "text": "wordless"
+  },
+  "Lost_in_Snow__page_16": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  },
+  "Lost_in_Snow__page_23": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  },
+  "The_Storm_Whale__page_27": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  },
+  "The_Storm_Whale__page_34": {
+   "angle": 0,
+   "layout": "single",
+   "text": "wordless",
+   "excluded": true,
+   "note": "blank page"
+  },
+  "The_Storm_Whale__page_33": {
+   "angle": 0,
+   "layout": "spread",
+   "text": "wordless",
+   "excluded": true,
+   "note": "top-down sea scene, no defined upright"
+  },
+  "The_Storm_Whale__page_5": {
+   "angle": 0,
+   "layout": "spread",
+   "text": "wordless",
+   "excluded": true,
+   "note": "top-down sea scene, no defined upright"
+  },
+  "The_Bad-Tempered_Ladybird__page_38": {
+   "angle": 0,
+   "layout": "single",
+   "text": "wordless",
+   "excluded": true,
+   "note": "blank page"
+  },
+  "The_Bad-Tempered_Ladybird__page_8": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  },
+  "The_Bad-Tempered_Ladybird__page_15": {
+   "angle": 0,
+   "layout": "single",
+   "text": "wordless",
+   "note": "clock-face row along top, faint sketch"
+  },
+  "The_Bad-Tempered_Ladybird__page_10": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  },
+  "Bottoms_Up!__page_19": {
+   "angle": 0,
+   "layout": "single",
+   "text": "wordless"
+  },
+  "Bottoms_Up!__page_6": {
+   "angle": 0,
+   "layout": "single",
+   "text": "decorative"
+  },
+  "Bottoms_Up!__page_7": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  },
+  "Bottoms_Up!__page_14": {
+   "angle": 0,
+   "layout": "single",
+   "text": "decorative"
+  },
+  "The_Smartest_Giant_in_Town__page_35": {
+   "angle": 0,
+   "layout": "single",
+   "text": "normal"
+  },
+  "The_Smartest_Giant_in_Town__page_8": {
+   "angle": 0,
+   "layout": "single",
+   "text": "normal"
+  },
+  "The_Smartest_Giant_in_Town__page_27": {
+   "angle": 0,
+   "layout": "single",
+   "text": "normal"
+  },
+  "The_Smartest_Giant_in_Town__page_14": {
+   "angle": 0,
+   "layout": "single",
+   "text": "normal"
+  },
+  "Little_Red__page_18": {
+   "angle": 270,
+   "layout": "spread",
+   "text": "normal"
+  },
+  "Little_Red__page_7": {
+   "angle": 270,
+   "layout": "spread",
+   "text": "sparse"
+  },
+  "Little_Red__page_15": {
+   "angle": 90,
+   "layout": "spread",
+   "text": "wordless",
+   "note": "label corrected: +90 view shows wolf eyes with teeth BELOW = natural upright"
+  },
+  "Little_Red__page_6": {
+   "angle": 270,
+   "layout": "spread",
+   "text": "sparse"
+  },
+  "Bea's_Bad_Day__page_13": {
+   "angle": 270,
+   "layout": "spread",
+   "text": "sparse"
+  },
+  "Bea's_Bad_Day__page_10": {
+   "angle": 270,
+   "layout": "spread",
+   "text": "sparse"
+  },
+  "Bea's_Bad_Day__page_1": {
+   "angle": 0,
+   "layout": "cover",
+   "text": "decorative"
+  },
+  "Bea's_Bad_Day__page_18": {
+   "angle": 90,
+   "layout": "spread",
+   "text": "decorative",
+   "note": "label corrected: +90 view is upright (student rotated phone the other way)"
+  },
+  "Elmer_on_Stilts__page_2": {
+   "angle": 0,
+   "layout": "single",
+   "text": "wordless",
+   "excluded": true,
+   "note": "blank page"
+  },
+  "Elmer_on_Stilts__page_25": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  },
+  "Elmer_on_Stilts__page_22": {
+   "angle": 0,
+   "layout": "single",
+   "text": "wordless"
+  },
+  "Elmer_on_Stilts__page_34": {
+   "angle": 0,
+   "layout": "single",
+   "text": "wordless",
+   "excluded": true,
+   "note": "blank page"
+  },
+  "__pending__0acea94404824fee9072c723bd234596__page_1": {
+   "angle": 0,
+   "layout": "cover",
+   "text": "decorative"
+  },
+  "__pending__0acea94404824fee9072c723bd234596__page_7": {
+   "angle": 270,
+   "layout": "spread",
+   "text": "sparse"
+  },
+  "__pending__0acea94404824fee9072c723bd234596__page_9": {
+   "angle": 270,
+   "layout": "spread",
+   "text": "sparse"
+  },
+  "__pending__0acea94404824fee9072c723bd234596__page_10": {
+   "angle": 270,
+   "layout": "spread",
+   "text": "decorative"
+  },
+  "Kipper's_A_to_Z__page_22": {
+   "angle": 0,
+   "layout": "single",
+   "text": "decorative"
+  },
+  "Kipper's_A_to_Z__page_50": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  },
+  "Kipper's_A_to_Z__page_47": {
+   "angle": 0,
+   "layout": "single",
+   "text": "wordless"
+  },
+  "Kipper's_A_to_Z__page_18": {
+   "angle": 0,
+   "layout": "single",
+   "text": "wordless"
+  },
+  "The_Cave__page_27": {
+   "angle": 0,
+   "layout": "single",
+   "text": "wordless"
+  },
+  "The_Cave__page_31": {
+   "angle": 0,
+   "layout": "single",
+   "text": "wordless"
+  },
+  "The_Cave__page_21": {
+   "angle": 0,
+   "layout": "single",
+   "text": "wordless"
+  },
+  "The_Cave__page_10": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  },
+  "The_Gingerbread_Man_(2)__page_19": {
+   "angle": 0,
+   "layout": "cover",
+   "text": "decorative"
+  },
+  "The_Gingerbread_Man_(2)__page_10": {
+   "angle": 270,
+   "layout": "spread",
+   "text": "normal"
+  },
+  "The_Gingerbread_Man_(2)__page_16": {
+   "angle": 270,
+   "layout": "spread",
+   "text": "normal"
+  },
+  "The_Gingerbread_Man_(2)__page_5": {
+   "angle": 270,
+   "layout": "spread",
+   "text": "normal"
+  },
+  "Lenny_Makes_A_Wish__page_23": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  },
+  "Lenny_Makes_A_Wish__page_13": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  },
+  "Lenny_Makes_A_Wish__page_30": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  },
+  "Lenny_Makes_A_Wish__page_12": {
+   "angle": 0,
+   "layout": "single",
+   "text": "sparse"
+  }
+ }
+}
