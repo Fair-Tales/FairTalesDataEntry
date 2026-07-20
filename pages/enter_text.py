@@ -3,7 +3,6 @@ import json
 import logging
 import streamlit as st
 import anthropic
-from PIL import Image, ImageOps
 from streamlit_dimensions import st_dimensions
 from utilities import (
     page_layout, confirm_submit, check_authentication_status,
@@ -15,7 +14,7 @@ from utilities import (
     CHARACTER_AUTODETECT_SOURCE_AUTO, CHARACTER_AUTODETECT_SOURCE_MANUAL,
 )
 from data_structures import Page, Character, Alias, ExtractionErrorLog
-from image_processing import make_display_copy, apply_manual_correction
+from image_processing import make_display_copy, apply_manual_correction, load_page_image
 from pages.uploader import extract_page_info, PageExtractionError
 from text_content import EnterText, ManageCharacters, AliasForm, CharacterForm
 
@@ -77,39 +76,12 @@ def page_change(delta):
 # little memory but makes back/forward paging and the N+1 prefetch instant.
 @st.cache_data(max_entries=24)
 def load_image(book, page_number, use_cropped=True, display=False):
-    """Load a page image from S3.
-
-    ImageOps.exif_transpose bakes any EXIF orientation tag into the pixels so
-    portrait photos display the right way up. It is a no-op for images without
-    an orientation tag (e.g. the re-encoded _cropped/_display versions), so it is
-    safe to apply to every branch and to legacy photos stored before this fix.
-
-    ``display=True`` (#184) loads the small ``page_{n}_display.jpg`` derivative
-    that enter-text shows inline — far less S3 fetch + browser transfer than the
-    full-res original. It falls back to the full-res image below when no display
-    copy exists (legacy pages processed before the derivative was introduced), so
-    the caller never has to special-case them. Enlarge / crop-and-rotate pass
-    ``display=False`` to keep working on the full-resolution original.
-    """
-    if display:
-        try:
-            return ImageOps.exif_transpose(Image.open(fs.open(
-                f"sawimages/{book}/page_{page_number}_display.jpg", mode='rb'
-            )))
-        except FileNotFoundError:
-            # Legacy page with no display copy — fall back to full-res below.
-            pass
-    if use_cropped:
-        try:
-            return ImageOps.exif_transpose(Image.open(fs.open(
-                f"sawimages/{book}/page_{page_number}_cropped.jpg", mode='rb'
-            )))
-        except FileNotFoundError:
-            # No corrected version exists yet; fall back to the original below.
-            pass
-    return ImageOps.exif_transpose(Image.open(fs.open(
-        f"sawimages/{book}/page_{page_number}.jpg", mode='rb'
-    )))
+    """Load a page image from S3 (thin wrapper over the shared
+    ``image_processing.load_page_image`` helper, #129) using this page's module
+    filesystem. See the helper for the display/cropped fallback behaviour."""
+    return load_page_image(
+        fs, book, page_number, use_cropped=use_cropped, display=display
+    )
 
 
 def cropped_exists(book, page_number):

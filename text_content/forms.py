@@ -1549,6 +1549,8 @@ class Validation:
     page_contains_story_label = "This page contains story text"
     page_text_label = "Page text (correct the transcription):"
     page_not_entered = "No text has been entered for this page yet — you can add it below."
+    page_photo_caption = "Page {n} photo — check the transcription against this image."
+    page_photo_missing = "The photo for this page could not be loaded."
     save_page_button = "Save page-text corrections"
     page_saved = "Page-text corrections saved."
 

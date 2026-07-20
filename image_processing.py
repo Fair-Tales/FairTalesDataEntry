@@ -155,6 +155,39 @@ def make_display_copy(image_bytes, max_edge=DISPLAY_MAX_EDGE, quality=80):
     )
 
 
+def load_page_image(fs, book, page_number, use_cropped=True, display=False):
+    """Load a page image from S3, preferring the corrected / display derivatives.
+
+    Shared by the text-entry AND validation views (#129) so the archivist and the
+    validator look at the same picture. ``fs`` is the app's s3fs filesystem
+    (``utilities.get_s3_filesystem()``); ``book`` is the S3 folder name (the book
+    title). ``ImageOps.exif_transpose`` bakes any EXIF orientation into the pixels
+    (a no-op on the re-encoded _cropped/_display copies). ``display=True`` (#184)
+    prefers the small ``page_{n}_display.jpg`` derivative and falls back to
+    full-res when no display copy exists (legacy pages), so callers never special-
+    case them. Raises ``FileNotFoundError`` only when even the raw page is absent.
+    """
+    if display:
+        try:
+            return ImageOps.exif_transpose(Image.open(fs.open(
+                f"sawimages/{book}/page_{page_number}_display.jpg", mode='rb'
+            )))
+        except FileNotFoundError:
+            # Legacy page with no display copy — fall back to full-res below.
+            pass
+    if use_cropped:
+        try:
+            return ImageOps.exif_transpose(Image.open(fs.open(
+                f"sawimages/{book}/page_{page_number}_cropped.jpg", mode='rb'
+            )))
+        except FileNotFoundError:
+            # No corrected version exists yet; fall back to the original below.
+            pass
+    return ImageOps.exif_transpose(Image.open(fs.open(
+        f"sawimages/{book}/page_{page_number}.jpg", mode='rb'
+    )))
+
+
 def is_black_frame(image_bytes, mean_threshold=10.0, percentile=99,
                    percentile_threshold=40.0):
     """

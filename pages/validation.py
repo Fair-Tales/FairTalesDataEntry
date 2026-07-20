@@ -31,8 +31,9 @@ import streamlit as st
 
 from utilities import (
     page_layout, check_authentication_status, is_team_or_above, entered_by_username,
-    validation_heartbeat_due,
+    validation_heartbeat_due, get_s3_filesystem,
 )
+from image_processing import load_page_image
 from data_structures import Book, Page, Character, Alias, EditLog
 from text_content import Validation, BookForm, CharacterForm
 
@@ -343,6 +344,21 @@ def page_text_editor(book):
         options=list(range(1, book.page_count + 1)),
         key="validation_page_select",
     )
+
+    # Show the page photo so the validator can check the transcription against the
+    # actual image (this was missing — validators had text but no picture). Uses
+    # the shared loader so it matches what the archivist saw in enter-text,
+    # including the corrected crop / display derivative.
+    try:
+        page_image = load_page_image(
+            get_s3_filesystem(), book.title, page_number, display=True
+        )
+        st.image(
+            page_image, width="stretch",
+            caption=Validation.page_photo_caption.format(n=page_number),
+        )
+    except FileNotFoundError:
+        st.info(Validation.page_photo_missing)
 
     doc = st.session_state.firestore.get_by_reference(
         collection='pages', document_ref=f"{book.document_id}_{page_number}"
