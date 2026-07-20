@@ -869,12 +869,25 @@ def _yellow_rgba(alpha):
     return f"rgba({r}, {g}, {b}, {alpha})"
 
 
+def _yellow_opaque_over_white(alpha):
+    """Return the brand yellow blended over white at ``alpha`` as an OPAQUE
+    ``rgb(...)`` string — same soft tint as ``_yellow_rgba(alpha)`` on a white
+    page, but with no transparency."""
+    r, g, b = LOGO_YELLOW_RGB
+    blend = lambda c: round(c * alpha + 255 * (1 - alpha))
+    return f"rgb({blend(r)}, {blend(g)}, {blend(b)})"
+
+
 # Soft yellow tint on the whole navigation sidebar (kept light so the dark
-# page-link text stays legible).
+# page-link text stays legible). The background MUST be OPAQUE (#215): on mobile
+# the sidebar is an overlay drawer that slides over the main page, so a
+# semi-transparent background let the page content show through and made the
+# navigation unreadable. Using the yellow pre-blended over white keeps the same
+# look while staying fully opaque.
 _BRAND_SIDEBAR_CSS = f"""
     <style>
     [data-testid="stSidebar"] {{
-        background-color: {_yellow_rgba(0.18)};
+        background-color: {_yellow_opaque_over_white(0.18)};
     }}
     </style>
 """
