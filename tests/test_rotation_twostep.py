@@ -139,14 +139,54 @@ def test_squarish_image_still_gets_step_two(vision):
 
 
 # ---------------------------------------------------------------------------
-# Aspect gate: a landscape image is expected to be a spread (0/180 only).
+# Aspect gate: a landscape image is expected to be a spread (0/180 only), so a
+# SIDEWAYS verdict triggers the spread probe (#217 follow-up). Only a SINGLE
+# verdict un-gates the rotation; any fold/garbage keeps the protective gate.
 # ---------------------------------------------------------------------------
 
-def test_sideways_on_landscape_is_gated_to_uncertain(vision):
-    vision["replies"] = ["SIDEWAYS"]
+def test_sideways_on_landscape_probe_fold_stays_gated(vision):
+    # Probe confirms a spread (vertical fold): keep the gate, flag uncertain.
+    vision["replies"] = ["SIDEWAYS", "FOLDVERTICAL"]
     assert ip.get_rotation_angle(LANDSCAPE, object(), model=MODEL) == (0, True)
-    # The gate resolves the disagreement WITHOUT a second model call.
-    assert len(vision["images"]) == 1
+    # Triage + probe only — the probe replaces the old blind gate, no binary/rotate.
+    assert len(vision["images"]) == 2
+    # The probe is shown the ORIGINAL (unrotated) landscape image.
+    with Image.open(io.BytesIO(vision["images"][1])) as img:
+        assert img.size == (200, 100)
+
+
+def test_sideways_on_landscape_probe_single_ungates_and_rotates(vision):
+    # Probe says SINGLE (a sideways-shot single page/cover): trust SIDEWAYS and
+    # rotate via the binary step — but KEEP rotation_uncertain (flag-preserving).
+    vision["replies"] = ["SIDEWAYS", "SINGLE", "UPRIGHT"]
+    assert ip.get_rotation_angle(LANDSCAPE, object(), model=MODEL) == (90, True)
+    assert len(vision["images"]) == 3
+    # Binary (3rd call) sees the image rotated 90° in code: 200x100 -> 100x200.
+    with Image.open(io.BytesIO(vision["images"][2])) as img:
+        assert img.size == (100, 200)
+
+
+def test_sideways_on_landscape_probe_single_then_upsidedown_maps_270(vision):
+    vision["replies"] = ["SIDEWAYS", "SINGLE", "UPSIDEDOWN"]
+    assert ip.get_rotation_angle(LANDSCAPE, object(), model=MODEL) == (270, True)
+
+
+def test_sideways_on_landscape_probe_garbage_stays_gated(vision):
+    # Unparseable probe reply -> None != SINGLE -> keep the protective gate.
+    vision["replies"] = ["SIDEWAYS", "hard to say"]
+    assert ip.get_rotation_angle(LANDSCAPE, object(), model=MODEL) == (0, True)
+    assert len(vision["images"]) == 2
+
+
+def test_probe_not_called_on_portrait_sideways(vision):
+    # Below the landscape threshold the gate/probe never fire: straight to binary.
+    vision["replies"] = ["SIDEWAYS", "UPRIGHT"]
+    assert ip.get_rotation_angle(PORTRAIT, object(), model=MODEL) == (90, False)
+    # Only triage + binary; the middle call is the binary, NOT the probe.
+    from text_content import AIPrompts
+    assert len(vision["images"]) == 2
+    assert vision["prompts"][1] == AIPrompts.rotation_binary
+    assert AIPrompts.rotation_spread_probe not in vision["prompts"]
 
 
 def test_aspect_helper_contract():
@@ -278,3 +318,21 @@ def test_triage_prompt_locks_validated_cues():
     assert "if there is no text" in prompt
     # 4. One-word answer contract for the strict parser.
     assert "exactly one word" in prompt and "no explanation" in prompt
+
+
+def test_spread_probe_prompt_locks_single_vs_fold_contract():
+    """Regression lock: the spread probe must offer exactly SINGLE / FOLDVERTICAL
+    / FOLDHORIZONTAL, describe the physical fold/gutter as the cue, and demand a
+    one-word answer. This is what lets the refined landscape gate un-gate a
+    sideways-shot single page/cover while still refusing to quarter-turn a real
+    spread (#217 follow-up, validated 2026-07-20).
+    """
+    from text_content import AIPrompts
+
+    prompt = AIPrompts.rotation_spread_probe
+    for word in ip._PROBE_WORDS:  # SINGLE, FOLDVERTICAL, FOLDHORIZONTAL
+        assert word in prompt
+    low = prompt.lower()
+    assert "fold" in low or "gutter" in low
+    assert "single" in low and "cover" in low
+    assert "one word" in low

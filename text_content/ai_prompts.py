@@ -79,6 +79,37 @@ class AIPrompts:
         "Answer with exactly one word: UPRIGHT or UPSIDEDOWN."
     )
 
+    # Spread-vs-single probe for the refined landscape aspect gate (#217
+    # follow-up, validated 2026-07-20). The gate normally refuses to rotate any
+    # landscape image on a SIDEWAYS verdict, because an upright double-page
+    # spread is landscape and can only need 0/180 — but that also strands a
+    # genuinely sideways-shot SINGLE page/cover (landscape raw) unrotated. This
+    # probe asks whether the photo actually shows one page (no central fold) or
+    # two facing pages meeting at a fold: only a SINGLE verdict un-gates the
+    # SIDEWAYS rotation. On real phone photos it is near-perfect (covers 36/36
+    # SINGLE incl. all 24 rotated-landscape covers; spreads 200/200 detect the
+    # fold). It CANNOT see a fold on whitened photocopy/scan uploads (no fold
+    # shadow survives), so the caller keeps rotation_uncertain even when it
+    # un-gates, capping that residual risk at "flagged for review", never a
+    # silent wrong rotation. Eval assets in scripts/rotation_prompt_eval/.
+    rotation_spread_probe = (
+        "This is a photo of a book. Decide what the photo shows:\n"
+        "- SINGLE: ONE single page, or the front or back cover, on its own — "
+        "there is NO central fold or gutter where two facing pages meet.\n"
+        "- FOLDVERTICAL: TWO facing pages of an open book, side by side LEFT and "
+        "RIGHT, meeting at a central fold/gutter that runs VERTICALLY (top to "
+        "bottom) down the middle of the photo.\n"
+        "- FOLDHORIZONTAL: TWO facing pages of an open book, stacked TOP and "
+        "BOTTOM, meeting at a central fold/gutter that runs HORIZONTALLY (left "
+        "to right) across the middle of the photo.\n"
+        "Look for the physical fold: a crease or shadow line where the paper "
+        "bends at the book's spine, with the page surface usually curving "
+        "slightly on each side of it. Ignore the outer edges of the book and the "
+        "background.\n"
+        "Reply with exactly one word and no explanation: SINGLE, FOLDVERTICAL, "
+        "or FOLDHORIZONTAL."
+    )
+
     crop_quality_check = (
         "Does this image show a properly cropped book page or cover that is the "
         "RIGHT WAY UP? Answer 'yes' only if ALL of these hold: it is upright and "
