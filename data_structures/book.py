@@ -123,15 +123,18 @@ def form_content(self):
         st.session_state['author_dict'].keys()
     )
     author_index = 0
-    if 'current_author' in st.session_state:
-        _author_name = author_entry_to_name(st.session_state['current_author'])
+    if self.author is not None:
+        # A saved book's OWN author reference is authoritative — prefer it over
+        # any leftover current_author session key, which is only meaningful on
+        # the add flow and can be stale (a different book / a wrong AI guess) by
+        # the time the metadata is re-opened for editing. Editing seeded purely
+        # from that stale session state showed the wrong author and, on submit,
+        # silently overwrote the stored reference.
+        _author_name = author_entry_to_name(self.author.get())
         if _author_name in author_options:
             author_index = author_options.index(_author_name)
-    elif self.author is not None:
-        # Editing a saved book: current_author is only populated on the add flow
-        # (add_book_entries), so seed from the book's own stored author reference
-        # or the previously-selected author is silently dropped on edit.
-        _author_name = author_entry_to_name(self.author.get())
+    elif 'current_author' in st.session_state:
+        _author_name = author_entry_to_name(st.session_state['current_author'])
         if _author_name in author_options:
             author_index = author_options.index(_author_name)
 
@@ -152,14 +155,14 @@ def form_content(self):
     )
 
     publisher_index = 0
-    if 'current_publisher' in st.session_state:
-        _publisher_name = st.session_state['current_publisher'].to_dict()['name'].replace('_', ' ')
+    if self.publisher is not None:
+        # Prefer the book's own stored publisher over stale session state / ISBN.
+        _publisher_data = self.publisher.get().to_dict() or {}
+        _publisher_name = _publisher_data.get('name', '').replace('_', ' ')
         if _publisher_name in publisher_options:
             publisher_index = publisher_options.index(_publisher_name)
-    elif self.publisher is not None:
-        # Editing a saved book: seed from the book's own stored publisher (#215
-        # sibling fix) so it isn't dropped on edit.
-        _publisher_name = self.publisher.get().to_dict()['name'].replace('_', ' ')
+    elif 'current_publisher' in st.session_state:
+        _publisher_name = st.session_state['current_publisher'].to_dict()['name'].replace('_', ' ')
         if _publisher_name in publisher_options:
             publisher_index = publisher_options.index(_publisher_name)
     elif isbn_meta.get('publisher') and isbn_meta['publisher'] in publisher_options:
@@ -182,14 +185,14 @@ def form_content(self):
         )
     
     illustrator_index = 0
-    if 'current_illustrator' in st.session_state:
-        _illustrator_name = author_entry_to_name(st.session_state['current_illustrator'])
+    if self.illustrator is not None:
+        # Prefer the book's own stored illustrator over a stale session key, so
+        # editing shows the saved illustrator rather than the wrong one / blank.
+        _illustrator_name = author_entry_to_name(self.illustrator.get())
         if _illustrator_name in illustrator_options:
             illustrator_index = illustrator_options.index(_illustrator_name)
-    elif self.illustrator is not None:
-        # Editing a saved book: seed from the book's own stored illustrator so the
-        # previously-selected illustrator isn't dropped on edit (#215 sibling fix).
-        _illustrator_name = author_entry_to_name(self.illustrator.get())
+    elif 'current_illustrator' in st.session_state:
+        _illustrator_name = author_entry_to_name(st.session_state['current_illustrator'])
         if _illustrator_name in illustrator_options:
             illustrator_index = illustrator_options.index(_illustrator_name)
 
