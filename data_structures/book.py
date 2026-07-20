@@ -127,6 +127,13 @@ def form_content(self):
         _author_name = author_entry_to_name(st.session_state['current_author'])
         if _author_name in author_options:
             author_index = author_options.index(_author_name)
+    elif self.author is not None:
+        # Editing a saved book: current_author is only populated on the add flow
+        # (add_book_entries), so seed from the book's own stored author reference
+        # or the previously-selected author is silently dropped on edit.
+        _author_name = author_entry_to_name(self.author.get())
+        if _author_name in author_options:
+            author_index = author_options.index(_author_name)
 
     _author = st.selectbox(
         BookForm.author_select_label,
@@ -147,6 +154,12 @@ def form_content(self):
     publisher_index = 0
     if 'current_publisher' in st.session_state:
         _publisher_name = st.session_state['current_publisher'].to_dict()['name'].replace('_', ' ')
+        if _publisher_name in publisher_options:
+            publisher_index = publisher_options.index(_publisher_name)
+    elif self.publisher is not None:
+        # Editing a saved book: seed from the book's own stored publisher (#215
+        # sibling fix) so it isn't dropped on edit.
+        _publisher_name = self.publisher.get().to_dict()['name'].replace('_', ' ')
         if _publisher_name in publisher_options:
             publisher_index = publisher_options.index(_publisher_name)
     elif isbn_meta.get('publisher') and isbn_meta['publisher'] in publisher_options:
@@ -171,6 +184,12 @@ def form_content(self):
     illustrator_index = 0
     if 'current_illustrator' in st.session_state:
         _illustrator_name = author_entry_to_name(st.session_state['current_illustrator'])
+        if _illustrator_name in illustrator_options:
+            illustrator_index = illustrator_options.index(_illustrator_name)
+    elif self.illustrator is not None:
+        # Editing a saved book: seed from the book's own stored illustrator so the
+        # previously-selected illustrator isn't dropped on edit (#215 sibling fix).
+        _illustrator_name = author_entry_to_name(self.illustrator.get())
         if _illustrator_name in illustrator_options:
             illustrator_index = illustrator_options.index(_illustrator_name)
 
