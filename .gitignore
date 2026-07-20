@@ -258,3 +258,5 @@ fabric.properties
 
 # Android studio 3.1+ serialized cache file
 .idea/caches/build_file_checksums.ser
+# Rotation-prompt eval working data (downloaded page images + API cache) — reproducible via rot_sample.py/rot_fetch_manifest.py, not committed
+scripts/rotation_prompt_eval/work/

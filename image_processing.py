@@ -302,14 +302,16 @@ def correct_book_page(image_bytes):
 #: therefore a disagreement between the model and the aspect expectation: it is
 #: only possible for a portrait single page photographed sideways (rare — pages
 #: and covers are shot portrait per the instructions). Rather than risking a
-#: chirality rotation on what is almost certainly an upright spread, the
-#: disagreement is NOT auto-rotated and is flagged ``rotation_uncertain`` for
-#: human review.
+#: chirality rotation on what is almost certainly an upright spread, such a
+#: disagreement is arbitrated by the spread probe (below) before falling back to
+#: flagging ``rotation_uncertain``.
 LANDSCAPE_SPREAD_MIN_ASPECT = 1.15
 
-#: Answer vocabularies for the two orientation questions (#217).
+#: Answer vocabularies for the orientation questions (#217) and the spread probe
+#: that refines the landscape gate (#217 follow-up).
 _TRIAGE_WORDS = ("UPRIGHT", "UPSIDEDOWN", "SIDEWAYS")
 _BINARY_WORDS = ("UPRIGHT", "UPSIDEDOWN")
+_PROBE_WORDS = ("SINGLE", "FOLDVERTICAL", "FOLDHORIZONTAL")
 
 
 def parse_orientation_word(raw, allowed):
@@ -360,13 +362,17 @@ def get_rotation_angle(image_bytes, client, model=None):
 
     Spine-vertical / aspect gate: a landscape image (w/h >=
     ``LANDSCAPE_SPREAD_MIN_ASPECT``) is expected to be a double-page spread,
-    which can only ever need 0 or 180. A SIDEWAYS triage verdict on one is a
-    model/aspect disagreement: no rotation is applied and the result is flagged
-    uncertain instead (see the constant's comment). The portrait direction of
-    the gate (a portrait-aspect *spread* MUST be 90/270) is not enforced,
-    because nothing in the pipeline knows whether a portrait image is a spread
-    or an ordinary single page — detecting a horizontal spine line to tell them
-    apart is a possible follow-up.
+    which can only ever need 0 or 180, so a SIDEWAYS triage verdict on one is a
+    model/aspect disagreement. Rather than always flagging it uncertain, a
+    spread probe (``AIPrompts.rotation_spread_probe``) arbitrates: only if the
+    image is judged a SINGLE page/cover (no central fold, so it cannot be a
+    spread) is the SIDEWAYS rotation trusted and applied — and even then the
+    result stays ``rotation_uncertain`` (the probe cannot see a fold on a
+    whitened scan spread, so flagging keeps that rare mislabel reviewable). Any
+    fold verdict, unparseable reply or API error from the probe keeps the
+    protective gate and flags uncertain. The portrait direction of the gate (a
+    portrait-aspect *spread* MUST be 90/270) is still not enforced, because
+    nothing distinguishes a portrait single page from a portrait-shot spread.
 
     Returns ``(angle, uncertain)`` where ``angle`` is 0/90/180/270 and
     ``uncertain`` is True when the answer could not be trusted — an API error,
@@ -408,24 +414,38 @@ def get_rotation_angle(image_bytes, client, model=None):
         return 180, False
     if verdict == "SIDEWAYS":
         aspect = _image_aspect(image_bytes)
+        keep_uncertain = False  # flag-preserving flag for the un-gated single path
         if aspect is not None and aspect >= LANDSCAPE_SPREAD_MIN_ASPECT:
-            # Aspect-gate disagreement: a landscape image should be a spread,
-            # and a spread cannot be sideways. Do not rotate; flag for review.
-            logger.warning(
-                "get_rotation_angle: SIDEWAYS verdict on a landscape image "
-                "(aspect %.2f) — flagging rotation_uncertain instead of rotating",
-                aspect,
-            )
-            return 0, True
+            # Landscape + SIDEWAYS normally means an upright/upside-down spread
+            # the model mis-read, so the gate refuses to quarter-turn it. But it
+            # could instead be a genuinely sideways-shot SINGLE page/cover. Probe
+            # which: only a SINGLE verdict (no central fold, so it cannot be a
+            # spread) un-gates the rotation; any fold claim, unparseable reply or
+            # API error keeps the protective gate.
+            probe = _ask(image_bytes, AIPrompts.rotation_spread_probe, _PROBE_WORDS)
+            if probe != "SINGLE":
+                logger.warning(
+                    "get_rotation_angle: SIDEWAYS on a landscape image (aspect "
+                    "%.2f), spread probe %r — keeping the gate, flagging "
+                    "rotation_uncertain instead of rotating",
+                    aspect, probe,
+                )
+                return 0, True
+            # Un-gated: the probe judges this a single page/cover, so trust the
+            # SIDEWAYS verdict and rotate — but KEEP rotation_uncertain. The one
+            # residual failure mode is a whitened scan spread whose fold shadow
+            # is gone, which the probe can mislabel SINGLE; flagging keeps that
+            # case reviewable rather than a silent wrong rotation.
+            keep_uncertain = True
         # Deterministic disambiguation: rotate +90° clockwise in code, then ask
         # the binary question the model answers near-perfectly.
         binary = _ask(
             rotate_image(image_bytes, 90), AIPrompts.rotation_binary, _BINARY_WORDS
         )
         if binary == "UPRIGHT":
-            return 90, False
+            return 90, keep_uncertain
         if binary == "UPSIDEDOWN":
-            return 270, False
+            return 270, keep_uncertain
         return 0, True
     # API error, empty or unparseable reply.
     return 0, True
