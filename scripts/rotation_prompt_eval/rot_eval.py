@@ -108,7 +108,9 @@ def ask(image_bytes, prompt, allowed, ckey):
         return cache[ckey]
     b64 = base64.standard_b64encode(image_bytes).decode()
     resp = client.messages.create(
-        model=MODEL, max_tokens=5,
+        # Matches production image_processing._CLASSIFY_MAX_TOKENS: 5 clipped long
+        # answer words (FOLDHORIZONTAL) mid-word, causing truncation/parse misses.
+        model=MODEL, max_tokens=16,
         messages=[{"role": "user", "content": [
             {"type": "image", "source": {"type": "base64",
                                          "media_type": "image/jpeg", "data": b64}},

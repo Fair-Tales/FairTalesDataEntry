@@ -313,6 +313,16 @@ _TRIAGE_WORDS = ("UPRIGHT", "UPSIDEDOWN", "SIDEWAYS")
 _BINARY_WORDS = ("UPRIGHT", "UPSIDEDOWN")
 _PROBE_WORDS = ("SINGLE", "FOLDVERTICAL", "FOLDHORIZONTAL")
 
+#: Token budget for the one-word classification replies (triage/binary/probe/
+#: crop-quality). Must comfortably fit the LONGEST answer word — "FOLDHORIZONTAL"
+#: tokenises to several tokens, and the old budget of 5 clipped it mid-word,
+#: producing an unparseable reply (logged as "truncated at max_tokens=5") that
+#: the strict parser then rejected as uncertain. The parser still requires the
+#: whole reply to be exactly one allowed word, so the extra room cannot let a
+#: hedged/multi-word answer slip through — it only lets the intended single word
+#: finish and the model stop naturally instead of hitting the cap.
+_CLASSIFY_MAX_TOKENS = 16
+
 
 def parse_orientation_word(raw, allowed):
     """Strictly parse a one-word orientation reply (#217).
@@ -399,7 +409,10 @@ def get_rotation_angle(image_bytes, client, model=None):
     def _ask(image, prompt, allowed):
         """One vision call, strictly parsed; ``None`` means uncertain."""
         try:
-            raw = vision_text(client, [image], prompt, model=model, max_tokens=5)
+            raw = vision_text(
+                client, [image], prompt, model=model,
+                max_tokens=_CLASSIFY_MAX_TOKENS,
+            )
         except anthropic.AnthropicError as exc:
             # Narrowed exception (#127): a transient API failure is logged and
             # surfaces as *uncertain* — never silently as "no rotation" (#217).
@@ -641,7 +654,7 @@ def check_crop_quality(image_bytes, client, model=None):
     try:
         raw = vision_text(
             client, [image_bytes], AIPrompts.crop_quality_check,
-            model=model, max_tokens=5,
+            model=model, max_tokens=_CLASSIFY_MAX_TOKENS,
         )
     except anthropic.AnthropicError as exc:
         # Narrowed from a broad ``except`` (#127): a network/API error means we

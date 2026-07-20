@@ -336,3 +336,22 @@ def test_spread_probe_prompt_locks_single_vs_fold_contract():
     assert "fold" in low or "gutter" in low
     assert "single" in low and "cover" in low
     assert "one word" in low
+
+
+def test_classification_calls_use_enough_tokens_for_longest_word(monkeypatch):
+    """Regression lock for the production 'truncated at max_tokens=5' warning: the
+    one-word classification calls must budget enough tokens for the LONGEST answer
+    word (FOLDHORIZONTAL) so it is never clipped mid-word into an unparseable reply.
+    """
+    seen = {}
+
+    def capture(client, images, prompt, *, model, max_tokens):
+        seen["max_tokens"] = max_tokens
+        return "SIDEWAYS"
+
+    monkeypatch.setattr(utilities, "vision_text", capture)
+    ip.get_rotation_angle(PORTRAIT, object(), model=MODEL)
+
+    assert seen["max_tokens"] == ip._CLASSIFY_MAX_TOKENS
+    # Must exceed 5 (the value that clipped FOLDHORIZONTAL) with real headroom.
+    assert ip._CLASSIFY_MAX_TOKENS >= 12
