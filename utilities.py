@@ -1406,6 +1406,11 @@ def author_entry_to_name(entry):
     ``forename``/``surname`` so both shapes render correctly.
     """
     data = entry.to_dict()
+    if not data:
+        # A DocumentSnapshot for a deleted/missing reference has ``to_dict() is
+        # None`` — return an empty name so callers' ``name in options`` guards
+        # fall through to the default rather than crashing.
+        return ''
     name = (data.get('name') or '').strip()
     if name:
         return name
