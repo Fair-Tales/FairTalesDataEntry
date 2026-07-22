@@ -95,9 +95,17 @@ def form_content(self):
         isbn_used = True
     else:
         _title_default = self.title
+    # The title derives the book's Firestore document_id (and, transitively, its
+    # page/character document ids and S3 photo folder). Once a book is
+    # registered, changing the title here would orphan or overwrite documents
+    # (#224), so lock the field for a registered book — a dedicated rename tool
+    # exists separately (scripts/rename_book.py).
     _title = st.text_input(
-        BookForm.title_label, value=_title_default, key=f"book_form_title_{key_suffix}"
+        BookForm.title_label, value=_title_default,
+        disabled=self.is_registered, key=f"book_form_title_{key_suffix}"
     ).strip()
+    if self.is_registered:
+        st.caption(BookForm.title_readonly_caption)
 
     isbn_year = _isbn_year(isbn_meta.get('published_date', ''))
     if self.published != -1:
@@ -236,7 +244,13 @@ def form_content(self):
             return
 
         st.session_state['current_book'] = self
-        self.title = _title
+        # A registered book's title is locked (the input is disabled above): its
+        # document_id — and its pages'/characters' ids and S3 folder — derive
+        # from the title, so writing a changed title through the Field
+        # descriptor would orphan or overwrite the wrong document (#224). Never
+        # reassign it here; only a brand-new (unregistered) book sets its title.
+        if not self.is_registered:
+            self.title = _title
         self.published = _published
         self.author = _author
         self.publisher = _publisher

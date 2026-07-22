@@ -21,6 +21,16 @@ def instructions():
 
 def edit_book_details():
     st.session_state.current_book.editing = True
+    # The add-flow leaves 'current_author'/'current_illustrator'/'current_publisher'
+    # in session state to seed the metadata selectboxes for the NEXT book. When a
+    # user instead opens an EXISTING book to edit its metadata, those leftovers
+    # would seed another book's author/illustrator/publisher into the selectbox
+    # defaults — and the book form saves the seeded value on submit, silently
+    # overwriting the field (issue #229 residual). The edit path never needs
+    # these keys (the book already carries its own references), so drop any that
+    # are lingering before entering the form.
+    for stale_key in ('current_author', 'current_illustrator', 'current_publisher'):
+        st.session_state.pop(stale_key, None)
     st.switch_page("./pages/add_book.py")
 
 

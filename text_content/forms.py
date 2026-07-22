@@ -69,6 +69,14 @@ class BookForm:
     isbn_prefill_caption = "ℹ Metadata pre-filled from ISBN lookup — please verify."
     submit_button = "Submit"
     title_required = "Book title is required."
+    # Shown beneath the (disabled) title input when editing a registered book:
+    # the title keys the book's Firestore document, pages and characters, so it
+    # cannot be changed here. A dedicated rename tool exists separately
+    # (scripts/rename_book.py). See #224.
+    title_readonly_caption = (
+        "The title is the book's identity (it keys its pages and characters) and "
+        "cannot be changed here."
+    )
     # Shown beneath a metadata selectbox when the value was pre-filled from the
     # photo extraction, so the user understands the field is already populated and
     # will be confirmed on the following step (#155).
