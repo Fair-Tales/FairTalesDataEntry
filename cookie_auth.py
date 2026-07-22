@@ -7,9 +7,20 @@ a *signed, expiring* cookie that ``Home.py`` uses to re-establish the session on
 fresh script run.
 
 SECURITY MODEL
-- The cookie stores ONLY the username and an absolute expiry timestamp, plus an
-  HMAC-SHA256 signature over those two values. The password is NEVER stored, nor
-  is anything else sensitive.
+- The cookie stores ONLY the username, an absolute expiry timestamp, and a short
+  credential fingerprint (``pfp``) — a keyed HMAC digest of the user's stored
+  bcrypt password hash — plus an HMAC-SHA256 signature over that payload. The
+  password (and even the raw stored hash) is NEVER stored, nor is anything else
+  sensitive.
+- PASSWORD-RESET REVOCATION (#238): because the ``pfp`` fingerprints the stored
+  password hash, a password reset (which rewrites that hash) changes the
+  fingerprint, so every remember-me cookie minted before the reset fails the
+  restore-time comparison and is cleared. This bounds a suspected-compromise
+  reset: previously-issued cookies on other devices stop authenticating instead
+  of surviving to their 7-day expiry. Legacy tokens without a ``pfp`` are
+  treated as invalid (one re-login required). NOTE: sign-out does NOT revoke
+  other devices (a token_version bump) — that remains a product decision and is
+  out of scope here.
 - The signature is keyed by ``st.secrets["cookie_signing_key"]``. A tampered or
   forged cookie fails the constant-time signature check (``hmac.compare_digest``)
   and is rejected; an expired cookie is likewise rejected.
@@ -120,18 +131,60 @@ def _sign(message, key):
     ).hexdigest()
 
 
-def _make_token(username, expiry, key):
-    """Build a ``<payload>.<signature>`` token for ``username`` expiring at ``expiry``."""
-    payload = {"u": username, "exp": int(expiry.timestamp())}
+def _password_fingerprint(password_hash, key):
+    """Return a short keyed digest of the user's stored bcrypt password hash.
+
+    Bound into the token payload as the ``pfp`` claim (#238). A password reset
+    rewrites the stored ``password`` hash (see ``pages/reset_password.py``),
+    which changes this fingerprint, so every remember-me cookie minted against
+    the OLD hash fails the restore-time comparison and is cleared. The signing
+    key is mixed in so the fingerprint is not a plain hash of the stored value.
+    """
+    return hmac.new(
+        key.encode("utf-8"),
+        (password_hash or "").encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:16]
+
+
+def _stored_password_hash(user):
+    """Extract the stored bcrypt password-hash string from a user doc snapshot.
+
+    ``get_user`` returns a Firestore ``DocumentSnapshot`` (``.to_dict()``); the
+    test doubles pass a plain dict. Returns ``""`` when absent so callers can
+    treat a missing hash uniformly.
+    """
+    data = user.to_dict() if hasattr(user, "to_dict") else user
+    if not data:
+        return ""
+    return data.get("password") or ""
+
+
+def _make_token(username, expiry, key, password_hash):
+    """Build a ``<payload>.<signature>`` token for ``username`` expiring at ``expiry``.
+
+    The payload carries a credential fingerprint (``pfp``) derived from the
+    user's stored password hash so a password reset invalidates the token
+    (#238).
+    """
+    payload = {
+        "u": username,
+        "exp": int(expiry.timestamp()),
+        "pfp": _password_fingerprint(password_hash, key),
+    }
     payload_b64 = _b64encode(json.dumps(payload, separators=(",", ":"), sort_keys=True))
     return f"{payload_b64}.{_sign(payload_b64, key)}"
 
 
 def _verify_token(token):
-    """Return the username from a valid, unexpired, correctly-signed token, else ``None``.
+    """Return the decoded payload of a valid, unexpired, correctly-signed token, else ``None``.
 
     Verifies the HMAC signature with a constant-time compare and checks the expiry
-    timestamp. Any malformed / tampered / expired token returns ``None``.
+    timestamp. Any malformed / tampered / expired token returns ``None``. The
+    returned payload dict carries the ``u`` (username) and, for tokens minted
+    since #238, the ``pfp`` credential-fingerprint claim; the caller
+    (``restore_session_from_cookie``) re-validates ``pfp`` against the current
+    stored password hash.
     """
     key = _signing_key()
     if key is None or not token or "." not in token:
@@ -144,13 +197,15 @@ def _verify_token(token):
         payload = json.loads(_b64decode(payload_b64))
     except (ValueError, UnicodeDecodeError):
         return None
+    if not isinstance(payload, dict):
+        return None
     username = payload.get("u")
     expiry = payload.get("exp")
     if not username or not isinstance(expiry, int):
         return None
     if expiry <= int(datetime.now(timezone.utc).timestamp()):
         return None
-    return username
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -191,8 +246,29 @@ def set_remember_cookie(username):
     manager = _cookie_manager()
     if manager is None:
         return
+    # Bind the token to the user's current password hash (#238) so a later
+    # password reset invalidates it. One read at mint time is acceptable (the
+    # login flow does not carry the user doc down to here). A transient lookup
+    # failure or a missing hash simply skips writing the cookie — the user stays
+    # logged in for this session, they just are not "remembered"; no security
+    # exposure, so log and return rather than writing an unbindable token.
+    try:
+        user = get_user(username)
+    except google_exceptions.GoogleAPIError as exc:
+        logger.warning(
+            "Remember-me cookie not written for user=%s: user lookup failed "
+            "(%s).", username, exc,
+        )
+        return
+    password_hash = _stored_password_hash(user) if user is not None else ""
+    if not password_hash:
+        logger.warning(
+            "Remember-me cookie not written for user=%s: no stored password "
+            "hash to fingerprint.", username,
+        )
+        return
     expiry = datetime.now(timezone.utc) + REMEMBER_DURATION
-    token = _make_token(username, expiry, key)
+    token = _make_token(username, expiry, key, password_hash)
     # same_site="lax" (#207): Streamlit Cloud fronts every cold visit with a
     # cross-site auth bounce (app -> share.streamlit.io/-/auth/app -> app), and
     # links/QR codes arriving from other sites are cross-site top-level
@@ -301,14 +377,33 @@ def restore_session_from_cookie():
             raw = (manager.cookies or {}).get(COOKIE_NAME)
     if not raw:
         return
-    username = _verify_token(raw)
-    if username is None:
+    payload = _verify_token(raw)
+    if payload is None:
+        # Malformed / tampered / expired: reject without clearing, matching the
+        # long-standing behaviour (an expired cookie is harmless and the browser
+        # drops it at its own expiry).
         return
     # Normalize (#129 shared helper) defensively: the payload was written from
     # an already-normalized session username, but normalizing again on the way
     # in guarantees session_state['username'] is always the canonical form
     # even against an older cookie minted before this fix.
-    username = normalize_username(username)
+    username = normalize_username(payload.get("u"))
+    # Password-reset revocation (#238). The token carries a fingerprint of the
+    # password hash it was minted against; a reset rewrites that hash so a stale
+    # cookie no longer matches. Legacy tokens minted before #238 carry no
+    # fingerprint and cannot be proven to predate a reset, so they are treated
+    # as invalid — this forces at most one re-login per remembered user. Neither
+    # case needs a Firestore read, so clear immediately (a clean, non-transient
+    # determination).
+    token_fingerprint = payload.get("pfp")
+    if not token_fingerprint:
+        logger.info(
+            "Remember-me cookie for user=%s rejected: no credential fingerprint "
+            "(legacy pre-#238 token). Cookie cleared; one re-login required.",
+            username,
+        )
+        clear_remember_cookie()
+        return
     # Re-resolve from the database. Never trust a role baked into the cookie: a
     # forged/stale cookie must not be able to escalate privileges, and a deleted
     # user must not be restored.
@@ -319,14 +414,30 @@ def restore_session_from_cookie():
     # restore for this run (the user can retry / the next rerun retries) and
     # log it. GoogleAPIError covers the google-cloud client's call failures.
     try:
-        user_exists = get_user(username) is not None
+        user = get_user(username)
     except google_exceptions.GoogleAPIError as exc:
         logger.warning(
             "Session restore for user=%s skipped: user lookup failed "
             "transiently (%s). Cookie left intact.", username, exc,
         )
         return
-    if not user_exists:
+    if user is None:
+        clear_remember_cookie()
+        return
+    # Re-validate the credential fingerprint against the CURRENT stored password
+    # hash (#238), reusing the snapshot just fetched — no second read. A
+    # mismatch means the password was changed (e.g. reset after a suspected
+    # compromise) since the cookie was minted, so it is revoked exactly like a
+    # deleted user: clear and do not restore. Constant-time compare.
+    current_fingerprint = _password_fingerprint(
+        _stored_password_hash(user), _signing_key()
+    )
+    if not hmac.compare_digest(token_fingerprint, current_fingerprint):
+        logger.info(
+            "Remember-me cookie for user=%s rejected: credential fingerprint "
+            "mismatch (password changed since mint, #238). Cookie cleared.",
+            username,
+        )
         clear_remember_cookie()
         return
     role = get_role(username)
