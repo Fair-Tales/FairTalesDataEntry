@@ -1200,6 +1200,11 @@ class PhotoUpload:
     enter_book_data_title = "Enter book data: {title}"
     link_line = "Or you can use the following link: [%s](%s)"
     finished_instruction = "When you have finished, you can continue below to enter the text for this book, or return to the menu."
+    qr_token_missing = (
+        "Could not generate a phone link because your account confirmation token "
+        "is unavailable. Please upload the photos here instead, or contact an "
+        "administrator if the problem persists."
+    )
 
     # Shared upload-method chooser + QR-to-phone option, reused by every direct-to-S3
     # upload surface (add_book_photos / add_books_batch / collection_picker, #143).

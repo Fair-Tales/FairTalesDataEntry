@@ -28,7 +28,13 @@ def go_to_phone():
     )
     url = f"{st.secrets.app_url}qr_landing"
     user = st.session_state.username
-    token = st.session_state.firestore.username_to_doc_ref(user).get().to_dict()['confirmation_token']
+    # A missing user doc has to_dict() is None and a partial doc may lack the
+    # field (#230); guard both so we show a friendly error instead of building a
+    # broken QR from a KeyError/TypeError.
+    token = (st.session_state.firestore.username_to_doc_ref(user).get().to_dict() or {}).get('confirmation_token')
+    if not token:
+        st.error(PhotoUpload.qr_token_missing)
+        return
     params = {
         'user': st.session_state.username,
         'token': token,

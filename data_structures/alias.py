@@ -60,7 +60,9 @@ class Alias(DataStructureBase):
 
         character_index = 0
         if self.character is not None:
-            _character_name = self.character.get().to_dict()['name']
+            # A deleted character's snapshot has to_dict() is None (#230); guard
+            # so we fall through to the default selection instead of crashing.
+            _character_name = (self.character.get().to_dict() or {}).get('name')
             if _character_name in character_options:
                 character_index = character_options.index(_character_name)
 

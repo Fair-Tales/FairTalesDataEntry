@@ -145,6 +145,15 @@ def author_search():
             for full_name in matching_names:
                 author_ref = st.session_state['author_dict'][full_name]
                 author_data = author_ref.get().to_dict()
+                if author_data is None:
+                    # A DocumentSnapshot for a deleted author has to_dict() is
+                    # None (#230); skip its expander rather than crash on
+                    # author_data.get(...).
+                    logger.warning(
+                        "user_home: skipping author %r whose reference no longer resolves",
+                        full_name,
+                    )
+                    continue
 
                 # Author date of birth was dropped (#149); the expander now shows
                 # name + gender only.

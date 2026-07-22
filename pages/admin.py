@@ -4,6 +4,7 @@ import csv
 import logging
 import streamlit as st
 from google.api_core.exceptions import GoogleAPIError
+from google.cloud.firestore_v1 import FieldFilter
 from botocore.exceptions import BotoCoreError, ClientError
 from utilities import (
     page_layout,
@@ -151,7 +152,9 @@ st.write(Admin.user_data_description)
 
 if st.button(Admin.prepare_user_download_button, key="admin_prepare_user_download_button"):
     db = FirestoreWrapper().connect_user(auth=False)
-    users = db.collection('users').where('is_confirmed', '==', True).stream()
+    users = db.collection('users').where(
+        filter=FieldFilter('is_confirmed', '==', True)
+    ).stream()
 
     # Export every available field for analysis, except sensitive ones.
     sensitive_fields = {'password', 'confirmation_token'}
