@@ -517,6 +517,15 @@ class EnterText:
     auto_correction_unavailable_caption = "⚠ Auto-correction unavailable — showing original photo"
     edit_image_button = "✏ Crop and rotate"
     enlarge_button = "🔍 Enlarge"
+    # Shown for a single page whose photo is missing from S3 (#233) instead of
+    # crashing the whole enter-text page: the missing page is skipped (no image /
+    # crop / enlarge controls) but every other page and the text entry still work,
+    # so one lost photo can no longer lock the archivist out of the entire book.
+    page_image_missing = (
+        "⚠ The photo for this page could not be found, so it cannot be shown. "
+        "You can still enter or edit this page's text below, and page to the "
+        "other pages of the book."
+    )
     # Shown when the automatic orientation check could not decide which way up
     # this page is (#217) — no rotation was applied, so ask the user to check.
     rotation_uncertain_warning = (
@@ -527,6 +536,14 @@ class EnterText:
 
     # --- Text entry / navigation controls ---
     contains_story_label = "Does this page contain story text?"
+    # Shown when this page had no saved Firestore record (#231) — e.g. it was
+    # never entered, or its doc went missing. Without this the page arrives
+    # UNREGISTERED and the write-through Fields silently no-op, so typed text
+    # vanished without warning. Entering text (or marking it a story page) now
+    # creates the record; this notice makes that explicit rather than silent.
+    page_no_record_notice = (
+        "ℹ This page had no saved record yet — entering text here will create one."
+    )
     add_character_button = "Add character"
     add_alias_button = "Add alias"
     page_text_label = "Enter page text"
