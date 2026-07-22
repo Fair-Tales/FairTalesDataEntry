@@ -158,7 +158,9 @@ def test_one_bad_page_does_not_abort_the_reconstruction(wired_session, monkeypat
             # of failure the old loop had NO catch-all for.
             raise RuntimeError("corrupt photo: cannot decode")
         processed_pages.append(page_number)
-        return raw_bytes, None
+        # Mirror the real _process_page 3-tuple (bytes, method, rotation_uncertain)
+        # — a drifted 2-tuple mock hid a production unpack crash (#217 arity).
+        return raw_bytes, None, False
 
     monkeypatch.setattr(book_reconstruction, "_process_page", fake_process_page)
 
@@ -229,7 +231,7 @@ def test_extraction_failure_and_isolation_failure_share_the_same_log_helper(
     )
     monkeypatch.setattr(
         book_reconstruction, "_process_page",
-        lambda raw_bytes, page_number, photos_url, fs, ai_client, report=None: (raw_bytes, None),
+        lambda raw_bytes, page_number, photos_url, fs, ai_client, report=None: (raw_bytes, None, False),
     )
 
     def fake_extract_page_info(*a, **k):

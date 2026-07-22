@@ -200,7 +200,10 @@ def test_one_bad_page_does_not_blank_the_rest_of_the_book(wired_session, monkeyp
             # of failure the old loop had NO catch-all for.
             raise RuntimeError("corrupt photo: cannot decode")
         processed_pages.append(page_number)
-        return raw_bytes, None
+        # Must mirror the real _process_page 3-tuple return
+        # (bytes_for_extraction, method, rotation_uncertain); a drifted 2-tuple
+        # mock previously hid a production ValueError on every page (#217 arity).
+        return raw_bytes, None, False
 
     monkeypatch.setattr(add_books_batch, "_process_page", fake_process_page)
 

@@ -385,7 +385,7 @@ def _process_pages(book, pages, client, fs, progress):
         # extraction-failure path, whose detail is already logged by
         # ``extract_page_info`` itself.
         try:
-            bytes_for_extraction, _method = _process_page(
+            bytes_for_extraction, _method, _rotation_uncertain = _process_page(
                 raw_bytes, page_number, photos_url, fs, client
             )
 
