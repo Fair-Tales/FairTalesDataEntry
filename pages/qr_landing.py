@@ -5,8 +5,8 @@ from Home import ensure_session
 from data_structures import Book
 from text_content import Instructions, Alerts, QrLanding
 from photo_upload import (
-    generate_put_urls, generate_manifest_put_url, build_uploader_html,
-    render_photo_instructions, render_uploaded_photos_list,
+    render_uploader, render_photo_instructions, render_uploaded_photos_list,
+    cleanup_prefix, invalidate_uploader_state,
 )
 
 # NB: this is a PUBLIC, token-authenticated deep-link reached from the phone QR —
@@ -57,9 +57,12 @@ else:
         # (single / batch / collection) is reading. No book context is needed — the
         # phone only uploads; the computer does the processing when the user returns
         # and taps its read button. Reuses the shared one-way uploader component.
-        put_urls = generate_put_urls(flow, session)
-        manifest_url = generate_manifest_put_url(flow, session)
-        st.iframe(build_uploader_html(put_urls, manifest_url), height=460)
+        fs = get_s3_filesystem()
+        # Shared uploader recipe (#129): cached presigned URLs (byte-stable
+        # iframe HTML across reruns, so a rerun can't remount the iframe and
+        # reset its slot state mid-upload) + the prefix's existing-slot seed
+        # (a reloaded phone resumes the prefix instead of colliding with it).
+        render_uploader(fs, flow, session)
         st.info(QrLanding.phone_done_instruction)
 
         # Live "uploaded so far" list (#186) so the user can SEE what has landed
@@ -69,6 +72,32 @@ else:
             render_uploaded_photos_list(get_s3_filesystem(), flow, session)
 
         _uploaded_list()
+
+        # "Start over" (upload-duplication fix): a half-failed upload on flaky
+        # WiFi previously had NO phone-side escape hatch — retrying poured the
+        # re-selected photos into the dirty prefix as extra pages. Two-tap
+        # delete: the first button arms a confirm, which does the cleanup and
+        # invalidates the cached uploader state so a clean iframe mounts.
+        if st.session_state.get('_qr_clear_armed'):
+            st.warning(QrLanding.clear_confirm_warning)
+            confirm_col, keep_col = st.columns(2)
+            if confirm_col.button(QrLanding.clear_confirm_button,
+                                  key="qr_landing_clear_confirm_button"):
+                cleanup_prefix(fs, flow, session)
+                invalidate_uploader_state(flow)
+                st.session_state.pop('_qr_clear_armed', None)
+                st.session_state['_qr_cleared'] = True
+                st.rerun()
+            if keep_col.button(QrLanding.clear_cancel_button,
+                               key="qr_landing_clear_cancel_button"):
+                st.session_state.pop('_qr_clear_armed', None)
+                st.rerun()
+        else:
+            if st.session_state.pop('_qr_cleared', None):
+                st.info(QrLanding.cleared_info)
+            if st.button(QrLanding.clear_button, key="qr_landing_clear_button"):
+                st.session_state['_qr_clear_armed'] = True
+                st.rerun()
     else:
         # Legacy page-upload mode (page_photo_upload's QR): the phone runs the full
         # upload + processing pipeline against the QR's book.

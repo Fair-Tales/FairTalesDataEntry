@@ -50,9 +50,7 @@ from utilities import (
 )
 from photo_upload import (
     get_upload_session_id,
-    generate_put_urls,
-    generate_manifest_put_url,
-    build_uploader_html,
+    render_uploader,
     fetch_uploaded_photos,
     cleanup_prefix,
     reset_upload_session,
@@ -356,9 +354,10 @@ def _render_upload(client, ai_available):
         render_go_to_phone(UPLOAD_FLOW_KEY, session_id)
     else:
         st.write(BatchBookEntry.direct_upload_instructions)
-        put_urls = generate_put_urls(UPLOAD_FLOW_KEY, session_id)
-        manifest_url = generate_manifest_put_url(UPLOAD_FLOW_KEY, session_id)
-        st.iframe(build_uploader_html(put_urls, manifest_url), height=460)
+        # Shared uploader recipe (#129/upload-duplication fix): cached URLs keep
+        # the iframe HTML stable across reruns; the existing-slot seed makes
+        # retries resume slots instead of duplicating pages.
+        render_uploader(get_s3_filesystem(), UPLOAD_FLOW_KEY, session_id)
 
     detect = st.button(BatchBookEntry.detect_button, key="add_books_batch_detect_button")
     if st.button(BatchBookEntry.cancel_button, key="add_books_batch_cancel_upload_button"):

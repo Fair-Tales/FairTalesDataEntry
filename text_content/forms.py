@@ -211,6 +211,10 @@ class BookPhotoEntry:
     # Shown per-file when a selected photo exceeds the client-side size cap; the
     # oversize file is skipped (not uploaded) and the rest of the batch proceeds.
     upload_too_large = "{name} is too large ({size} MB). The maximum is {max} MB — it was skipped."
+    # Shown per-file when a re-selected photo already uploaded successfully
+    # (upload-duplication fix): re-selecting the whole batch is the natural retry
+    # on flaky WiFi and must never re-send — or duplicate — the finished photos.
+    upload_already_done = "{name} — already uploaded as page {page}, not sent again."
     read_button = "Go"
     no_photos_uploaded = (
         "We couldn't find any uploaded photos yet. Please select your book photos "
@@ -247,6 +251,25 @@ class BookPhotoEntry:
         "Still waiting on page(s) {slots} — they haven't finished uploading yet. "
         "Give them a moment; if they don't appear, re-select those photos or "
         "start again."
+    )
+    # Content-duplicate guard (upload-duplication fix): two different page slots
+    # holding byte-identical photos means the same picture was uploaded twice —
+    # unless the user deliberately reused a photo (e.g. identical endpapers).
+    uploaded_same_content_warning = (
+        "These uploaded photos are identical to each other: {groups}. If you "
+        "selected a photo twice by mistake it will appear as two pages — please "
+        "re-check the list before continuing. (Ignore this if you deliberately "
+        "used the same photo for two pages, e.g. matching endpapers.)"
+    )
+    # Stale-prefix guard (upload-duplication fix): photos recovered from an
+    # EARLIER session must never be read automatically — building a book out of
+    # them unasked is how photos the user never just selected ("random pics")
+    # ended up processed.
+    preexisting_photos_warning = (
+        "The photos listed above are left over from an earlier upload session — "
+        "they were NOT just uploaded. If they are the right photos for this "
+        "book, press **Go** below to read them. Otherwise press **Cancel** to "
+        "delete them and start fresh."
     )
     auto_upload_timeout = (
         "Still waiting for uploads to finish. If they're all done, use the "
@@ -1477,6 +1500,17 @@ class QrLanding:
         "When every photo has finished uploading above, return to the computer and "
         "continue there. You can then close this page."
     )
+    # "Start over" affordance (upload-duplication fix): the phone page previously
+    # had NO way to clear a half-failed upload, so retrying poured photos into a
+    # dirty prefix — duplicating pages. Deletion is two-tap (button, then confirm).
+    clear_button = "Start over — delete the uploaded photos"
+    clear_confirm_warning = (
+        "This deletes ALL the photos uploaded for this book so far, so you can "
+        "select them again from scratch. Are you sure?"
+    )
+    clear_confirm_button = "Yes — delete them all"
+    clear_cancel_button = "No — keep the photos"
+    cleared_info = "Uploaded photos cleared — select your book photos again above."
 
 
 class Validation:

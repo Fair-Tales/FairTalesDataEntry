@@ -19,9 +19,7 @@ from background_pipeline import (
 )
 from photo_upload import (
     get_upload_session_id,
-    generate_put_urls,
-    generate_manifest_put_url,
-    build_uploader_html,
+    render_uploader,
     fetch_uploaded_photos,
     cleanup_prefix,
     reset_upload_session,
@@ -776,9 +774,10 @@ def append_photos_widget():
 
     st.write(Uploader.append_instructions.format(count=max(current_book.page_count, 0)))
     session_id = get_upload_session_id(APPEND_FLOW_KEY)
-    put_urls = generate_put_urls(APPEND_FLOW_KEY, session_id)
-    manifest_url = generate_manifest_put_url(APPEND_FLOW_KEY, session_id)
-    st.iframe(build_uploader_html(put_urls, manifest_url), height=460)
+    # Shared uploader recipe (#129/upload-duplication fix): cached URLs keep the
+    # iframe HTML stable across reruns; the existing-slot seed makes retries
+    # resume slots instead of duplicating pages.
+    render_uploader(fs, APPEND_FLOW_KEY, session_id)
 
     with st.expander(Uploader.append_phone_expander):
         render_go_to_phone(APPEND_FLOW_KEY, session_id)
@@ -877,9 +876,10 @@ def upload_widget(on_submit='enter_text', auto_forward=False):
             # prefix when the user taps "Process photos".
             st.write(Uploader.direct_upload_instructions)
             session_id = get_upload_session_id(UPLOAD_FLOW_KEY)
-            put_urls = generate_put_urls(UPLOAD_FLOW_KEY, session_id)
-            manifest_url = generate_manifest_put_url(UPLOAD_FLOW_KEY, session_id)
-            st.iframe(build_uploader_html(put_urls, manifest_url), height=460)
+            # Shared uploader recipe (#129/upload-duplication fix): cached URLs
+            # keep the iframe HTML stable across reruns; the existing-slot seed
+            # makes retries resume slots instead of duplicating pages.
+            render_uploader(fs, UPLOAD_FLOW_KEY, session_id)
 
             process = st.button(Uploader.process_button, key="uploader_process_button")
             if not done:

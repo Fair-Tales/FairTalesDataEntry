@@ -38,9 +38,7 @@ from utilities import (
 from data_structures import Collection
 from photo_upload import (
     get_upload_session_id,
-    generate_put_urls,
-    generate_manifest_put_url,
-    build_uploader_html,
+    render_uploader,
     fetch_uploaded_photos,
     cleanup_prefix,
     reset_upload_session,
@@ -423,9 +421,10 @@ def method_photo():
         render_go_to_phone("collection", session_id)
     else:
         st.write(CollectionPicker.photo_direct_upload_instructions)
-        put_urls = generate_put_urls("collection", session_id)
-        manifest_url = generate_manifest_put_url("collection", session_id)
-        st.iframe(build_uploader_html(put_urls, manifest_url), height=460)
+        # Shared uploader recipe (#129/upload-duplication fix): cached URLs keep
+        # the iframe HTML stable across reruns; the existing-slot seed makes
+        # retries resume slots instead of duplicating photos.
+        render_uploader(get_s3_filesystem(), "collection", session_id)
 
     if st.button(
         CollectionPicker.photo_extract_button,

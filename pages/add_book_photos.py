@@ -36,9 +36,7 @@ from background_pipeline import (
 )
 from photo_upload import (
     get_upload_session_id,
-    generate_put_urls,
-    generate_manifest_put_url,
-    build_uploader_html,
+    render_uploader,
     fetch_uploaded_photos,
     cleanup_prefix,
     reset_upload_session,
@@ -194,12 +192,13 @@ if upload_method == PhotoUpload.method_go_to_phone:
     render_go_to_phone(UPLOAD_FLOW_KEY, session_id)
 else:
     st.write(BookPhotoEntry.direct_upload_instructions)
-    put_urls = generate_put_urls(UPLOAD_FLOW_KEY, session_id)
-    manifest_url = generate_manifest_put_url(UPLOAD_FLOW_KEY, session_id)
-    # st.iframe (Streamlit 1.56+) replaces the deprecated st.components.v1.html. An
-    # HTML string is embedded via srcdoc exactly as before (same-origin preserved,
-    # so the browser→S3 PUT still uses the app origin that the S3 CORS policy allows).
-    st.iframe(build_uploader_html(put_urls, manifest_url), height=460)
+    # Shared uploader recipe (#129): cached presigned URLs keep the iframe HTML
+    # byte-stable across reruns (a rerun therefore cannot remount the iframe and
+    # reset its slot state mid-upload), and the existing-slot seed lets a fresh
+    # mount resume the prefix instead of colliding with it (upload-duplication
+    # fix). st.iframe embeds via srcdoc (same-origin preserved, so the
+    # browser→S3 PUT still uses the app origin the S3 CORS policy allows).
+    render_uploader(get_s3_filesystem(), UPLOAD_FLOW_KEY, session_id)
 
 def _run_extraction(fs, *, check_settled):
     """Fetch the uploaded photos, run the two-pass extraction, and either route to
@@ -209,6 +208,10 @@ def _run_extraction(fs, *, check_settled):
     automatic path skips it because the poll fragment has already confirmed the
     upload count is stable (#142).
     """
+    # Reaching here is either the auto path (only possible when the photos are
+    # NOT flagged pre-existing) or an explicit user click (Go / force-read) —
+    # which is precisely the confirmation the stale-prefix guard asks for.
+    st.session_state.pop('_upload_preexisting', None)
     if check_settled:
         # The uploader iframe is one-way, so gate reading on the upload being
         # COMPLETE — primarily the explicit manifest (#199), with the legacy
@@ -353,10 +356,19 @@ def _auto_upload_watcher(flow_key, sid):
     # The AUTO read requires the explicit completion manifest to match the keys
     # present (#199) — completion is no longer inferred from a stable count,
     # which fired early on a stalled concurrent batch and read a partial book.
+    first_poll = '_auto_last_count' not in st.session_state
     ready, keys, _manifest = upload_batch_ready(fs, flow_key, sid)
     prev = st.session_state.get('_auto_last_count', 0)
     st.session_state['_auto_last_count'] = len(keys)
     if keys:
+        if first_poll and ready:
+            # Stale-prefix guard (upload-duplication fix): the very FIRST look
+            # of this visit found an already-complete batch — i.e. photos
+            # recovered from an earlier session via the durable session id
+            # (#199), NOT something the user just uploaded. Auto-reading those
+            # silently built books out of old photos; flag them and require an
+            # explicit Go instead.
+            st.session_state['_upload_preexisting'] = True
         # Photos are arriving: reset the idle ceiling and show live progress.
         st.session_state['_auto_polls'] = 0
         st.caption(BookPhotoEntry.auto_upload_progress.format(n=len(keys)))
@@ -364,9 +376,12 @@ def _auto_upload_watcher(flow_key, sid):
         # user can verify order/completeness and catch a photo uploaded twice.
         render_uploaded_photos_list(fs, flow_key, sid)
         if ready:
-            st.session_state.pop('_auto_stall_polls', None)
-            st.session_state['photos_ready_auto'] = True
-            st.rerun()  # full-app rerun so the extraction below runs automatically
+            if st.session_state.get('_upload_preexisting'):
+                st.warning(BookPhotoEntry.preexisting_photos_warning)
+            else:
+                st.session_state.pop('_auto_stall_polls', None)
+                st.session_state['photos_ready_auto'] = True
+                st.rerun()  # full-app rerun so the extraction below runs automatically
         elif len(keys) == prev:
             # Photos present but completion unconfirmed and nothing new landing:
             # after ~a minute tell the user it looks stalled and point at the
@@ -450,6 +465,7 @@ if st.session_state.get('photo_extract_empty'):
             'ai_prefilled_publisher', 'ai_prefilled_year',
             'photos_ready_auto', '_auto_last_count', '_auto_polls',
             '_auto_stall_polls', '_upload_incomplete_count',
+            '_upload_preexisting',
         ):
             st.session_state.pop(_key, None)
         # Photos stay in photo_first_pages (memory) for the reuse pipeline, so the
@@ -473,6 +489,7 @@ if cancel_button:
         'photo_first_pages', 'photo_extract_empty', 'photo_extract_diag',
         'photos_ready_auto', '_auto_last_count', '_auto_polls',
         '_auto_stall_polls', '_upload_incomplete_count',
+        '_upload_preexisting',
         'ai_prefilled_author', 'ai_prefilled_illustrator',
         'ai_prefilled_publisher', 'ai_prefilled_year',
     ):
