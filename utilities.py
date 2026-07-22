@@ -1159,12 +1159,15 @@ def entered_by_username(entered_by):
     return getattr(entered_by, 'id', None) or str(entered_by)
 
 
-#: How recent a validator's edit_log activity must be for a submitted book to
-#: count as "currently being validated" and therefore block the owner's reopen
-#: (#200). There is no durable "validation session open" marker (validation.py
-#: tracks the open book only in the VALIDATOR's own st.session_state), so
-#: recent validation-context audit records are the best available proxy.
-VALIDATION_ACTIVITY_WINDOW_MINUTES = 120
+#: How recent a validator's ``validation_active_at`` heartbeat (or, as a
+#: backstop, their edit_log activity) must be for a submitted book to count as
+#: "currently being validated" and therefore block the owner's reopen (#200).
+#: The heartbeat is refreshed every ``VALIDATION_HEARTBEAT_THROTTLE_SECONDS``
+#: (30s) while the book is actually open AND is now cleared explicitly when the
+#: validator leaves (Back-to-list / Approve), so a short window comfortably
+#: covers websocket hiccups between refreshes while capping how long a crashed
+#: or force-closed tab can hold a stale lock (#234). Shortened from 120 to 10.
+VALIDATION_ACTIVITY_WINDOW_MINUTES = 10
 
 
 def validation_recently_active(
@@ -1224,6 +1227,30 @@ def validation_marker_active(
     if active_at.tzinfo is None:
         active_at = active_at.replace(tzinfo=timezone.utc)
     return active_at >= now - timedelta(minutes=window_minutes)
+
+
+def other_active_validator(active_by, active_at, current_user, *, now=None):
+    """Username of ANOTHER validator whose heartbeat on the book is still live,
+    or ``None`` (#235).
+
+    Powers the soft mutual-exclusion warning: a validator opening a book that
+    someone else is actively reviewing is warned that edits could collide
+    (last-write-wins), but is NOT blocked — a hard refusal could lock validators
+    out after a crash, which is a product decision not taken here. Reuses
+    ``validation_marker_active`` for the window check (CLAUDE.md #129) so this
+    warning and the reopen block share one notion of "currently being
+    validated"; the window is thus the same shortened one (#234).
+
+    Returns ``None`` when nobody else is active — no heartbeat owner
+    (``active_by`` falsy: its ``None`` default, or an empty string), the
+    heartbeat is our own, or ``active_at`` is outside the activity window (the
+    ``-1`` never-opened sentinel, or a stale / crashed tab).
+    """
+    if not active_by or active_by == current_user:
+        return None
+    if not validation_marker_active(active_at, now=now):
+        return None
+    return active_by
 
 
 def validation_heartbeat_due(

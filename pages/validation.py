@@ -31,7 +31,7 @@ import streamlit as st
 
 from utilities import (
     page_layout, check_authentication_status, is_team_or_above, entered_by_username,
-    validation_heartbeat_due, get_s3_filesystem,
+    validation_heartbeat_due, other_active_validator, get_s3_filesystem,
 )
 from image_processing import load_page_image
 from data_structures import Book, Page, Character, Alias, EditLog
@@ -87,6 +87,21 @@ def _current_ref_name(option_dict, current_ref):
 def _guarded_index(options, value, default=0):
     """``options.index(value)`` guarded against ``value`` not being present."""
     return options.index(value) if value in options else default
+
+
+def _clear_validation_heartbeat(book):
+    """Release this book's validation "active" heartbeat (#234).
+
+    Set on OPEN and refreshed while a validator works, the heartbeat was never
+    cleared when they LEFT (Back-to-list / Approve), so a brief peek blocked the
+    owner's reopen for the whole activity window. Reset the persisted fields to
+    their declared defaults (``-1`` / ``None`` — write-through persists this) and
+    drop this session's throttle entry so re-opening the book re-stamps the
+    heartbeat immediately rather than waiting out the throttle window.
+    """
+    book.validation_active_at = -1
+    book.validation_active_by = None
+    st.session_state.get('_validation_heartbeat', {}).pop(book.document_id, None)
 
 
 # ---------------------------------------------------------------------------
@@ -580,6 +595,19 @@ def render_review():
     book = Book(db_object=doc.to_dict())
     st.session_state['current_book'] = book
 
+    # Soft validator mutual-exclusion warning (#235): warn if another validator's
+    # heartbeat on this freshly-loaded book is still live (same activity window as
+    # the reopen block, via other_active_validator, #129). Read BEFORE stamping
+    # our own heartbeat below (which overwrites validation_active_by). This is a
+    # warning, not a block — the validator may proceed; a hard refusal could lock
+    # validators out after a crash (a product decision we are not taking here).
+    _other_validator = other_active_validator(
+        book.validation_active_by, book.validation_active_at,
+        st.session_state['username'],
+    )
+    if _other_validator:
+        st.warning(Validation.other_validator_active.format(name=_other_validator))
+
     # Validation heartbeat (#200): record that this book is actively being
     # reviewed so its owner cannot reopen it from "Review my books" while a
     # validator has it open. Written on OPEN (not just on edits, which was the
@@ -601,6 +629,9 @@ def render_review():
     st.write(Validation.review_intro)
 
     if st.button(Validation.back_to_list_button, key="validation_back_to_list_button"):
+        # Release the heartbeat so leaving the review does not keep the owner's
+        # reopen blocked for the rest of the activity window (#234).
+        _clear_validation_heartbeat(book)
         st.session_state.pop('_validation_book_id', None)
         st.rerun()
 
@@ -620,6 +651,8 @@ def render_review():
     if st.button(Validation.approve_button, key="validation_approve_button"):
         book.validated = True
         book.validated_by = _validator_ref()
+        # Release the heartbeat on approval too — the review is over (#234).
+        _clear_validation_heartbeat(book)
         st.session_state.pop('_validation_book_id', None)
         st.success(Validation.approved_success.format(title=book.title))
         st.rerun()
