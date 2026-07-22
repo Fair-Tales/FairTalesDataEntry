@@ -3,6 +3,10 @@ import json
 import logging
 import streamlit as st
 import anthropic
+# Import ArrayUnion directly rather than the `firestore` module: inside
+# commit_detected_characters the local `firestore = st.session_state.firestore`
+# (the FirestoreWrapper) would shadow a module-level `firestore` name.
+from google.cloud.firestore_v1 import ArrayUnion
 from streamlit_dimensions import st_dimensions
 from utilities import (
     page_layout, confirm_submit, check_authentication_status,
@@ -564,8 +568,13 @@ def character_entry(element):
     # the user can see a name is taken (and jump to editing it) before typing.
     _render_saved_cast(element)
 
+    # Pass the book's DocumentReference, not its title. A title string routes
+    # through the write-through ref-field setter's book_dict lookup, which
+    # silently stores book=None on a cache-stale miss and then crashes on the
+    # next document_id access (#229). The reference is stored as-is and its
+    # local .id is all document_id needs.
     st.session_state['current_character'] = Character(
-        book=st.session_state['current_book'].title
+        book=st.session_state['current_book'].get_ref()
     )
     with element.form('character'):
         st.session_state['current_character'].to_form()
@@ -583,8 +592,11 @@ def alias_entry(element):
         element.button(EnterText.cancel_alias_button, width="stretch", on_click=adding_text, key="enter_text_cancel_alias_nochars_button")
         return
 
+    # Pass the DocumentReference rather than the title string (#229) — see the
+    # note in character_entry: a title routes through the book_dict lookup and
+    # stores None on a stale-cache miss, crashing the next document_id access.
     st.session_state['current_alias'] = Alias(
-        book=st.session_state['current_book'].title
+        book=st.session_state['current_book'].get_ref()
     )
     form_key = f"alias_{st.session_state.get('_alias_form_count', 0)}"
     with element.form(form_key):
@@ -785,7 +797,6 @@ def commit_detected_characters(rows):
     chosen action. 'Merge into' folds a row's names into the target character's
     aliases instead of creating a separate character.
     """
-    book_title = st.session_state['current_book'].title
     original_names = [s['name'] for s in st.session_state['_detected_characters']]
     merge_prefix = EnterText.review_action_merge.split('{', 1)[0]
 
@@ -841,13 +852,20 @@ def commit_detected_characters(rows):
     # many characters/aliases were detected.
     firestore = st.session_state.firestore
     book = st.session_state['current_book']
+    # Build every Character/Alias with the book's DocumentReference, NOT its
+    # title string: a title routes through the write-through ref-field setter's
+    # book_dict lookup, which silently stores book=None on a cache-stale miss and
+    # then crashes the whole detection commit on the next document_id access
+    # (#229). The reference's local .id is all document_id needs. This is also
+    # the same ref used for the batched character-link update below.
+    book_ref = book.get_ref()
 
     # Build the characters we intend to create, de-duplicating by document id.
     planned_characters = []  # (Character, name, [alias names])
     seen_char_ids = set()
     for row in create_rows.values():
         name = row['name'].strip()
-        character = Character(book=book_title)
+        character = Character(book=book_ref)
         character.name = name
         character.gender = row['gender']
         character.human = row['human']
@@ -892,14 +910,22 @@ def commit_detected_characters(rows):
 
     # Build the alias entities, de-duplicating by document id (which is book+name
     # scoped), then ONE existence read across all candidate alias ids.
+    # Alias ``document_id`` is ``<book_id>_<name>`` with no character component
+    # (data_structures/alias.py), so a stripped alias can collide with a
+    # different character's alias for the same book. When that happens the alias
+    # is skipped — surface which ones so the user is not left wondering why an
+    # alias silently failed to appear (#237). Collisions come in two shapes:
+    # a duplicate within THIS run, and one already stored from a prior run.
     alias_objs = []
     seen_alias_ids = set()
+    skipped_aliases = []
     for character_ref, alias_name in planned_aliases:
-        alias = Alias(book=book_title)
+        alias = Alias(book=book_ref)
         alias.character = character_ref  # a reference, stored directly
         alias.name = alias_name
         aid = alias.document_id
         if aid in seen_alias_ids:
+            skipped_aliases.append(alias_name)
             continue
         seen_alias_ids.add(aid)
         alias_objs.append(alias)
@@ -909,6 +935,7 @@ def commit_detected_characters(rows):
     )
     for alias in alias_objs:
         if alias.document_id in existing_alias_ids:
+            skipped_aliases.append(alias.name)
             continue
         alias.register_batched(batch)
         alias_count += 1
@@ -926,7 +953,12 @@ def commit_detected_characters(rows):
             book.reading_from_db = True
             book.characters = updated
             book.reading_from_db = False
-            batch.update(book.get_ref(), {'characters': updated})
+            # Stage an atomic ArrayUnion rather than a whole-list overwrite so a
+            # concurrent session's cast edit on the same book is not clobbered by
+            # this batch (#225). The in-memory list is updated above under the
+            # reading_from_db guard so this session stays consistent without a
+            # re-read.
+            batch.update(book.get_ref(), {'characters': ArrayUnion(additions)})
             book_updated = True
 
     # Commit only when something was actually staged (all-skip / all-existing runs
@@ -937,6 +969,14 @@ def commit_detected_characters(rows):
     messages = [EnterText.review_created.format(characters=created_count, aliases=alias_count)]
     if skipped:
         messages.append(EnterText.review_skipped.format(names=", ".join(skipped)))
+    if skipped_aliases:
+        # De-duplicate while preserving order so the notice reads cleanly.
+        unique_skipped_aliases = list(dict.fromkeys(skipped_aliases))
+        messages.append(
+            EnterText.review_skipped_aliases.format(
+                names=", ".join(unique_skipped_aliases)
+            )
+        )
     if unresolved:
         messages.append(EnterText.review_unresolved.format(names=", ".join(unresolved)))
 

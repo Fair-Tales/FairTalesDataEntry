@@ -2611,6 +2611,19 @@ class FirestoreWrapper:
         doc_ref = db.collection(collection).document(document)
         doc_ref.update({field: value})
 
+    def update_fields(self, collection, document, values):
+        """Apply several field updates to one document in a single write.
+
+        ``values`` is a ``{field: value}`` mapping passed straight to Firestore's
+        ``update``. Unlike :meth:`update_field` this also accepts atomic transform
+        values (``firestore.ArrayUnion``/``ArrayRemove``), so a membership change
+        to an array field can be committed together with its ``last_updated`` bump
+        in ONE round-trip that never overwrites the whole array (#225).
+        """
+        db = self.connect_book()
+        doc_ref = db.collection(collection).document(document)
+        doc_ref.update(values)
+
     def set_document(self, collection, doc_id, data, merge=True):
         """Write ``data`` to ``collection/doc_id`` at a fixed document id.
 

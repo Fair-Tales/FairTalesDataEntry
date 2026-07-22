@@ -274,7 +274,8 @@ class Character(DataStructureBase):
             )
 
         # Swap the entry in the current book's characters list (remove old ref,
-        # add new); both re-assign the list so the write-through persists it.
+        # add new); each is persisted with an atomic ArrayRemove/ArrayUnion so a
+        # concurrent cast edit on the same book is not clobbered (#225).
         current_book = st.session_state.get('current_book')
         if current_book is not None:
             current_book.remove_character(old_ref)

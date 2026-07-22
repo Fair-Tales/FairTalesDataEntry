@@ -481,6 +481,10 @@ class EnterText:
     review_submit = "Create selected characters"
     review_created = "Created {characters} character(s) and {aliases} alias(es)."
     review_skipped = "Skipped (already in the database): {names}."
+    review_skipped_aliases = (
+        "These aliases were not created because an identical alias already "
+        "exists for this book: {names}."
+    )
     review_unresolved = (
         "Could not merge these because their target was not created: {names}. "
         "They were not added — please re-run detection or add them manually."
