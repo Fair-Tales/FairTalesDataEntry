@@ -7,11 +7,13 @@ import pandas as pd
 import anthropic
 import base64
 import difflib
+import hmac
 import json
 import logging
 import re
 import urllib.request
 import urllib.error
+from urllib.parse import urlencode
 import bcrypt
 import smtplib
 from email.mime.text import MIMEText
@@ -1358,7 +1360,13 @@ def send_confirmation_email(send_to, username, confirmation_token, name):
         The Fair Tales team
         
     """ % name
-    confirmation_link = f"{public_base_url()}confirm?token={confirmation_token}&user={username}"
+    # #239: URL-encode the query string. Usernames are email addresses, and a
+    # plus-addressed address (e.g. ``chris+pilot@gmail.com``) has its ``+``
+    # decoded as a space by ``st.query_params`` on the confirm page unless it is
+    # percent-encoded here, which broke the user lookup. Tokens are hex (safe)
+    # but are encoded too for consistency.
+    query = urlencode({"token": confirmation_token, "user": username})
+    confirmation_link = f"{public_base_url()}confirm?{query}"
     body += confirmation_link
     msg = MIMEText(body)
     msg['Subject'] = subject
@@ -1367,6 +1375,43 @@ def send_confirmation_email(send_to, username, confirmation_token, name):
 
     smtpserver.send_message(msg)
     smtpserver.close()
+
+
+def evaluate_confirmation(token, user, user_data):
+    """Decide the outcome of an account-confirmation deep link (#240 / #230).
+
+    Pure decision logic extracted so ``pages/confirm.py`` stays thin and the
+    branches are unit-testable without Streamlit's top-level-script execution.
+
+    ``token``/``user`` come from the (defensively read) query params and
+    ``user_data`` is ``user_ref.get().to_dict()`` — which is ``None`` when the
+    document does not exist (deleted account / mangled link, the #230
+    ``confirm.py:16`` deleted-ref site). Returns one of:
+
+    - ``"invalid"`` — missing/blank token or user, missing user doc, missing
+      stored ``confirmation_token``, or a token mismatch. All map to the same
+      friendly "invalid or expired link" message so we never leak which of
+      these it was.
+    - ``"already_confirmed"`` — the account is already confirmed.
+    - ``"confirm"`` — the token matches; the caller should mark the account
+      confirmed and show the success message.
+
+    The token comparison uses :func:`hmac.compare_digest` (constant time) to
+    avoid leaking the secret token via timing, and only after confirming both
+    sides are ``str`` (``compare_digest`` raises on mismatched types).
+    """
+    if not token or not user:
+        return "invalid"
+    if not user_data:
+        return "invalid"
+    if user_data.get("is_confirmed"):
+        return "already_confirmed"
+    stored_token = user_data.get("confirmation_token")
+    if not isinstance(stored_token, str) or not isinstance(token, str):
+        return "invalid"
+    if hmac.compare_digest(token, stored_token):
+        return "confirm"
+    return "invalid"
 
 
 def send_password_reset_email(send_to, username, reset_token, name):
@@ -1384,7 +1429,10 @@ def send_password_reset_email(send_to, username, reset_token, name):
     smtpserver.login(st.secrets["email_address"], st.secrets["gmail_app_password"])
 
     body = PasswordReset.email_body % name
-    reset_link = f"{public_base_url()}reset_password?token={reset_token}&user={username}"
+    # #239: URL-encode the query string (see send_confirmation_email) so
+    # plus-addressed email usernames round-trip through st.query_params.
+    query = urlencode({"token": reset_token, "user": username})
+    reset_link = f"{public_base_url()}reset_password?{query}"
     body += reset_link
     msg = MIMEText(body)
     msg['Subject'] = PasswordReset.email_subject
