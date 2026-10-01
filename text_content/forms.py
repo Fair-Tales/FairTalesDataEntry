@@ -1374,7 +1374,9 @@ class Confirm:
     already_confirmed = "User account already confirmed. Please proceed to login by selecting `Home` in navigation menu."
     success = "User registration successful! You can now proceed to login by selecting `Home` from the navigation menu."
     invalid_link = "Invalid or expired confirmation link. Please request a new confirmation email."
-    failed = "Registration failed. Please try again."
+    # #240: format string so a genuine Firestore API failure surfaces its
+    # message (per the narrow-exception convention) rather than being swallowed.
+    failed = "Registration confirmation failed: {error}. Please try again."
 
 
 class UserHome:
