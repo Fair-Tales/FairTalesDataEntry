@@ -191,18 +191,26 @@ def test_heartbeat_due_is_per_book():
 # ---------------------------------------------------------------------------
 # Activity-window length (#234): shortened from 120 to 10 minutes. The heartbeat
 # refreshes every 30s while a book is actually open AND is now cleared on leave
-# (Back-to-list / Approve), so 10 minutes covers websocket hiccups while capping
-# how long a crashed/closed tab can hold a stale reopen lock.
+# (Back-to-list / Approve). 30 minutes covers a careful read-through — Streamlit
+# only reruns on INTERACTION, so the heartbeat does NOT refresh while a validator
+# merely reads — while capping how long a crashed/closed tab can hold a stale
+# reopen lock at a quarter of the original 2 hours.
 # ---------------------------------------------------------------------------
 
-def test_activity_window_is_ten_minutes():
-    assert VALIDATION_ACTIVITY_WINDOW_MINUTES == 10
+def test_activity_window_is_thirty_minutes():
+    assert VALIDATION_ACTIVITY_WINDOW_MINUTES == 30
 
 
-def test_marker_fifteen_minutes_ago_is_now_stale():
-    # Deliberate expectation update for #234: a heartbeat 15 minutes old blocked
+def test_marker_within_window_still_blocks_reopen():
+    # A validator reading without interacting for 15 minutes must KEEP the lock:
+    # too short a window would drop it mid-review and let the owner reopen.
+    assert validation_marker_active(NOW - timedelta(minutes=15), now=NOW) is True
+
+
+def test_marker_beyond_window_is_stale():
+    # Deliberate expectation update for #234: a heartbeat 45 minutes old blocked
     # the owner under the old 120-minute window but is stale under the new one.
-    assert validation_marker_active(NOW - timedelta(minutes=15), now=NOW) is False
+    assert validation_marker_active(NOW - timedelta(minutes=45), now=NOW) is False
 
 
 # ---------------------------------------------------------------------------

@@ -1166,8 +1166,13 @@ def entered_by_username(entered_by):
 #: (30s) while the book is actually open AND is now cleared explicitly when the
 #: validator leaves (Back-to-list / Approve), so a short window comfortably
 #: covers websocket hiccups between refreshes while capping how long a crashed
-#: or force-closed tab can hold a stale lock (#234). Shortened from 120 to 10.
-VALIDATION_ACTIVITY_WINDOW_MINUTES = 10
+#: or force-closed tab can hold a stale lock (#234). Shortened from 120 to 30.
+#: 30 (rather than 10) because Streamlit only reruns on INTERACTION, so the
+#: heartbeat does not refresh while a validator merely READS a long book — too
+#: short a window would silently drop the lock mid-review and let the owner
+#: reopen underneath them. 30 min covers a careful read-through while still
+#: capping a crashed tab's stale lock at a quarter of the original 2 hours.
+VALIDATION_ACTIVITY_WINDOW_MINUTES = 30
 
 
 def validation_recently_active(
