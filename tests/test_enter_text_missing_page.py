@@ -229,3 +229,33 @@ def test_missing_image_strings_exist():
 
     assert isinstance(EnterText.page_image_missing, str) and EnterText.page_image_missing
     assert isinstance(EnterText.page_no_record_notice, str) and EnterText.page_no_record_notice
+
+
+def _function_body(source, name):
+    """Return just the source of a top-level function (up to the next def)."""
+    start = source.index(f"def {name}(")
+    rest = source[start:]
+    nxt = rest.find("\ndef ", 1)
+    return rest if nxt == -1 else rest[:nxt]
+
+
+def test_reextract_registers_unregistered_page():
+    """Regression lock (#231 follow-up): a re-extract on a page whose Firestore
+    doc is missing must register() it.
+
+    The page arrives UNREGISTERED, so the ``text``/``contains_story`` write-
+    throughs no-op — and ``_save_current_page_text``'s dirty-check cannot rescue
+    it afterwards, because the in-memory text already equals the widget value.
+    Without the register() the freshly extracted text (a PAID vision call) is
+    silently lost. Scoped to this function's body so a sibling's register()
+    cannot satisfy it.
+    """
+    body = _function_body(ENTER_TEXT_SOURCE, "reextract_current_page")
+    assert "is_registered" in body, (
+        "reextract_current_page must check is_registered before relying on "
+        "write-through persistence"
+    )
+    assert ".register()" in body, (
+        "reextract_current_page must register() an unregistered page or the "
+        "re-extracted text is silently lost (#231)"
+    )

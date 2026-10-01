@@ -199,6 +199,16 @@ def reextract_current_page(page_number):
 
     st.session_state.current_page.text = text
     st.session_state.current_page.contains_story = is_story
+    # A page whose Firestore doc was missing (#231) arrives here UNREGISTERED, so
+    # both write-throughs above no-op and the freshly extracted text would be lost
+    # — and ``_save_current_page_text``'s dirty-check cannot rescue it later,
+    # because the in-memory ``text`` already equals the widget value. Perform the
+    # initial full save instead (mirrors ``_save_current_page_text`` and
+    # pages/validation.py). Unconditional here, unlike the typed-text path: a
+    # re-extract is an explicit user action on a real page, so there is no
+    # "untouched placeholder" case to protect against.
+    if not st.session_state.current_page.is_registered:
+        st.session_state.current_page.register()
     st.session_state.book_pages_dict[page_number] = st.session_state.current_page
 
     # Stage the widget-state refresh + success flash for the next run (see
