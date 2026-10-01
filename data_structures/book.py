@@ -1,11 +1,12 @@
 import streamlit as st
+from google.cloud import firestore
 from utilities import author_entry_to_name, navigate_to, split_name, clear_entity_form_state
 from text_content import Instructions, BookForm
 from .base_structure import DataStructureBase, Field
 from .author import Author
 from .illustrator import Illustrator
 from .publisher import Publisher
-from datetime import date
+from datetime import date, datetime, timezone
 
 def _new_person(person_cls, extracted_key):
     """Create a fresh Author, seeding forename/surname from a name extracted by
@@ -351,21 +352,59 @@ class Book(DataStructureBase):
         else:
             form_content(self)
 
+    def _write_characters_transform(self, transform):
+        """Persist a membership change to this book's ``characters`` array with a
+        Firestore atomic transform (``ArrayUnion``/``ArrayRemove``).
+
+        Firestore applies the transform server-side, so a concurrent session
+        editing the SAME book's cast (two tabs, or archivist + validator) can no
+        longer clobber each other's edits by writing back a stale whole-list copy
+        (#225). The ``last_updated`` bump rides in the SAME update call. No-op
+        until the book is registered. The in-memory ``last_updated`` is mirrored
+        (under the ``reading_from_db`` guard so it does not trigger its own
+        write); the caller is responsible for keeping ``self.characters`` in sync.
+        """
+        if not self.is_registered:
+            return
+        now = datetime.now(timezone.utc)
+        st.session_state.firestore.update_fields(
+            collection=self.belongs_to_collection,
+            document=self.document_id,
+            values={'characters': transform, 'last_updated': now},
+        )
+        self.reading_from_db = True
+        self.last_updated = now
+        self.reading_from_db = False
+
     def add_character(self, character_ref):
         """Link a character (by Firestore reference) to this book.
 
-        Re-assigns the ``characters`` list (rather than mutating in place) so
-        that the Field descriptor write-through persists the new list to
-        Firestore when the book is registered. No-op if already linked.
+        Keeps the in-memory ``characters`` list current (appended under the
+        ``reading_from_db`` guard so the Field write-through does NOT fire a
+        whole-list overwrite) and persists the single membership change with an
+        atomic ``ArrayUnion`` so concurrent sessions cannot drop each other's
+        characters (#225). No-op if already linked.
         """
         if all(ref.path != character_ref.path for ref in self.characters):
+            self.reading_from_db = True
             self.characters = self.characters + [character_ref]
+            self.reading_from_db = False
+            self._write_characters_transform(firestore.ArrayUnion([character_ref]))
 
     def remove_character(self, character_ref):
-        """Unlink a character (by Firestore reference) from this book."""
-        self.characters = [
-            ref for ref in self.characters if ref.path != character_ref.path
-        ]
+        """Unlink a character (by Firestore reference) from this book.
+
+        Mirrors :meth:`add_character`: updates the in-memory list under the
+        ``reading_from_db`` guard and persists the removal with an atomic
+        ``ArrayRemove`` (#225). No write when the character was not linked.
+        """
+        if any(ref.path == character_ref.path for ref in self.characters):
+            self.reading_from_db = True
+            self.characters = [
+                ref for ref in self.characters if ref.path != character_ref.path
+            ]
+            self.reading_from_db = False
+            self._write_characters_transform(firestore.ArrayRemove([character_ref]))
 
     def get_character_dict(self):
         """Return a {character name: reference} dict for this book's characters.
@@ -407,13 +446,42 @@ class Book(DataStructureBase):
                 character_dict[doc.to_dict()['name']] = ref
                 existing_refs.append(ref)
 
-        # Persist the resolved list so the repair is paid for once: this
-        # overwrites a legacy non-list value, saves a back-filled list, and
-        # prunes any dangling references. Short-circuit guards len() against a
-        # legacy non-list value and avoids a write when nothing changed.
+        # Persist the resolved list so the repair is paid for once. Membership
+        # repairs go through atomic transforms (#225) so a concurrent session's
+        # cast edit is never clobbered by writing back a whole-list copy:
+        #   * dangling refs pruned from an existing stored list -> ArrayRemove;
+        #   * a back-filled empty/absent list -> ArrayUnion of the resolved refs;
+        #   * a legacy NON-list value (an earlier schema stored a numeric count
+        #     here) -> plain whole-value overwrite, the only safe repair since a
+        #     transform requires an array field to already exist.
+        # Every branch keeps the in-memory list consistent and skips the write
+        # when nothing changed.
         if self.is_registered:
             stored = self.characters
-            if not isinstance(stored, list) or len(existing_refs) != len(stored):
+            if not isinstance(stored, list):
+                # Legacy non-list value: convert to the resolved reference list.
                 self.characters = existing_refs
+            elif not stored:
+                # Back-fill a book that predates the characters list.
+                if existing_refs:
+                    self.reading_from_db = True
+                    self.characters = existing_refs
+                    self.reading_from_db = False
+                    self._write_characters_transform(
+                        firestore.ArrayUnion(existing_refs)
+                    )
+            else:
+                # Prune only the dangling references, atomically.
+                existing_paths = {ref.path for ref in existing_refs}
+                dangling = [
+                    ref for ref in stored if ref.path not in existing_paths
+                ]
+                if dangling:
+                    self.reading_from_db = True
+                    self.characters = existing_refs
+                    self.reading_from_db = False
+                    self._write_characters_transform(
+                        firestore.ArrayRemove(dangling)
+                    )
         return character_dict
 
