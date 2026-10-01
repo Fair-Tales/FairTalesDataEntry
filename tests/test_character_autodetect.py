@@ -28,6 +28,7 @@ from utilities import (
     mark_character_autodetect_pending,
     consume_pending_character_autodetect,
     stage_character_redetect,
+    consume_auto_run_detection,
     usable_precomputed_suggestions,
     CHARACTER_AUTODETECT_SOURCE_AUTO,
     CHARACTER_AUTODETECT_SOURCE_MANUAL,
@@ -118,6 +119,72 @@ def test_stage_character_redetect_discards_previous_suggestions_by_default():
     assert '_detected_characters' not in session_state
     assert session_state['_detected_characters_source'] == CHARACTER_AUTODETECT_SOURCE_MANUAL
     assert session_state['_auto_run_detection'] is True
+
+
+# ---------------------------------------------------------------------------
+# #227: consume_auto_run_detection is the one-shot gate that decides whether
+# detect_entry() fires the paid whole-book AI call. detect_entry runs
+# run_character_detection() IFF this returns True, so these tests pin the gate
+# semantics that stop a failed run from re-billing on every rerun.
+# (pages/enter_text.py runs Streamlit page code at import and cannot be imported
+# here, so the gate — which is exactly what detect_entry branches on — is
+# tested directly, like the other session-state helpers in this file.)
+# ---------------------------------------------------------------------------
+
+def test_consume_auto_run_detection_false_when_flag_absent():
+    # (a) No staged run: the gate is False, so detect_entry does NOT call
+    # run_character_detection — the render just shows the notice + Try again.
+    session_state = {}
+    assert consume_auto_run_detection(session_state) is False
+
+
+def test_consume_auto_run_detection_true_when_staged_then_consumes():
+    # (b) A staged run (stage_character_redetect set the flag): the gate is True,
+    # so detect_entry DOES call run_character_detection...
+    session_state = {}
+    stage_character_redetect(session_state, source=CHARACTER_AUTODETECT_SOURCE_MANUAL)
+
+    assert consume_auto_run_detection(session_state) is True
+    # ...and consuming it clears the flag so it cannot fire twice.
+    assert '_auto_run_detection' not in session_state
+
+
+def test_failed_run_consumes_flag_so_a_plain_rerun_does_not_refire():
+    # (c) The #227 regression guard. Model a failed detection run: the flag was
+    # staged, detect_entry consumes it (gate True) and calls the AI, which
+    # fails — leaving _detected_characters absent and now_entering == 'detect'.
+    session_state = {'now_entering': 'detect'}
+    stage_character_redetect(session_state, source=CHARACTER_AUTODETECT_SOURCE_MANUAL)
+
+    # First render: gate authorises exactly one run.
+    assert consume_auto_run_detection(session_state) is True
+    # The run failed: no suggestions were produced and we are still on 'detect'.
+    assert '_detected_characters' not in session_state
+    assert session_state['now_entering'] == 'detect'
+
+    # EVERY subsequent rerun that reaches detect_entry (fragment reruns from any
+    # entry-column interaction; app reruns from Prev/Next, the show-original
+    # toggle or a resize) must find the gate closed and NOT re-fire the billed
+    # call. Before the fix the flag was popped-and-ignored, so the run re-fired.
+    assert consume_auto_run_detection(session_state) is False
+    assert consume_auto_run_detection(session_state) is False
+
+
+def test_try_again_restages_a_run():
+    # (d) The "Try again" button's on_click re-stages via stage_character_redetect
+    # (source=MANUAL), re-opening the gate for exactly one more run.
+    session_state = {'now_entering': 'detect'}
+    # Start from the post-failure state: gate closed.
+    assert consume_auto_run_detection(session_state) is False
+
+    stage_character_redetect(session_state, source=CHARACTER_AUTODETECT_SOURCE_MANUAL)
+
+    assert session_state['_auto_run_detection'] is True
+    assert session_state['now_entering'] == 'detect'
+    assert session_state['_detected_characters_source'] == CHARACTER_AUTODETECT_SOURCE_MANUAL
+    # And the re-staged flag authorises one — and only one — fresh run.
+    assert consume_auto_run_detection(session_state) is True
+    assert consume_auto_run_detection(session_state) is False
 
 
 # ---------------------------------------------------------------------------

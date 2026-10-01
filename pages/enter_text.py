@@ -13,6 +13,7 @@ from utilities import (
     detect_book_characters, clear_entity_form_state,
     get_s3_filesystem, get_anthropic_client,
     consume_pending_character_autodetect, stage_character_redetect,
+    consume_auto_run_detection,
     stage_reextract_refresh, consume_reextract_refresh,
     usable_precomputed_suggestions, strip_leading_article,
     CHARACTER_AUTODETECT_SOURCE_AUTO, CHARACTER_AUTODETECT_SOURCE_MANUAL,
@@ -1114,18 +1115,36 @@ def character_review_form(element):
 
 def detect_entry(element):
     if '_detected_characters' not in st.session_state:
-        # Landing on the detect view means a run was requested — by the
-        # auto-run-after-OCR hook or the "Re-run character detection" button
-        # (#170, see stage_character_redetect). There is no separate "Run
-        # detection" confirmation click any more (#182): run immediately, with
-        # the spinner/progress visible (#183).
-        st.session_state.pop('_auto_run_detection', None)
-        if run_character_detection():
-            st.rerun()
-            return
-        # Failure / no story text / no API key: the explicit warning or error
-        # is already on screen (run_character_detection is never silent, #183)
-        # — give the user a way back rather than a blank screen.
+        # Only fire the (paid, whole-book) AI call when a run has been explicitly
+        # STAGED via stage_character_redetect, which sets ``_auto_run_detection``
+        # (the auto-run-after-OCR hook, the "Re-run character detection" button,
+        # or the Try again button below). Gating on — and consuming — that flag
+        # is the #227 fix: without it, a FAILED run (Anthropic/JSON error, no
+        # story text or no API key) leaves ``_detected_characters`` absent and
+        # ``now_entering == 'detect'``, so EVERY later rerun (fragment reruns
+        # from any entry-column interaction, and app reruns from Prev/Next, the
+        # show-original toggle or a resize) re-fired the whole-book call. There
+        # is no separate "Run detection" confirmation click (#182): a staged run
+        # executes immediately, spinner/progress visible (#183).
+        if consume_auto_run_detection(st.session_state):
+            if run_character_detection():
+                st.rerun()
+                return
+            # run_character_detection returned False and has already shown its
+            # warning/error for THIS render only (it is never silent, #183).
+            # Fall through to the persistent notice below rather than re-firing.
+        # No staged run (a plain rerun after a previous failure), or the staged
+        # run just failed: show a persistent notice + an explicit Try again
+        # (which re-stages a run) instead of silently re-firing the paid call
+        # or leaving a blank screen.
+        element.warning(EnterText.detect_failed_notice)
+        element.button(
+            EnterText.detect_retry_button, width="stretch",
+            on_click=stage_character_redetect,
+            args=(st.session_state,),
+            kwargs={"source": CHARACTER_AUTODETECT_SOURCE_MANUAL},
+            key="enter_text_detect_retry_button",
+        )
         element.button(
             EnterText.back_to_text_button, width="stretch",
             on_click=adding_text, key="cancel_detect",

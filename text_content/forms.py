@@ -450,6 +450,18 @@ class EnterText:
         "and tick 'Does this page contain story text?' on the relevant pages."
     )
     detect_failed = "Character detection failed: {error}"
+    # Persistent notice for the detect view when no run is in progress and no
+    # suggestions are available — i.e. a previous run failed, found no story
+    # text, or had no API key (#227). The per-run st.error/warning from
+    # run_character_detection only shows on the render it failed on; this
+    # notice keeps the failure visible on later reruns and points at Try again,
+    # so the paid whole-book AI call is never silently re-fired on every rerun.
+    detect_failed_notice = (
+        "Character detection did not complete. Nothing has been detected yet — "
+        "if there was an error above, fix it (e.g. add page text or an API key) "
+        "and use Try again to run detection once more."
+    )
+    detect_retry_button = "Try again"
     detect_none_found = "The AI did not find any characters in the text. You can add characters manually."
     # Explicit success line above the review form (#183) — detection must never
     # finish silently.

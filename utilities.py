@@ -1709,6 +1709,24 @@ def consume_pending_character_autodetect(session_state):
     return bool(session_state.pop('_pending_character_autodetect', False))
 
 
+def consume_auto_run_detection(session_state):
+    """Pop and return the one-shot flag that authorises ``detect_entry()`` to
+    fire the paid, whole-book character-detection AI call.
+
+    This is the gate for #227. The flag is set ONLY by
+    ``stage_character_redetect`` (the auto-run-after-OCR hook, the "Re-run
+    character detection" button and the "Try again" button all route through
+    it). ``detect_entry`` runs detection on a render iff this returns True, and
+    because the flag is POPPED here it is strictly one-shot: a run that FAILS
+    (Anthropic/JSON error, no story text, or no API key) leaves
+    ``_detected_characters`` absent and ``now_entering == 'detect'``, but the
+    flag is already consumed — so the subsequent reruns (a fragment rerun from
+    any entry-column interaction, or an app rerun from Prev/Next, the
+    show-original toggle or a window resize) find it False and DO NOT re-fire
+    the billed call. The user must explicitly re-stage via "Try again"."""
+    return bool(session_state.pop('_auto_run_detection', False))
+
+
 def stage_character_redetect(session_state, *, source, discard_previous=True):
     """Arrange for the NEXT render of ``pages/enter_text.py``'s ``detect_entry()``
     to execute character detection immediately — one click/hook, not the
