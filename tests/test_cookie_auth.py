@@ -4,6 +4,10 @@ Playwright verification of the full browser flow lives in the repro notes
 (handoff); these tests pin the pure/monkeypatchable logic:
 
 - signed-token round-trip, tamper and expiry rejection;
+- password-reset revocation (#238): a token minted against hash H restores while
+  the stored hash is still H; once the stored hash changes the restore clears
+  the cookie and does not authenticate; a legacy token with no credential
+  fingerprint is rejected+cleared;
 - restore falls back to the CookieManager component snapshot when the request
   headers carry no cookie (#207 proxy/cross-site hardening);
 - the just-logged-out guard persists for the session (peek, not pop) so a
@@ -27,6 +31,9 @@ import cookie_auth
 
 
 KEY = "test-signing-key"
+# The bcrypt password hash a remember-me cookie is minted against; the restore
+# path re-derives the fingerprint from the *current* stored hash and compares.
+HASH = "$2b$12$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU"
 
 
 # ---------------------------------------------------------------------------
@@ -38,14 +45,28 @@ def signing_key(monkeypatch):
     monkeypatch.setattr(cookie_auth, "_signing_key", lambda: KEY)
 
 
-def _token(username="alice@example.com", delta=timedelta(days=7)):
+def _token(username="alice@example.com", delta=timedelta(days=7), password_hash=HASH):
     return cookie_auth._make_token(
-        username, datetime.now(timezone.utc) + delta, KEY
+        username, datetime.now(timezone.utc) + delta, KEY, password_hash
     )
 
 
+def _legacy_token(username="alice@example.com", delta=timedelta(days=7)):
+    """Mint a pre-#238 token: payload has no ``pfp`` credential fingerprint."""
+    import json
+
+    expiry = datetime.now(timezone.utc) + delta
+    payload = {"u": username, "exp": int(expiry.timestamp())}
+    payload_b64 = cookie_auth._b64encode(
+        json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    )
+    return f"{payload_b64}.{cookie_auth._sign(payload_b64, KEY)}"
+
+
 def test_token_roundtrip(signing_key):
-    assert cookie_auth._verify_token(_token()) == "alice@example.com"
+    payload = cookie_auth._verify_token(_token())
+    assert payload["u"] == "alice@example.com"
+    assert payload["pfp"] == cookie_auth._password_fingerprint(HASH, KEY)
 
 
 def test_tampered_token_rejected(signing_key):
@@ -57,6 +78,12 @@ def test_tampered_token_rejected(signing_key):
 
 def test_expired_token_rejected(signing_key):
     assert cookie_auth._verify_token(_token(delta=timedelta(seconds=-5))) is None
+
+
+def test_fingerprint_changes_with_password_hash(signing_key):
+    """The #238 fingerprint must differ once the stored hash changes."""
+    assert cookie_auth._password_fingerprint(HASH, KEY) != \
+        cookie_auth._password_fingerprint(HASH + "changed", KEY)
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +116,16 @@ class _FakeManager:
         del self.cookies[name]
 
 
+class _FakeUserDoc:
+    """Stand-in for a Firestore DocumentSnapshot (exposes ``to_dict``)."""
+
+    def __init__(self, data):
+        self._data = data
+
+    def to_dict(self):
+        return dict(self._data)
+
+
 @pytest.fixture
 def restore_env(monkeypatch, signing_key):
     """Wire a fake session/context/user-db; returns the mutable environment."""
@@ -99,6 +136,10 @@ def restore_env(monkeypatch, signing_key):
         "context_cookies": {},
         "manager": None,
         "user_exists": True,
+        # The password hash currently stored for the user. Defaults to the hash
+        # the test token is minted against (HASH), so restore succeeds unless a
+        # test deliberately changes it (simulating a password reset, #238).
+        "stored_hash": HASH,
         "user_error": None,
         "cleared": [],
     }
@@ -111,7 +152,9 @@ def restore_env(monkeypatch, signing_key):
     def fake_get_user(username):
         if env["user_error"] is not None:
             raise env["user_error"]
-        return {"username": username} if env["user_exists"] else None
+        if not env["user_exists"]:
+            return None
+        return _FakeUserDoc({"username": username, "password": env["stored_hash"]})
 
     monkeypatch.setattr(cookie_auth, "get_user", fake_get_user)
     monkeypatch.setattr(cookie_auth, "get_role", lambda u: "archivist")
@@ -171,6 +214,49 @@ def test_deleted_user_clears_the_cookie(restore_env):
     cookie_auth.restore_session_from_cookie()
     assert restore_env["state"].get("authentication_status") is None
     assert restore_env["cleared"] == [True]
+
+
+# ---------------------------------------------------------------------------
+# Password-reset revocation (#238).
+# ---------------------------------------------------------------------------
+
+def test_restore_succeeds_while_password_hash_unchanged(restore_env):
+    """(a) A token minted against hash H restores while the stored hash is H."""
+    restore_env["context_cookies"][cookie_auth.COOKIE_NAME] = _token(password_hash=HASH)
+    restore_env["stored_hash"] = HASH
+    cookie_auth.restore_session_from_cookie()
+    assert restore_env["state"]["authentication_status"] is True
+    assert restore_env["state"]["username"] == "alice@example.com"
+    assert restore_env["cleared"] == []
+
+
+def test_password_reset_revokes_the_cookie(restore_env):
+    """(b) After the stored hash changes (a reset), restore clears the cookie
+    and does not authenticate — even though the signature is still valid."""
+    restore_env["context_cookies"][cookie_auth.COOKIE_NAME] = _token(password_hash=HASH)
+    restore_env["stored_hash"] = HASH + "-after-reset"  # password was reset
+    cookie_auth.restore_session_from_cookie()
+    assert restore_env["state"].get("authentication_status") is None
+    assert restore_env["cleared"] == [True]
+
+
+def test_legacy_token_without_fingerprint_rejected_and_cleared(restore_env):
+    """(c) A legacy pre-#238 token (no ``pfp`` claim) is rejected and cleared,
+    without even reaching the user lookup."""
+    restore_env["context_cookies"][cookie_auth.COOKIE_NAME] = _legacy_token()
+    cookie_auth.restore_session_from_cookie()
+    assert restore_env["state"].get("authentication_status") is None
+    assert restore_env["cleared"] == [True]
+
+
+def test_transient_failure_keeps_cookie_before_fingerprint_check(restore_env):
+    """(d) A transient lookup error must keep the cookie even with the #238
+    fingerprint check in place (mismatch clearing must not pre-empt it)."""
+    restore_env["context_cookies"][cookie_auth.COOKIE_NAME] = _token(password_hash=HASH)
+    restore_env["user_error"] = google_exceptions.ServiceUnavailable("quota")
+    cookie_auth.restore_session_from_cookie()
+    assert restore_env["state"].get("authentication_status") is None
+    assert restore_env["cleared"] == []
 
 
 # ---------------------------------------------------------------------------
