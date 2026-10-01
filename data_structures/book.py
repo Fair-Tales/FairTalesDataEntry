@@ -171,7 +171,10 @@ def form_content(self):
         if _publisher_name in publisher_options:
             publisher_index = publisher_options.index(_publisher_name)
     elif 'current_publisher' in st.session_state:
-        _publisher_name = st.session_state['current_publisher'].to_dict()['name'].replace('_', ' ')
+        # A deleted publisher's snapshot has to_dict() is None (#230); guard as
+        # the stored-publisher branch above already does.
+        _publisher_data = st.session_state['current_publisher'].to_dict() or {}
+        _publisher_name = _publisher_data.get('name', '').replace('_', ' ')
         if _publisher_name in publisher_options:
             publisher_index = publisher_options.index(_publisher_name)
     elif isbn_meta.get('publisher') and isbn_meta['publisher'] in publisher_options:

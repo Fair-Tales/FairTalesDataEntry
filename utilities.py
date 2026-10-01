@@ -2792,10 +2792,20 @@ def load_author_dict():
 @st.cache_resource(ttl=_LOOKUP_CACHE_TTL_SECONDS, show_spinner=False)
 def load_publisher_dict():
     firestore_wrapper = FirestoreWrapper(auth=False)
-    return {
-        publisher.to_dict()['name'].replace('_', ' '): publisher.reference
-        for publisher in firestore_wrapper.get_all_documents_stream(collection='publishers')
-    }
+    result = {}
+    for publisher in firestore_wrapper.get_all_documents_stream(collection='publishers'):
+        # A partial/malformed doc (e.g. an interrupted registration) would raise
+        # KeyError inside this shared cached loader and break session init for
+        # every user (#232). Skip it with a warning instead.
+        name = (publisher.to_dict() or {}).get('name')
+        if not name:
+            logger.warning(
+                "load_publisher_dict: skipping publishers/%s with missing/blank name",
+                publisher.id,
+            )
+            continue
+        result[name.replace('_', ' ')] = publisher.reference
+    return result
 
 
 @st.cache_resource(ttl=_LOOKUP_CACHE_TTL_SECONDS, show_spinner=False)
@@ -2810,19 +2820,37 @@ def load_illustrator_dict():
 @st.cache_resource(ttl=_LOOKUP_CACHE_TTL_SECONDS, show_spinner=False)
 def load_book_dict():
     firestore_wrapper = FirestoreWrapper(auth=False)
-    return {
-        book.to_dict()['title']: book.reference
-        for book in firestore_wrapper.get_all_documents_stream(collection='books')
-    }
+    result = {}
+    for book in firestore_wrapper.get_all_documents_stream(collection='books'):
+        # A partial/malformed doc would raise KeyError inside this shared cached
+        # loader and break session init for every user (#232). Skip it.
+        title = (book.to_dict() or {}).get('title')
+        if not title:
+            logger.warning(
+                "load_book_dict: skipping books/%s with missing/blank title",
+                book.id,
+            )
+            continue
+        result[title] = book.reference
+    return result
 
 
 @st.cache_resource(ttl=_LOOKUP_CACHE_TTL_SECONDS, show_spinner=False)
 def load_character_dict():
     firestore_wrapper = FirestoreWrapper(auth=False)
-    return {
-        character.to_dict()['name']: character.reference
-        for character in firestore_wrapper.get_all_documents_stream(collection='characters')
-    }
+    result = {}
+    for character in firestore_wrapper.get_all_documents_stream(collection='characters'):
+        # A partial/malformed doc would raise KeyError inside this shared cached
+        # loader and break session init for every user (#232). Skip it.
+        name = (character.to_dict() or {}).get('name')
+        if not name:
+            logger.warning(
+                "load_character_dict: skipping characters/%s with missing/blank name",
+                character.id,
+            )
+            continue
+        result[name] = character.reference
+    return result
 
 
 def register_and_link_book_entity(entity, dict_key, cache_clear, book_field):
