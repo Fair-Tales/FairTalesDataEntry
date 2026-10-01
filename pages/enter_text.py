@@ -36,14 +36,33 @@ def create_page_dict_from_db():
     in a single round trip. Missing-doc semantics are unchanged: a page id
     with no document yields ``to_dict() is None``, exactly as before.
     """
-    book_id = st.session_state.current_book.document_id
-    page_count = st.session_state.current_book.page_count
+    book = st.session_state.current_book
+    book_id = book.document_id
+    page_count = book.page_count
+    # Pass the book's DocumentReference (never the title string) to the missing-
+    # page placeholder below (#231): the Field setter stores a reference as-is but
+    # resolves a str via book_dict, so a reference is strictly safer — it cannot
+    # collapse to None (and crash document_id) if the title is absent from the
+    # session lookup.
+    book_ref = book.get_ref()
     doc_ids = [f"{book_id}_{page_num}" for page_num in range(1, page_count + 1)]
     snaps = st.session_state.firestore.get_all_by_ids('pages', doc_ids)
     pages_dict = {}
     for page_num in range(1, page_count + 1):
         snap = snaps.get(f"{book_id}_{page_num}")
-        pages_dict[page_num] = Page(snap.to_dict() if snap is not None else None)
+        page_data = snap.to_dict() if snap is not None else None
+        if page_data is not None:
+            pages_dict[page_num] = Page(page_data)
+        else:
+            # No stored doc for this page (#231): build an UNREGISTERED placeholder
+            # carrying a valid document_id (book ref + page number) rather than a
+            # bare ``Page(None)`` with no book/page set. That lets text typed on
+            # this page ``register()`` a real record — previously the write-through
+            # ``text`` Field silently no-op'd on the id-less object and the text was
+            # lost. An untouched placeholder is never saved (see
+            # ``_save_current_page_text``'s dirty-check), so this creates no doc on
+            # its own.
+            pages_dict[page_num] = Page(page_number=page_num, book=book_ref)
     st.session_state['book_pages_dict'] = pages_dict
 
 def _save_current_page_text():
@@ -62,8 +81,16 @@ def _save_current_page_text():
     key = f"enter_text_page_text_{page_number}"
     if key in st.session_state:
         new_text = st.session_state[key]
-        if new_text != st.session_state.current_page.text:
-            st.session_state.current_page.text = new_text
+        current_page = st.session_state.current_page
+        if new_text != current_page.text:
+            current_page.text = new_text
+            # A page whose Firestore doc was missing (#231) arrives here
+            # UNREGISTERED, so the write-through ``text`` Field above no-ops and
+            # the text would be lost. Perform the initial full save instead
+            # (mirrors pages/validation.py). Guarded by the dirty-check above so
+            # an untouched missing page never creates a doc.
+            if not current_page.is_registered:
+                current_page.register()
 
 
 def page_change(delta):
@@ -177,6 +204,16 @@ def reextract_current_page(page_number):
 
     st.session_state.current_page.text = text
     st.session_state.current_page.contains_story = is_story
+    # A page whose Firestore doc was missing (#231) arrives here UNREGISTERED, so
+    # both write-throughs above no-op and the freshly extracted text would be lost
+    # — and ``_save_current_page_text``'s dirty-check cannot rescue it later,
+    # because the in-memory ``text`` already equals the widget value. Perform the
+    # initial full save instead (mirrors ``_save_current_page_text`` and
+    # pages/validation.py). Unconditional here, unlike the typed-text path: a
+    # re-extract is an explicit user action on a real page, so there is no
+    # "untouched placeholder" case to protect against.
+    if not st.session_state.current_page.is_registered:
+        st.session_state.current_page.register()
     st.session_state.book_pages_dict[page_number] = st.session_state.current_page
 
     # Stage the widget-state refresh + success flash for the next run (see
@@ -219,7 +256,13 @@ def manual_correction_dialog():
     # original photo" before opening still edits the original from scratch.
     show_raw = bool(st.session_state.get(f"show_raw_{page_number}", False))
     editing_corrected = _page_has_cropped(book, page_number) and not show_raw
-    base_image = load_image(book, page_number, use_cropped=editing_corrected)
+    try:
+        base_image = load_image(book, page_number, use_cropped=editing_corrected)
+    except FileNotFoundError:
+        # The page's photo is missing from S3 (#233) — nothing to crop/rotate.
+        # Show the same missing-image notice instead of crashing the dialog.
+        st.info(EnterText.page_image_missing)
+        return
     st.caption(
         EnterText.editing_corrected_caption if editing_corrected
         else EnterText.editing_original_caption
@@ -343,14 +386,25 @@ def display_image():
     if getattr(st.session_state.current_page, 'rotation_uncertain', False):
         col1.warning(EnterText.rotation_uncertain_warning)
 
-    if use_cropped:
-        # Default view: ship the small display derivative (#184) — it is built
-        # from the corrected image, so it matches the auto-corrected view and
-        # falls back to full-res for legacy pages.
-        page_image = load_image(book, page_number, use_cropped=True, display=True)
-    else:
-        # User explicitly asked for the original: load the full-res raw page.
-        page_image = load_image(book, page_number, use_cropped=False)
+    try:
+        if use_cropped:
+            # Default view: ship the small display derivative (#184) — it is built
+            # from the corrected image, so it matches the auto-corrected view and
+            # falls back to full-res for legacy pages.
+            page_image = load_image(book, page_number, use_cropped=True, display=True)
+        else:
+            # User explicitly asked for the original: load the full-res raw page.
+            page_image = load_image(book, page_number, use_cropped=False)
+    except FileNotFoundError:
+        # This page's photo is missing from S3 (#233). Previously this bubbled up
+        # a raw traceback and locked the archivist out of EVERY page of the book.
+        # Show a per-page "image missing" notice, skip the image / crop / enlarge
+        # controls for this page, and return a sensible fallback layout height so
+        # the text column (and page navigation) still renders and the user can
+        # page onward.
+        col1.info(EnterText.page_image_missing)
+        dimensions = st_dimensions(key="main")
+        return int(dimensions['width'] * 3 / 5) if dimensions else 500
     w, h = page_image.size
 
     col1.image(page_image, width="stretch")
@@ -376,8 +430,13 @@ def display_image():
     if col1.button(EnterText.enlarge_button, width="stretch", key="enter_text_enlarge_button"):
         # Enlarge must show the FULL-RES image (#184), not the downsized display
         # copy shown inline — load the full-res version of whichever variant
-        # (corrected vs original) is currently selected.
-        enlarged_image_dialog(load_image(book, page_number, use_cropped=use_cropped))
+        # (corrected vs original) is currently selected. The inline display copy
+        # may exist while the full-res original is missing from S3 (#233), so
+        # guard this too rather than crash the whole page.
+        try:
+            enlarged_image_dialog(load_image(book, page_number, use_cropped=use_cropped))
+        except FileNotFoundError:
+            col1.info(EnterText.page_image_missing)
 
     # Prefetch the next page's display copy so "Next page" is instant (#184): the
     # cache is warmed while the user reads the current page. Guarded — a prefetch
@@ -485,16 +544,30 @@ def text_entry(element, image_height, delta=50):
     if _reextract_message:
         element.success(_reextract_message)
 
+    # This page had no saved Firestore record (#231) — say so explicitly rather
+    # than letting the write-through Fields silently no-op and lose the text. The
+    # record is created when the archivist enters text (or marks it a story page).
+    if not st.session_state.current_page.is_registered:
+        element.info(EnterText.page_no_record_notice)
+
     # The story toggle and text area are seeded from the current page, so suffix
     # their keys with the page number to re-seed (rather than bleed state) when
     # the user pages through the book (see #80).
     page_number = st.session_state.current_page_number
 
-    st.session_state.current_page.contains_story = element.checkbox(
+    contains_story = element.checkbox(
         EnterText.contains_story_label,
         value=st.session_state.current_page.contains_story,
         key=f"enter_text_contains_story_{page_number}"
     )
+    if contains_story != st.session_state.current_page.contains_story:
+        st.session_state.current_page.contains_story = contains_story
+        # Marking a previously-unsaved page as a story page is a real change the
+        # write-through Field would silently drop on an unregistered Page (#231);
+        # register it so the flag persists (mirrors pages/validation.py). Only on
+        # an actual change, so an untouched page never creates a doc.
+        if not st.session_state.current_page.is_registered:
+            st.session_state.current_page.register()
 
     # Re-extract this page's text on demand (#165): a dedicated button rather
     # than a side effect of the checkbox above, so a paid AI call is always an
