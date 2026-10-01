@@ -24,6 +24,7 @@ from utilities import (
     validation_recently_active,
     validation_marker_active,
     validation_heartbeat_due,
+    other_active_validator,
     submitted_book_reopen_block,
     REOPEN_BLOCK_VALIDATED,
     REOPEN_BLOCK_VALIDATION_ACTIVE,
@@ -185,3 +186,65 @@ def test_heartbeat_due_is_per_book():
     assert validation_heartbeat_due(store, 'book_a', t0) is True
     # A different book is independently due even within the throttle window.
     assert validation_heartbeat_due(store, 'book_b', t0 + 1) is True
+
+
+# ---------------------------------------------------------------------------
+# Activity-window length (#234): shortened from 120 to 10 minutes. The heartbeat
+# refreshes every 30s while a book is actually open AND is now cleared on leave
+# (Back-to-list / Approve). 30 minutes covers a careful read-through — Streamlit
+# only reruns on INTERACTION, so the heartbeat does NOT refresh while a validator
+# merely reads — while capping how long a crashed/closed tab can hold a stale
+# reopen lock at a quarter of the original 2 hours.
+# ---------------------------------------------------------------------------
+
+def test_activity_window_is_thirty_minutes():
+    assert VALIDATION_ACTIVITY_WINDOW_MINUTES == 30
+
+
+def test_marker_within_window_still_blocks_reopen():
+    # A validator reading without interacting for 15 minutes must KEEP the lock:
+    # too short a window would drop it mid-review and let the owner reopen.
+    assert validation_marker_active(NOW - timedelta(minutes=15), now=NOW) is True
+
+
+def test_marker_beyond_window_is_stale():
+    # Deliberate expectation update for #234: a heartbeat 45 minutes old blocked
+    # the owner under the old 120-minute window but is stale under the new one.
+    assert validation_marker_active(NOW - timedelta(minutes=45), now=NOW) is False
+
+
+# ---------------------------------------------------------------------------
+# other_active_validator — soft validator mutual-exclusion signal (#235).
+# Returns the OTHER validator's name only when their heartbeat is live and is
+# not our own; used to warn (not block) on a concurrent review.
+# ---------------------------------------------------------------------------
+
+def test_other_validator_fresh_foreign_heartbeat_returns_name():
+    assert other_active_validator(
+        'martha@example.com', NOW - timedelta(minutes=2), 'chris@example.com', now=NOW
+    ) == 'martha@example.com'
+
+
+def test_other_validator_own_heartbeat_returns_none():
+    # My own live heartbeat must not warn me about myself.
+    assert other_active_validator(
+        'chris@example.com', NOW - timedelta(minutes=2), 'chris@example.com', now=NOW
+    ) is None
+
+
+def test_other_validator_stale_foreign_heartbeat_returns_none():
+    # A crashed/closed tab whose heartbeat has aged past the window: no warning.
+    assert other_active_validator(
+        'martha@example.com',
+        NOW - timedelta(minutes=VALIDATION_ACTIVITY_WINDOW_MINUTES + 1),
+        'chris@example.com', now=NOW,
+    ) is None
+
+
+def test_other_validator_no_heartbeat_owner_returns_none():
+    # Sentinels for "never opened for validation": -1 (Field default) / None / ''.
+    assert other_active_validator(None, -1, 'chris@example.com', now=NOW) is None
+    assert other_active_validator('', NOW, 'chris@example.com', now=NOW) is None
+    assert other_active_validator(
+        'martha@example.com', -1, 'chris@example.com', now=NOW
+    ) is None

@@ -1569,6 +1569,15 @@ class Validation:
         "approve it at the bottom of the page."
     )
     back_to_list_button = "← Back to list (do not approve)"
+    # Soft mutual-exclusion warning (#235): shown when another validator's
+    # heartbeat on this book is still within the activity window. Not a hard
+    # block — the validator may proceed; the point is awareness that edits could
+    # collide (last-write-wins).
+    other_validator_active = (
+        "⚠️ {name} appears to be reviewing this book right now. Your edits and "
+        "theirs could overwrite each other — check with them before making "
+        "changes or approving."
+    )
     tab_metadata = "Metadata"
     tab_pages = "Page text"
     tab_characters = "Characters & aliases"
