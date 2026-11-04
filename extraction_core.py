@@ -11,13 +11,43 @@ from ai_runtime import extraction_runtime
 
 def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
                             vision_json_call=None, strict=False):
-    """Shared OCR computation; the app wrapper adds its error-log writes.
+    """OCR one page image and return a classified outcome — with NO Firestore
+    logging or session access, so it is callable from the background
+    page-processing worker (#179), standalone evaluation, and
+    :func:`pages.uploader.extract_page_info` (which adds logging + raise).
 
-    Returns the application's existing ``('ok', (text, story, type))`` or
-    ``('error', (error_type, message))`` contract. ``vision_json_call`` keeps the
-    UI wrapper's injectable helper boundary without duplicating the algorithm.
+    Returns ``('ok', (text, is_story_page, page_type))`` on success, or
+    ``('error', (error_type, error_message))`` on an Anthropic API error or a
+    reply that cannot be parsed as usable JSON.
+
+    ``ai_settings`` is a plain validated settings dict, read by the CALLER (the
+    worker thread must not touch the ``get_ai_settings`` Streamlit cache, #179).
+    Required keys are ``extraction_model``, ``extraction_max_edge``, and
+    ``extraction_max_tokens``; a missing key raises ``KeyError`` before the
+    vision call in both application and evaluation paths.
+
+    Uses the shared ``vision_json`` helper (#129) with the admin-configured
+    extraction model/resolution/tokens (#135). The image is downscaled for the
+    vision call and JPEG re-encoded below Claude's 10 MB per-image limit (#134).
+    ``vision_json_call`` keeps the UI wrapper's injectable helper boundary
+    without duplicating the algorithm.
+
+    Wordless-page guard (audit item 2): the model returns a ``has_text``
+    boolean. Many picture-book pages are wordless full illustrations, and
+    without this guard the model narrates the illustration into ``text`` —
+    polluting the research word/character counts — so when ``has_text`` is
+    false the returned ``text`` is forced to ``""``. A "wordless page" reply
+    may also carry ``"text": null`` rather than the requested ``""`` (the model
+    is prompted, not schema-constrained), so any non-string ``text`` is
+    normalised to ``""`` rather than crashing the page loop (see the "Clean
+    Up!" bug: an unguarded ``None.strip()`` here blanked the second half of a
+    book). With ``strict=True``, evaluation instead classifies malformed
+    fields as parse errors; ``has_text=false`` with ``text=null`` stays valid.
     """
     import anthropic
+    # Lazy to avoid loading the data_structures package's application dependency
+    # graph when offline scorers import this module (#129).
+    from data_structures.extraction_error_log import ExtractionErrorLog
     from text_content import AIPrompts
 
     if vision_json_call is None:
@@ -26,9 +56,9 @@ def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
     try:
         data, raw = vision_json_call(
             client, [image_bytes], AIPrompts.page_extraction, downscale=True,
-            model=ai_settings.get('extraction_model'),
-            max_edge=ai_settings.get('extraction_max_edge'),
-            max_tokens=ai_settings.get('extraction_max_tokens'),
+            model=ai_settings['extraction_model'],
+            max_edge=ai_settings['extraction_max_edge'],
+            max_tokens=ai_settings['extraction_max_tokens'],
             label=label,
         )
     except anthropic.AnthropicError as exc:
@@ -40,7 +70,7 @@ def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
             f'Model reply could not be parsed as usable JSON: {snippet[:500]}'
             if snippet else 'Model returned no usable reply.'
         )
-        return 'error', ('parse_error', message)
+        return 'error', (ExtractionErrorLog.ERROR_PARSE, message)
 
     raw_text = data.get('text')
     if strict and (
@@ -49,7 +79,7 @@ def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
         or not (isinstance(raw_text, str)
                 or (data.get('has_text') is False and raw_text is None))
     ):
-        return 'error', ('parse_error',
+        return 'error', (ExtractionErrorLog.ERROR_PARSE,
                          'Expected has_text/is_story_page booleans and usable text')
     text = raw_text.strip() if isinstance(raw_text, str) else ''
     if not bool(data.get('has_text', True)):
