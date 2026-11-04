@@ -10,7 +10,9 @@ from PIL import Image
 import image_processing
 import utilities
 from ai_runtime import current_runtime, extraction_runtime
-from extraction_core import extract_characters, extract_metadata, extract_page
+from extraction_core import (
+    attempt_page_extraction, extract_characters, extract_metadata, extract_page,
+)
 
 
 class FakeClient:
@@ -96,6 +98,46 @@ def test_bad_ocr_is_failure_and_not_wordless_agreement(reply, image_bytes, isola
     assert result['contains_story'] is None
     assert result['error_type'] == 'parse_error'
     assert len(usage) == 1
+
+
+@pytest.mark.parametrize('reply, strict', [(None, False), ({}, True)],
+                         ids=['unusable-json', 'invalid-strict-schema'])
+def test_parse_failures_use_shared_error_constant(
+        reply, strict, image_bytes, isolated, monkeypatch):
+    from data_structures.extraction_error_log import ExtractionErrorLog
+
+    monkeypatch.setattr(ExtractionErrorLog, 'ERROR_PARSE', 'changed-parse-error')
+    outcome, payload = attempt_page_extraction(
+        image_bytes, FakeClient(), isolated, label='page_extraction', strict=strict,
+        vision_json_call=lambda *args, **kwargs: (reply, 'invalid response'),
+    )
+
+    assert outcome == 'error'
+    assert payload[0] == 'changed-parse-error'
+
+
+@pytest.mark.parametrize('missing_key', [
+    'extraction_model', 'extraction_max_edge', 'extraction_max_tokens',
+])
+@pytest.mark.parametrize('options', [{}, {'strict': True}],
+                         ids=['application-default', 'strict-evaluation'])
+def test_required_page_settings_fail_before_vision_call(
+        missing_key, options, image_bytes, isolated):
+    del isolated[missing_key]
+    calls = []
+
+    def vision_json_call(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {'has_text': True, 'is_story_page': True, 'text': 'Hello'}, ''
+
+    with pytest.raises(KeyError) as exc_info:
+        attempt_page_extraction(
+            image_bytes, FakeClient(), isolated, label='page_extraction',
+            vision_json_call=vision_json_call, **options,
+        )
+
+    assert exc_info.value.args == (missing_key,)
+    assert calls == []
 
 
 def test_wordless_guard_matches_application_wrapper(image_bytes, isolated):
