@@ -22,6 +22,7 @@ from data_structures import Page, Character, Alias, ExtractionErrorLog
 from image_processing import make_display_copy, apply_manual_correction, load_page_image
 from pages.uploader import extract_page_info, PageExtractionError
 from text_content import EnterText, ManageCharacters, AliasForm, CharacterForm
+from page_save_recovery import PageSaveRecovery
 
 logger = logging.getLogger(__name__)
 
@@ -65,43 +66,79 @@ def create_page_dict_from_db():
             pages_dict[page_num] = Page(page_number=page_num, book=book_ref)
     st.session_state['book_pages_dict'] = pages_dict
 
-def _save_current_page_text():
-    """Persist the current page's text-area contents through to the page (#152).
+def _page_recovery():
+    return PageSaveRecovery(
+        'enter_text', st.session_state.current_book.document_id,
+        st.session_state.current_page_number,
+    )
 
-    Auto-save replaces the old explicit "Save page" button: every control that
-    leaves the text box (Next/Previous, the character/alias/manage/detect
-    buttons, "Back to menu", "Submit") calls this BEFORE navigating so nothing
-    the user typed is lost. Reads the text_area's live session_state value —
-    keyed per page (``enter_text_page_text_<n>``) so it captures edits made right
-    before the click — and writes it through the ``text`` Field, which persists
-    it to Firestore. Dirty-checked so an unchanged page is not re-written every
-    time the user moves around.
+
+def _replace_current_page(page):
+    st.session_state.current_page = page
+    st.session_state.book_pages_dict[page.page_number] = page
+
+
+def _page_save_succeeded(record):
+    page = record['page']
+    _replace_current_page(page)
+    if record['source'] == 'reextract':
+        # Preserve the OCR success flash, and block autosave until the next
+        # full run has replaced both widget values.
+        stage_reextract_refresh(
+            st.session_state, page.page_number, EnterText.reextract_success,
+            page.text, page.contains_story,
+        )
+        _page_recovery().stage_refresh(page)
+
+
+def _save_page_edits(changes, *, source='text'):
+    page = st.session_state.current_page
+    page_number = st.session_state.current_page_number
+    draft = {
+        'text': st.session_state.get(f'enter_text_page_text_{page_number}', page.text),
+        'contains_story': st.session_state.get(
+            f'enter_text_contains_story_{page_number}', page.contains_story
+        ),
+        **changes,
+    }
+    return _page_recovery().save(
+        page, changes, source=source, draft=draft, on_saved=_page_save_succeeded,
+    )
+
+
+def _save_current_page_text():
+    """Save live widget edits, returning False until recovery is resolved.
+
+    Check recovery before equality: a failed descriptor write already changed
+    memory, and a staged reload still has stale widget values until consumed.
     """
-    page_number = st.session_state.get('current_page_number')
-    key = f"enter_text_page_text_{page_number}"
-    if key in st.session_state:
-        new_text = st.session_state[key]
-        current_page = st.session_state.current_page
-        if new_text != current_page.text:
-            current_page.text = new_text
-            # A page whose Firestore doc was missing (#231) arrives here
-            # UNREGISTERED, so the write-through ``text`` Field above no-ops and
-            # the text would be lost. Perform the initial full save instead
-            # (mirrors pages/validation.py). Guarded by the dirty-check above so
-            # an untouched missing page never creates a doc.
-            if not current_page.is_registered:
-                current_page.register()
+    if _page_recovery().blocked:
+        return False
+    page = st.session_state.current_page
+    if page.pending_edits:
+        return False
+    page_number = st.session_state.current_page_number
+    changes = {}
+    for field, key in (
+        ('text', f'enter_text_page_text_{page_number}'),
+        ('contains_story', f'enter_text_contains_story_{page_number}'),
+    ):
+        if key in st.session_state and st.session_state[key] != getattr(page, field):
+            changes[field] = st.session_state[key]
+    return _save_page_edits(changes)
 
 
 def page_change(delta):
     # Auto-save the page we are leaving before changing the page number (#152).
-    _save_current_page_text()
+    if not _save_current_page_text():
+        return False
     st.session_state.current_page_number += delta
 
     if st.session_state.current_page_number < 1:
         st.session_state['current_page_number'] = 1
     elif st.session_state.current_page_number > st.session_state.current_book.page_count:
         st.session_state['current_page_number'] = st.session_state.current_book.page_count
+    return True
 
 
 # Display copies are ~150-300KB each (#184), so a much larger cache still costs
@@ -167,7 +204,8 @@ def reextract_current_page(page_number):
     assignment that refreshes the on-screen text deterministically (popping the
     keys and relying on ``value=`` re-seeding did not reliably update it).
     """
-    _save_current_page_text()
+    if not _save_current_page_text():
+        return False
 
     client = get_anthropic_client()
     if client is None:
@@ -202,27 +240,12 @@ def reextract_current_page(page_number):
             st.error(EnterText.reextract_failed)
             return
 
-    st.session_state.current_page.text = text
-    st.session_state.current_page.contains_story = is_story
-    # A page whose Firestore doc was missing (#231) arrives here UNREGISTERED, so
-    # both write-throughs above no-op and the freshly extracted text would be lost
-    # — and ``_save_current_page_text``'s dirty-check cannot rescue it later,
-    # because the in-memory ``text`` already equals the widget value. Perform the
-    # initial full save instead (mirrors ``_save_current_page_text`` and
-    # pages/validation.py). Unconditional here, unlike the typed-text path: a
-    # re-extract is an explicit user action on a real page, so there is no
-    # "untouched placeholder" case to protect against.
-    if not st.session_state.current_page.is_registered:
-        st.session_state.current_page.register()
-    st.session_state.book_pages_dict[page_number] = st.session_state.current_page
-
-    # Stage the widget-state refresh + success flash for the next run (see
-    # docstring above — assigning to the widget keys here would crash, #198).
-    # The extracted text/story ride along so consume_reextract_refresh can seed
-    # the widgets directly at the top of the next run.
-    stage_reextract_refresh(
-        st.session_state, page_number, EnterText.reextract_success, text, is_story
-    )
+    # Retain BOTH OCR results before either descriptor can write. Recovery
+    # retries persistence only; it never repeats the paid extraction call.
+    if not _save_page_edits(
+        {'text': text, 'contains_story': is_story}, source='reextract'
+    ):
+        return False
     st.rerun()
 
 
@@ -454,7 +477,8 @@ def display_image():
 
 def adding_character():
     # Auto-save the current page text before leaving the text box (#152).
-    _save_current_page_text()
+    if not _save_current_page_text():
+        return
     # Starting a fresh character entry: drop persisted form-widget state so the
     # new (empty document_id) character re-seeds from value=/index= (see #80).
     clear_entity_form_state("character_form_")
@@ -468,7 +492,8 @@ def adding_text():
 
 def adding_alias():
     # Auto-save the current page text before leaving the text box (#152).
-    _save_current_page_text()
+    if not _save_current_page_text():
+        return
     # Starting a fresh alias entry: drop persisted form-widget state so the new
     # (empty document_id) alias re-seeds from value=/index= (see #80).
     clear_entity_form_state("alias_form_")
@@ -478,7 +503,8 @@ def adding_alias():
 
 def managing_characters():
     # Auto-save the current page text before leaving the text box (#152).
-    _save_current_page_text()
+    if not _save_current_page_text():
+        return
     st.session_state.now_entering = 'manage'
 
 
@@ -529,11 +555,18 @@ def rerun_detect():
     already entered. Reuses the existing detection + review pipeline (#129);
     does not write any Character/Alias itself.
     """
-    _save_current_page_text()
+    if not _save_current_page_text():
+        return
     stage_character_redetect(st.session_state, source=CHARACTER_AUTODETECT_SOURCE_MANUAL)
 
 
 def text_entry(element, image_height, delta=50):
+    recovery = _page_recovery()
+    if recovery.render(
+        element, on_saved=_page_save_succeeded, on_loaded=_replace_current_page
+    ):
+        return
+    recovery.render_retained_draft(element)
     for message in st.session_state.pop('_detected_characters_result', []):
         element.success(message)
 
@@ -561,13 +594,19 @@ def text_entry(element, image_height, delta=50):
         key=f"enter_text_contains_story_{page_number}"
     )
     if contains_story != st.session_state.current_page.contains_story:
-        st.session_state.current_page.contains_story = contains_story
-        # Marking a previously-unsaved page as a story page is a real change the
-        # write-through Field would silently drop on an unregistered Page (#231);
-        # register it so the flag persists (mirrors pages/validation.py). Only on
-        # an actual change, so an untouched page never creates a doc.
-        if not st.session_state.current_page.is_registered:
-            st.session_state.current_page.register()
+        # This interaction also submits live text. Capture it in the SAME
+        # operation before the checkbox write can fail and start recovery.
+        changes = {'contains_story': contains_story}
+        live_text = st.session_state.get(
+            f'enter_text_page_text_{page_number}', st.session_state.current_page.text
+        )
+        if live_text != st.session_state.current_page.text:
+            changes['text'] = live_text
+        if not _save_page_edits(changes, source='story'):
+            recovery.render(
+                element, on_saved=_page_save_succeeded, on_loaded=_replace_current_page
+            )
+            return
 
     # Re-extract this page's text on demand (#165): a dedicated button rather
     # than a side effect of the checkbox above, so a paid AI call is always an
@@ -579,6 +618,10 @@ def text_entry(element, image_height, delta=50):
         key=f"enter_text_reextract_button_{page_number}",
     ):
         reextract_current_page(page_number)
+        if recovery.render(
+            element, on_saved=_page_save_succeeded, on_loaded=_replace_current_page
+        ):
+            return
 
     subcol1, subcol2 = element.columns(2)
     subcol1.button(EnterText.add_character_button, width="stretch", on_click=adding_character, help=EnterText.character_help, key="enter_text_add_character_button")
@@ -632,6 +675,8 @@ def text_entry(element, image_height, delta=50):
         width="stretch",
         key="enter_text_next_page_bottom_button",
     ):
+        # page_change refuses navigation on failure. Either outcome needs a
+        # full run to show the next page or replace the editor with recovery.
         page_change(1)
         st.rerun()
 
@@ -1227,6 +1272,12 @@ def detect_entry(element):
 
 
 def user_entry_box(element, image_height, delta=50):
+    recovery = _page_recovery()
+    if recovery.blocked:
+        recovery.render(
+            element, on_saved=_page_save_succeeded, on_loaded=_replace_current_page
+        )
+        return
     if st.session_state.now_entering == 'text':
         text_entry(element, image_height, delta)
     elif st.session_state.now_entering == 'character':
@@ -1373,6 +1424,17 @@ st.session_state.current_page = st.session_state.book_pages_dict[
     st.session_state.current_page_number
 ]
 
+# A reload or retry can replace both values. Consume before either widget is
+# instantiated; callbacks remain blocked until this full script run reaches it.
+_refreshed_page = _page_recovery().consume_refresh(
+    text_key=f'enter_text_page_text_{st.session_state.current_page_number}',
+    story_key=f'enter_text_contains_story_{st.session_state.current_page_number}',
+)
+if _refreshed_page is not None:
+    _replace_current_page(_refreshed_page)
+elif _page_recovery().state is not None:
+    _replace_current_page(_page_recovery().state['page'])
+
 st.header(EnterText.header)
 st.write(EnterText.instruction)
 
@@ -1413,12 +1475,14 @@ return_button = st.button(
 
 if return_button:
     # Auto-save the current page text before leaving for the menu (#152).
-    _save_current_page_text()
-    st.switch_page("./pages/book_edit_home.py")
+    if _save_current_page_text():
+        st.switch_page("./pages/book_edit_home.py")
+    else:
+        st.rerun()
 
 if save_button:
     # Auto-save the current page text before opening the submit dialog (#152).
-    _save_current_page_text()
-    confirm_submit()
-
-
+    if _save_current_page_text():
+        confirm_submit()
+    else:
+        st.rerun()

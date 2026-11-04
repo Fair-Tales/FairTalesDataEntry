@@ -35,6 +35,7 @@ from utilities import (
 )
 from image_processing import load_page_image
 from data_structures import Book, Page, Character, Alias, EditLog
+from page_save_recovery import PageSaveRecovery
 from text_content import Validation, BookForm, CharacterForm
 
 check_authentication_status()
@@ -360,6 +361,38 @@ def page_text_editor(book):
         key="validation_page_select",
     )
 
+    text_key = f"validation_page_text_{page_number}"
+    story_key = f"validation_page_contains_{page_number}"
+    recovery = PageSaveRecovery("validation", book.document_id, page_number)
+
+    def on_saved(record):
+        # The pending operation retains these original values across retries.
+        # A rejected creation must never be recorded as an applied correction.
+        for correction in record.get("audit", []):
+            _log(
+                book, EditLog.ENTITY_PAGE, correction["entity_id"],
+                correction["field"], correction["old_value"],
+                correction["new_value"],
+            )
+        st.success(Validation.page_saved)
+
+    # Collision/retry refreshes must seed BOTH widgets before the form exists.
+    page = recovery.consume_refresh(text_key=text_key, story_key=story_key)
+    pages = st.session_state.setdefault("_validation_page_cache", {})
+    page_scope = (book.document_id, page_number)
+    pending = recovery.state
+    if pending is not None:
+        page = pending.get("page")
+    if page is None:
+        page = pages.get(page_scope)
+    if page is not None:
+        pages[page_scope] = page
+    if recovery.blocked:
+        recovery.render(st, on_saved=on_saved)
+        return
+
+    recovery.render_retained_draft(st)
+
     # Show the page photo so the validator can check the transcription against the
     # actual image (this was missing — validators had text but no picture). Uses
     # the shared loader so it matches what the archivist saw in enter-text,
@@ -375,23 +408,37 @@ def page_text_editor(book):
     except FileNotFoundError:
         st.info(Validation.page_photo_missing)
 
-    doc = st.session_state.firestore.get_by_reference(
-        collection='pages', document_ref=f"{book.document_id}_{page_number}"
-    )
-    if doc.exists:
-        page = Page(db_object=doc.to_dict())
-    else:
-        st.info(Validation.page_not_entered)
-        page = Page(page_number=page_number, book=book.title)
+    if page is None:
+        doc = st.session_state.firestore.get_by_reference(
+            collection='pages', document_ref=f"{book.document_id}_{page_number}"
+        )
+        if doc.exists:
+            page = Page(db_object=doc.to_dict())
+        else:
+            st.info(Validation.page_not_entered)
+            page = Page(page_number=page_number, book=book.get_ref())
+        # Keep the displayed baseline through the form's submit rerun. A new
+        # database read here could turn a missing placeholder into a registered
+        # competitor's page and apply this form's stale values to that document.
+        pages[page_scope] = page
+
+    # These existing widget keys are page-number scoped. Re-seed them when a
+    # different book uses that page number, while preserving ordinary reruns.
+    widget_books = st.session_state.setdefault("_validation_page_widget_books", {})
+    previous_book = widget_books.get(page_number)
+    if previous_book is not None and previous_book != book.document_id:
+        st.session_state[text_key] = page.text
+        st.session_state[story_key] = page.contains_story
+    widget_books[page_number] = book.document_id
 
     with st.form(f"validation_page_form_{page_number}"):
         contains_story = st.checkbox(
             Validation.page_contains_story_label, value=page.contains_story,
-            key=f"validation_page_contains_{page_number}",
+            key=story_key,
         )
         text = st.text_area(
             Validation.page_text_label, value=page.text, height=300,
-            key=f"validation_page_text_{page_number}",
+            key=text_key,
         )
         submitted = st.form_submit_button(
             Validation.save_page_button, key="validation_page_submit_button"
@@ -400,28 +447,30 @@ def page_text_editor(book):
     if not submitted:
         return
 
-    contains_changed = contains_story != page.contains_story
-    text_changed = text != page.text
-
-    if not (contains_changed or text_changed):
+    changes = {
+        field: value
+        for field, value in (("contains_story", contains_story), ("text", text))
+        if value != getattr(page, field)
+    }
+    if not changes:
         st.success(Validation.page_saved)
         return
 
-    entity_id = page.document_id
-    if contains_changed:
-        _log(book, EditLog.ENTITY_PAGE, entity_id, 'contains_story',
-             page.contains_story, contains_story)
-    if text_changed:
-        _log(book, EditLog.ENTITY_PAGE, entity_id, 'text', page.text, text)
-
-    page.contains_story = contains_story
-    page.text = text
-    # A page the archivist never recorded is unregistered, so write-through has
-    # nothing to update — perform the initial full save instead.
-    if not page.is_registered:
-        page.register()
-
-    st.success(Validation.page_saved)
+    audit = [
+        {
+            "entity_id": page.document_id,
+            "field": field,
+            "old_value": getattr(page, field),
+            "new_value": value,
+        }
+        for field, value in changes.items()
+    ]
+    if not recovery.save(
+        page, changes, source="validation_form",
+        draft={"text": text, "contains_story": contains_story},
+        audit=audit, on_saved=on_saved,
+    ):
+        recovery.render(st, on_saved=on_saved)
 
 
 # ---------------------------------------------------------------------------

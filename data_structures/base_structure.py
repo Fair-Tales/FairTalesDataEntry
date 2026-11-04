@@ -146,15 +146,35 @@ class DataStructureBase(ABC):
         db = st.session_state.firestore.connect_book()
         return db.collection(self.belongs_to_collection).document(self.document_id)
 
-    def register(self):
-        """ Sets entered_by user and records datetime if not set. """
-        if not self.is_registered:
-            self.entered_by = st.session_state['firestore'].username_to_doc_ref(
-                st.session_state['username']
-            )
-            self.datetime_created = datetime.now(timezone.utc)
+    def register(self, *, create_only=False):
+        """Save an initial document and acknowledge registration after success.
+
+        Ordinary callers retain merge semantics. Missing-page recovery requests
+        ``create_only`` so a competing save can never be overwritten.
+        """
+        if self.is_registered:
+            return
+
+        entered_by = st.session_state['firestore'].username_to_doc_ref(
+            st.session_state['username']
+        )
+        created_at = datetime.now(timezone.utc)
+        payload = {
+            **self.to_dict(),
+            'entered_by': entered_by,
+            'datetime_created': created_at,
+            'is_registered': True,
+        }
+        self.save_to_db(data=payload, create_only=create_only)
+
+        previous_guard = self.reading_from_db
+        self.reading_from_db = True
+        try:
+            self.entered_by = entered_by
+            self.datetime_created = created_at
             self.is_registered = True
-            self.save_to_db()
+        finally:
+            self.reading_from_db = previous_guard
 
     def register_batched(self, batch):
         """Like :meth:`register`, but stage the initial full write into ``batch``
@@ -175,8 +195,10 @@ class DataStructureBase(ABC):
             self.is_registered = True
             batch.set(self.get_ref(), self.to_dict(), merge=True)
 
-    def save_to_db(self):
-        db = st.session_state['firestore'].connect_book()
-        db.collection(
-            self.belongs_to_collection
-        ).document(self.document_id).set(self.to_dict(), merge=True)
+    def save_to_db(self, *, data=None, create_only=False):
+        payload = self.to_dict() if data is None else data
+        ref = self.get_ref()
+        if create_only:
+            ref.create(payload)
+        else:
+            ref.set(payload, merge=True)

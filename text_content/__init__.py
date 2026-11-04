@@ -12,3 +12,4 @@ from text_content.forms import (
     Reconstruction, ReconstructOrphans,
 )
 from text_content.priority_books import PriorityBooks
+from text_content.page_recovery import PageRecovery
