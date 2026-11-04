@@ -1240,13 +1240,10 @@ def other_active_validator(active_by, active_at, current_user, *, now=None):
     """Username of ANOTHER validator whose heartbeat on the book is still live,
     or ``None`` (#235).
 
-    Powers the soft mutual-exclusion warning: a validator opening a book that
-    someone else is actively reviewing is warned that edits could collide
-    (last-write-wins), but is NOT blocked — a hard refusal could lock validators
-    out after a crash, which is a product decision not taken here. Reuses
-    ``validation_marker_active`` for the window check (CLAUDE.md #129) so this
-    warning and the reopen block share one notion of "currently being
-    validated"; the window is thus the same shortened one (#234).
+    Display-only compatibility helper. The validation page now enforces an
+    exclusive, token-owned lease transactionally; username alone must never
+    establish ownership. Reuses ``validation_marker_active`` for the window
+    check (CLAUDE.md #129).
 
     Returns ``None`` when nobody else is active — no heartbeat owner
     (``active_by`` falsy: its ``None`` default, or an empty string), the
@@ -1267,9 +1264,11 @@ def validation_heartbeat_due(
 
     Throttles the heartbeat to at most one write per ``throttle_seconds`` so a
     validator paging around a book does not rewrite ``validation_active_at`` on
-    every rerun. ``store`` is a mutable dict (the validator's session-state
-    heartbeat map) updated in place; ``now_ts`` is epoch seconds. Returns True
-    (and records the time) when a write should happen.
+    every rerun. ``store`` is a mutable dict updated in place; ``now_ts`` is
+    epoch seconds. Returns True (and records the time) when a write should
+    happen. Pass a copy of the session heartbeat map, and publish its changed
+    entry only after a confirmed refresh. Ownership must still be checked on
+    every interaction, including when this returns False.
     """
     last = store.get(book_id)
     if last is not None and (now_ts - last) < throttle_seconds:

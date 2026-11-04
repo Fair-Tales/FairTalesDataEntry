@@ -1,12 +1,32 @@
 import streamlit as st
+from enum import Enum
+from google.api_core.exceptions import Aborted
 from google.cloud import firestore
-from utilities import author_entry_to_name, navigate_to, split_name, clear_entity_form_state
+from utilities import (
+    author_entry_to_name, navigate_to, split_name, clear_entity_form_state,
+    validation_marker_active,
+)
 from text_content import Instructions, BookForm
 from .base_structure import DataStructureBase, Field
 from .author import Author
 from .illustrator import Illustrator
 from .publisher import Publisher
 from datetime import date, datetime, timezone
+
+
+class ValidationLeaseStatus(Enum):
+    MISSING = "missing"
+    BUSY = "busy"
+    REFRESHED = "refreshed"
+    OWNED = "owned"
+    RELEASED = "released"
+    NOT_OWNED = "not_owned"
+    APPROVED = "approved"
+
+
+class ValidationLeaseUnavailable(RuntimeError):
+    """The datastore exhausted its transaction contention retries."""
+
 
 def _new_person(person_cls, extracted_key):
     """Create a fresh Author, seeding forename/surname from a name extracted by
@@ -313,6 +333,7 @@ class Book(DataStructureBase):
         # that is actively being reviewed. ``-1`` = never opened for validation.
         'validation_active_at': -1,
         'validation_active_by': None,
+        'validation_active_token': None,
         # List of Firestore references to the Character documents that appear in
         # this book. A character may be referenced by more than one book, which
         # is why the relationship is modelled as a list of references on the
@@ -354,6 +375,108 @@ class Book(DataStructureBase):
             add_book_entries(self)
         else:
             form_content(self)
+
+    def acquire_validation_lease(self, token, username, refresh_due):
+        """Acquire an inactive lease, or verify/refresh this review's ownership.
+
+        Even a throttled interaction performs a transactional read: a cached
+        heartbeat is never evidence that this session still owns the lease.
+        """
+        return self._write_validation_lease(
+            "acquire", token, username, refresh_due=refresh_due
+        )
+
+    def release_validation_lease(self, token, username):
+        """Release only this exact review session's current token and username."""
+        return self._write_validation_lease("release", token, username)
+
+    def approve_with_validation_lease(self, token, username, validator_ref):
+        """Approve and release together, conditional on an active owned lease."""
+        return self._write_validation_lease(
+            "approve", token, username, validator_ref=validator_ref
+        )
+
+    def _write_validation_lease(
+        self, operation, token, username, *, refresh_due=False, validator_ref=None
+    ):
+        """Commit a conditional grouped update before mirroring its result.
+
+        The callback can replay after contention. It reads and stages writes
+        only; session state and Field descriptors are touched outside it.
+        """
+        db = st.session_state.firestore.connect_book()
+        ref = db.collection(self.belongs_to_collection).document(self.document_id)
+        transaction = db.transaction()
+
+        @firestore.transactional
+        def update_lease(tx):
+            snapshot = ref.get(transaction=tx)
+            if not snapshot.exists:
+                return ValidationLeaseStatus.MISSING, None
+
+            data = snapshot.to_dict() or {}
+            now = datetime.now(timezone.utc)
+            active = validation_marker_active(data.get("validation_active_at"), now=now)
+            ours = (
+                bool(token)
+                and data.get("validation_active_token") == token
+                and data.get("validation_active_by") == username
+            )
+
+            if operation == "acquire":
+                if active and not ours:
+                    return ValidationLeaseStatus.BUSY, data
+                if not token:
+                    return ValidationLeaseStatus.NOT_OWNED, data
+                if ours and active and not refresh_due:
+                    return ValidationLeaseStatus.OWNED, data
+                patch = {
+                    "validation_active_at": now,
+                    "validation_active_by": username,
+                    "validation_active_token": token,
+                    "last_updated": now,
+                }
+                status = ValidationLeaseStatus.REFRESHED
+            else:
+                if not ours or (operation == "approve" and not active):
+                    return ValidationLeaseStatus.NOT_OWNED, data
+                patch = {
+                    "validation_active_at": -1,
+                    "validation_active_by": None,
+                    "validation_active_token": None,
+                    "last_updated": now,
+                }
+                if operation == "approve":
+                    patch.update(validated=True, validated_by=validator_ref)
+                    status = ValidationLeaseStatus.APPROVED
+                else:
+                    status = ValidationLeaseStatus.RELEASED
+            tx.update(ref, patch)
+            return status, {**data, **patch}
+
+        # The SDK wraps exhausted Aborted retries in ValueError. Other value
+        # errors, including programming errors, must keep their original type.
+        try:
+            result = update_lease(transaction)
+        except ValueError as exc:
+            if not isinstance(exc.__cause__, Aborted):
+                raise
+            raise ValidationLeaseUnavailable() from exc
+
+        status, data = result
+        if data is not None:
+            previous_guard = self.reading_from_db
+            self.reading_from_db = True
+            try:
+                for field in (
+                    "validation_active_at", "validation_active_by",
+                    "validation_active_token", "last_updated", "validated",
+                    "validated_by",
+                ):
+                    setattr(self, field, data.get(field, self._default_for(field)))
+            finally:
+                self.reading_from_db = previous_guard
+        return status
 
     def _write_characters_transform(self, transform):
         """Persist a membership change to this book's ``characters`` array with a
@@ -487,4 +610,3 @@ class Book(DataStructureBase):
                         firestore.ArrayRemove(dangling)
                     )
         return character_dict
-

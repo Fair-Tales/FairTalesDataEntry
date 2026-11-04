@@ -4,8 +4,8 @@ A project **team member** (or admin) reviews books that archivists have
 SUBMITTED, corrects any errors, and marks the entry APPROVED. A book is
 "submitted and awaiting validation" when its ``entry_status`` is ``'completed'``
 (set by ``confirm_submit``) and it has not yet been validated (``validated`` is
-falsy). Approving sets ``validated = True`` and ``validated_by`` to the
-validator's user reference via the write-through ``Field`` pattern.
+falsy). Review sessions acquire an exclusive lease. Approval checks ownership,
+sets ``validated`` / ``validated_by`` and releases the lease in one transaction.
 
 EDIT AUDIT LOG (issue #47, Part B)
 ----------------------------------
@@ -26,17 +26,23 @@ captured here as ``entity_type='page', field='text'`` records.
 """
 
 from datetime import date, datetime, timezone
+import logging
+from uuid import uuid4
 
 import streamlit as st
+from google.api_core.exceptions import GoogleAPIError
 
 from utilities import (
     page_layout, check_authentication_status, is_team_or_above, entered_by_username,
-    validation_heartbeat_due, other_active_validator, get_s3_filesystem,
+    validation_heartbeat_due, get_s3_filesystem,
 )
 from image_processing import load_page_image
 from data_structures import Book, Page, Character, Alias, EditLog
+from data_structures.book import ValidationLeaseStatus, ValidationLeaseUnavailable
 from page_save_recovery import PageSaveRecovery
 from text_content import Validation, BookForm, CharacterForm
+
+logger = logging.getLogger(__name__)
 
 check_authentication_status()
 
@@ -91,18 +97,64 @@ def _guarded_index(options, value, default=0):
 
 
 def _clear_validation_heartbeat(book):
-    """Release this book's validation "active" heartbeat (#234).
+    """Release only this review session's lease, against fresh stored state."""
+    review = _review_session(book.document_id)
+    return book.release_validation_lease(
+        review.get('token'), st.session_state.get('username'),
+    )
 
-    Set on OPEN and refreshed while a validator works, the heartbeat was never
-    cleared when they LEFT (Back-to-list / Approve), so a brief peek blocked the
-    owner's reopen for the whole activity window. Reset the persisted fields to
-    their declared defaults (``-1`` / ``None`` — write-through persists this) and
-    drop this session's throttle entry so re-opening the book re-stamps the
-    heartbeat immediately rather than waiting out the throttle window.
-    """
-    book.validation_active_at = -1
-    book.validation_active_by = None
-    st.session_state.get('_validation_heartbeat', {}).pop(book.document_id, None)
+
+def _review_session(book_id):
+    """A token is authority only for its original book and signed-in user."""
+    review = st.session_state.get('_validation_review_session') or {}
+    if (review.get('book_id') == book_id
+            and review.get('username') == st.session_state.get('username')):
+        return review
+    return {}
+
+
+def _forget_review(book_id):
+    """Discard local selection only after a confirmed exit or missing book."""
+    st.session_state.pop('_validation_book_id', None)
+    st.session_state.pop('_validation_review_session', None)
+    st.session_state.get('_validation_heartbeat', {}).pop(book_id, None)
+    current = st.session_state.get('current_book')
+    if current is not None and current.document_id == book_id:
+        st.session_state.pop('current_book', None)
+
+
+def _review_back_button(book):
+    """Return True for a Back attempt, including a failed, retryable release."""
+    if not st.button(Validation.back_to_list_button, key="validation_back_to_list_button"):
+        return False
+    try:
+        result = _clear_validation_heartbeat(book)
+    except (ValidationLeaseUnavailable, GoogleAPIError):
+        logger.warning('Validation release failed for %s', book.document_id, exc_info=True)
+        st.error(Validation.release_failed)
+        return True
+    if result in (
+        ValidationLeaseStatus.RELEASED, ValidationLeaseStatus.NOT_OWNED,
+        ValidationLeaseStatus.MISSING,
+    ):
+        _forget_review(book.document_id)
+        st.rerun()
+    return True
+
+
+def _review_retry_button():
+    if st.button(Validation.retry_review_button, key="validation_retry_review_button"):
+        st.rerun()
+
+
+def _show_busy_review(book):
+    owner = book.validation_active_by
+    if owner and owner != st.session_state.get('username'):
+        st.warning(Validation.other_validator_active.format(name=owner))
+    else:
+        st.warning(Validation.other_session_active)
+    if not _review_back_button(book):
+        _review_retry_button()
 
 
 # ---------------------------------------------------------------------------
@@ -225,10 +277,17 @@ def render_list():
         # The list rows are PROJECTED (#78) — fetch the full document for the
         # one book actually being opened, so the Book object (and its editors)
         # see every field.
+        if selected_index not in range(len(pending)):
+            return
         doc_id, _row = pending[selected_index]
-        snap = st.session_state.firestore.get_by_reference(
-            collection='books', document_ref=doc_id
-        )
+        try:
+            snap = st.session_state.firestore.get_by_reference(
+                collection='books', document_ref=doc_id
+            )
+        except GoogleAPIError:
+            logger.warning('Validation open failed for %s', doc_id, exc_info=True)
+            st.error(Validation.review_failed)
+            return
         if not snap.exists:
             # Guard the stale-list race (book deleted since the stream above)
             # rather than constructing a Book from None (lookup-guarding
@@ -237,6 +296,11 @@ def render_list():
             return
         book = Book(db_object=snap.to_dict())
         st.session_state['_validation_book_id'] = book.document_id
+        st.session_state['_validation_review_session'] = {
+            'token': uuid4().hex,
+            'book_id': book.document_id,
+            'username': st.session_state.get('username'),
+        }
         st.session_state['current_book'] = book
         st.rerun()
 
@@ -633,42 +697,65 @@ def render_review():
     book_id = st.session_state['_validation_book_id']
     # Reload the book fresh each run so the editors reflect the latest persisted
     # state (all corrections write through immediately).
-    doc = st.session_state.firestore.get_by_reference(
-        collection='books', document_ref=book_id
-    )
+    try:
+        doc = st.session_state.firestore.get_by_reference(
+            collection='books', document_ref=book_id
+        )
+    except GoogleAPIError:
+        logger.warning('Validation reload failed for %s', book_id, exc_info=True)
+        st.error(Validation.review_failed)
+        _review_retry_button()
+        return
     if not doc.exists:
-        st.session_state.pop('_validation_book_id', None)
+        _forget_review(book_id)
         st.rerun()
         return
 
     book = Book(db_object=doc.to_dict())
     st.session_state['current_book'] = book
 
-    # Soft validator mutual-exclusion warning (#235): warn if another validator's
-    # heartbeat on this freshly-loaded book is still live (same activity window as
-    # the reopen block, via other_active_validator, #129). Read BEFORE stamping
-    # our own heartbeat below (which overwrites validation_active_by). This is a
-    # warning, not a block — the validator may proceed; a hard refusal could lock
-    # validators out after a crash (a product decision we are not taking here).
-    _other_validator = other_active_validator(
-        book.validation_active_by, book.validation_active_at,
-        st.session_state['username'],
-    )
-    if _other_validator:
-        st.warning(Validation.other_validator_active.format(name=_other_validator))
-
-    # Validation heartbeat (#200): record that this book is actively being
-    # reviewed so its owner cannot reopen it from "Review my books" while a
-    # validator has it open. Written on OPEN (not just on edits, which was the
-    # gap the edit_log proxy left) and refreshed as the validator works, but
-    # throttled so it is not rewritten on every rerun.
-    _hb_now = datetime.now(timezone.utc)
-    _hb_store = st.session_state.setdefault('_validation_heartbeat', {})
-    if validation_heartbeat_due(_hb_store, book.document_id, _hb_now.timestamp()):
-        book.validation_active_at = _hb_now
-        book.validation_active_by = st.session_state['username']
-
     st.header(Validation.review_header.format(title=book.title))
+    review = _review_session(book_id)
+    if not review.get('token'):
+        # Restored selection without its original token cannot identify the
+        # owning tab. Only Open creates a new review session.
+        st.warning(Validation.review_session_missing)
+        _review_back_button(book)
+        return
+
+    # The throttle proposes a write time on a COPY. Publish it only after the
+    # transaction commits a refresh. Every interaction still checks ownership,
+    # including a form posted from a render before another session took over.
+    heartbeat = dict(st.session_state.get('_validation_heartbeat', {}))
+    refresh_due = validation_heartbeat_due(
+        heartbeat, book_id, datetime.now(timezone.utc).timestamp(),
+    )
+    try:
+        result = book.acquire_validation_lease(
+            review['token'], review.get('username'), refresh_due,
+        )
+    except (ValidationLeaseUnavailable, GoogleAPIError):
+        logger.warning('Validation acquisition failed for %s', book_id, exc_info=True)
+        st.error(Validation.review_failed)
+        if not _review_back_button(book):
+            _review_retry_button()
+        return
+    if result == ValidationLeaseStatus.MISSING:
+        _forget_review(book_id)
+        st.rerun()
+        return
+    if result == ValidationLeaseStatus.BUSY:
+        _show_busy_review(book)
+        return
+    if result not in (ValidationLeaseStatus.OWNED, ValidationLeaseStatus.REFRESHED):
+        st.warning(Validation.review_session_missing)
+        _review_back_button(book)
+        return
+    if result == ValidationLeaseStatus.REFRESHED:
+        # A reacquisition can refresh even when the local throttle was not due.
+        heartbeat[book_id] = book.validation_active_at.timestamp()
+        st.session_state['_validation_heartbeat'] = heartbeat
+
     # Show the validator who originally entered this book. entered_by may be a
     # plain username string or a user DocumentReference; entered_by_username
     # (utilities, #129) guards both.
@@ -677,12 +764,8 @@ def render_review():
         st.caption(Validation.entered_by_label.format(name=entered_by_name))
     st.write(Validation.review_intro)
 
-    if st.button(Validation.back_to_list_button, key="validation_back_to_list_button"):
-        # Release the heartbeat so leaving the review does not keep the owner's
-        # reopen blocked for the rest of the activity window (#234).
-        _clear_validation_heartbeat(book)
-        st.session_state.pop('_validation_book_id', None)
-        st.rerun()
+    if _review_back_button(book):
+        return
 
     tab_metadata, tab_pages, tab_characters = st.tabs(
         [Validation.tab_metadata, Validation.tab_pages, Validation.tab_characters]
@@ -698,13 +781,25 @@ def render_review():
     st.subheader(Validation.approve_header)
     st.write(Validation.approve_help)
     if st.button(Validation.approve_button, key="validation_approve_button"):
-        book.validated = True
-        book.validated_by = _validator_ref()
-        # Release the heartbeat on approval too — the review is over (#234).
-        _clear_validation_heartbeat(book)
-        st.session_state.pop('_validation_book_id', None)
-        st.success(Validation.approved_success.format(title=book.title))
-        st.rerun()
+        try:
+            result = book.approve_with_validation_lease(
+                review['token'], review.get('username'), _validator_ref(),
+            )
+        except (ValidationLeaseUnavailable, GoogleAPIError):
+            logger.warning('Validation approval failed for %s', book_id, exc_info=True)
+            st.error(Validation.approval_failed)
+            return
+        if result == ValidationLeaseStatus.APPROVED:
+            _forget_review(book_id)
+            st.success(Validation.approved_success.format(title=book.title))
+            st.rerun()
+        elif result == ValidationLeaseStatus.MISSING:
+            _forget_review(book_id)
+            st.warning(Validation.book_no_longer_exists)
+            st.rerun()
+        else:
+            st.warning(Validation.approval_lease_lost)
+            _review_retry_button()
 
 
 if '_validation_book_id' in st.session_state:

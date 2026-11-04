@@ -1576,14 +1576,37 @@ class Validation:
         "approve it at the bottom of the page."
     )
     back_to_list_button = "← Back to list (do not approve)"
-    # Soft mutual-exclusion warning (#235): shown when another validator's
-    # heartbeat on this book is still within the activity window. Not a hard
-    # block — the validator may proceed; the point is awareness that edits could
-    # collide (last-write-wins).
+    # Exclusive review lease: blocked sessions cannot enter any editor.
     other_validator_active = (
-        "⚠️ {name} appears to be reviewing this book right now. Your edits and "
-        "theirs could overwrite each other — check with them before making "
-        "changes or approving."
+        "{name} is reviewing this book. Editing and approval are unavailable "
+        "until their review ends or expires after 30 minutes without interaction. "
+        "Retry to check whether the book is available."
+    )
+    other_session_active = (
+        "Another review session has this book open, possibly in another tab. "
+        "Editing and approval are unavailable until that review ends or expires "
+        "after 30 minutes without interaction. Retry to check availability."
+    )
+    retry_review_button = "Retry review"
+    review_session_missing = (
+        "This review session is no longer available. Go back to the list and "
+        "open the book again. An earlier session may remain active until it expires."
+    )
+    review_failed = (
+        "The book could not be opened for editing because review ownership "
+        "could not be checked. Please retry."
+    )
+    release_failed = (
+        "The review could not be released. Your session has been kept; "
+        "please try Back to list again."
+    )
+    approval_failed = (
+        "Approval could not be confirmed. Your review session has been kept. "
+        "Please retry."
+    )
+    approval_lease_lost = (
+        "This session no longer owns an active review, so the book was not "
+        "approved. Retry review to check availability."
     )
     tab_metadata = "Metadata"
     tab_pages = "Page text"
