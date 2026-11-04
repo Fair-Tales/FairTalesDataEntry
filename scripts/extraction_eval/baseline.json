@@ -1,0 +1,31 @@
+{
+  "variant": "production-baseline-with-strict-evaluation-parser-v1",
+  "request_version": "1",
+  "parser_version": "eval-v1",
+  "provider": "anthropic-messages",
+  "max_attempts": 1,
+  "settings": {
+    "extraction_model": "claude-sonnet-5",
+    "metadata_model": "claude-sonnet-5",
+    "character_detection_model": "claude-sonnet-5",
+    "locate_model": "claude-haiku-4-5",
+    "rotation_model": "claude-sonnet-4-6",
+    "crop_quality_model": "claude-haiku-4-5",
+    "theme_model": "claude-sonnet-4-6",
+    "extraction_max_edge": 2000,
+    "extraction_max_tokens": 2048,
+    "locate_max_edge": 784,
+    "enable_rotation_correction": true,
+    "enable_crop_quality_gate": true
+  },
+  "pricing": {
+    "verified": false,
+    "verified_at": null,
+    "source": "UNVERIFIED planning defaults; human must check current account rates and provider limits before execution",
+    "models": {
+      "claude-sonnet-5": {"input": 3, "output": 15, "cache_read": 0.3, "cache_write": 6, "max_input_tokens": 200000, "max_output_tokens": 8192, "max_images": 100, "max_request_bytes": 32000000},
+      "claude-sonnet-4-6": {"input": 3, "output": 15, "cache_read": 0.3, "cache_write": 6, "max_input_tokens": 200000, "max_output_tokens": 8192, "max_images": 100, "max_request_bytes": 32000000},
+      "claude-haiku-4-5": {"input": 1, "output": 5, "cache_read": 0.1, "cache_write": 2, "max_input_tokens": 200000, "max_output_tokens": 8192, "max_images": 100, "max_request_bytes": 32000000}
+    }
+  }
+}

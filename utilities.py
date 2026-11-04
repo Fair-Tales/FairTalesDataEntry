@@ -20,6 +20,7 @@ from email.mime.text import MIMEText
 from datetime import datetime, timezone, timedelta
 
 from ai_pricing import usage_cost
+from ai_runtime import current_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +220,11 @@ def get_ai_settings():
     and only the light validation runs per call. Call ``clear_ai_settings_cache``
     after an admin save so the new values are read immediately.
     """
+    runtime = current_runtime()
+    if runtime is not None:
+        # The standalone evaluator freezes/validates these before execution.
+        # In particular, never consult the Streamlit cache or Firestore here.
+        return dict(runtime.settings)
     stored = _read_ai_settings_doc()
     settings = dict(AI_SETTINGS_DEFAULTS)
     if not isinstance(stored, dict):
@@ -319,6 +325,9 @@ def get_anthropic_client():
     Centralises the ``'ANTHROPIC_API_KEY' in st.secrets`` guard: callers do
     ``client = get_anthropic_client(); if client is None: <show no-API-key UI>``.
     """
+    runtime = current_runtime()
+    if runtime is not None:
+        return runtime.client
     if 'ANTHROPIC_API_KEY' not in st.secrets:
         return None
     return anthropic.Anthropic(api_key=st.secrets['ANTHROPIC_API_KEY'])
@@ -455,6 +464,8 @@ def _log_usage(response, model, label=""):
     """
     usage = getattr(response, "usage", None)
     if usage is None:
+        if current_runtime() is not None:
+            record_api_usage(response, model, label)
         return
     logger.info(
         "ai_usage flow=%s model=%s input=%s output=%s cache_read=%s "
@@ -518,6 +529,13 @@ def record_api_usage(response, model, label=""):
     and any Firestore/other failure is LOGGED (never raised) so usage tracking can
     never break a user's real request.
     """
+    runtime = current_runtime()
+    if runtime is not None:
+        # Use the existing record_api_usage entry point, with a local sink.
+        # This intentionally precedes even the missing-usage early return:
+        # an evaluator must retain unknown-cost calls for reconciliation.
+        runtime.usage_sink(response, model, label)
+        return
     usage = getattr(response, "usage", None)
     if usage is None:
         return
@@ -1933,11 +1951,13 @@ def strip_leading_article(name):
     return stripped or name.strip()
 
 
-def lookup_isbn(isbn):
+def lookup_isbn(isbn, *, response_sink=None):
     """
     Look up book metadata via the Google Books API (free, no auth required).
     Returns dict with keys title, authors, publisher, published_date,
-    or None on any failure.
+    or None on any failure. Optional ``response_sink(raw_data)`` receives the
+    decoded provider response before metadata parsing, allowing standalone
+    evaluation to preserve the full lookup response alongside parsed values.
     """
     if not isbn:
         return None
@@ -1945,6 +1965,8 @@ def lookup_isbn(isbn):
     try:
         with urllib.request.urlopen(url, timeout=5) as resp:
             data = json.loads(resp.read())
+        if response_sink is not None:
+            response_sink(data)
         if data.get('totalItems', 0) == 0:
             return None
         info = data['items'][0]['volumeInfo']
@@ -2184,7 +2206,7 @@ def extract_copyright_metadata(image_bytes, client):
 
 
 def extract_photo_first_metadata(pages, client, title_page_hint=None,
-                                 progress_callback=None):
+                                 progress_callback=None, *, isbn_lookup=None):
     """Two-pass, cost-aware metadata extraction for the photo-first flow
     (#109; completes #63 and makes the #103 form pre-fill reachable).
 
@@ -2241,6 +2263,12 @@ def extract_photo_first_metadata(pages, client, title_page_hint=None,
     if title_bytes is None and pages:
         title_bytes = pages[0][1]
     metadata = extract_book_metadata(title_bytes, client)
+    effective_title_pos = title_pos if _bytes_at(title_pos) is not None else 1
+    sources = {
+        field: {'source': 'title_page', 'page_position': effective_title_pos}
+        for field in ('title', 'authors', 'illustrators', 'publisher', 'published_year')
+        if metadata.get(field) not in (None, '', [])
+    }
     _step()
 
     # Pass 2b — copyright page, only when a distinct one was located.
@@ -2254,26 +2282,33 @@ def extract_photo_first_metadata(pages, client, title_page_hint=None,
     # silent (these usually live on the copyright page, not the title page).
     if not metadata.get('publisher') and copyright_meta.get('publisher'):
         metadata['publisher'] = copyright_meta['publisher']
+        sources['publisher'] = {'source': 'copyright_page', 'page_position': copyright_pos}
     if metadata.get('published_year') is None and copyright_meta.get('published_year') is not None:
         metadata['published_year'] = copyright_meta['published_year']
+        sources['published_year'] = {'source': 'copyright_page', 'page_position': copyright_pos}
 
     # ISBN → Google Books (most reliable source). Use the copyright-page ISBN.
     isbn = copyright_meta.get('isbn')
-    isbn_metadata = lookup_isbn(isbn) if isbn else None
+    lookup = isbn_lookup if isbn_lookup is not None else lookup_isbn
+    isbn_metadata = lookup(isbn) if isbn else None
 
     # Google Books back-fills only where vision was silent. Vision stays primary
     # for the printed title and for illustrators (which the API rarely returns).
     if isbn_metadata:
         if not metadata.get('title') and isbn_metadata.get('title'):
             metadata['title'] = isbn_metadata['title']
+            sources['title'] = {'source': 'isbn_lookup', 'isbn': isbn}
         if not metadata.get('authors') and isbn_metadata.get('authors'):
             metadata['authors'] = list(isbn_metadata['authors'])
+            sources['authors'] = {'source': 'isbn_lookup', 'isbn': isbn}
         if not metadata.get('publisher') and isbn_metadata.get('publisher'):
             metadata['publisher'] = isbn_metadata['publisher']
+            sources['publisher'] = {'source': 'isbn_lookup', 'isbn': isbn}
 
     metadata['isbn'] = isbn
     metadata['isbn_metadata'] = isbn_metadata
     metadata['located'] = located
+    metadata['sources'] = sources
     return metadata
 
 

@@ -60,64 +60,14 @@ class PageExtractionError(Exception):
 
 
 def attempt_page_extraction(image_bytes, client, ai_settings, *, label):
-    """OCR one page image and return a classified outcome — with NO Firestore
-    logging, no session access and no exception raised, so it is callable from
-    the background page-processing worker (#179) as well as from
-    :func:`extract_page_info` (which adds the logging + raise contract).
+    """Shared storage-free OCR, with this module's existing helper boundary.
 
-    Returns ``('ok', (text, is_story_page, page_type))`` on success, or
-    ``('error', (error_type, error_message))`` on an Anthropic API error or a
-    reply that cannot be parsed as usable JSON.
-
-    ``ai_settings`` is a plain validated settings dict, read by the CALLER (the
-    worker thread must not touch the ``get_ai_settings`` Streamlit cache).
-
-    Uses the shared ``vision_json`` helper (#129) with the admin-configured
-    extraction model/resolution/tokens (#135). The image is downscaled for the
-    vision call and JPEG re-encoded below Claude's 10 MB per-image limit (#134).
-
-    Wordless-page guard (audit item 2): the model returns a ``has_text``
-    boolean. Many picture-book pages are wordless full illustrations, and
-    without this guard the model narrates the illustration into ``text`` —
-    polluting the research word/character counts — so when ``has_text`` is
-    false the returned ``text`` is forced to ``""``. A "wordless page" reply
-    may also carry ``"text": null`` rather than the requested ``""`` (the model
-    is prompted, not schema-constrained), so any non-string ``text`` is
-    normalised to ``""`` rather than crashing the page loop (see the "Clean
-    Up!" bug: an unguarded ``None.strip()`` here blanked the second half of a
-    book).
+    ``extract_page_info`` below retains the application's error-log/raise
+    behavior; standalone evaluation calls the same computation directly.
     """
-    try:
-        data, raw = vision_json(
-            client, [image_bytes], AIPrompts.page_extraction, downscale=True,
-            model=ai_settings['extraction_model'],
-            max_edge=ai_settings['extraction_max_edge'],
-            max_tokens=ai_settings['extraction_max_tokens'],
-            label=label,
-        )
-    except anthropic.AnthropicError as exc:
-        return 'error', (type(exc).__name__, str(exc))
-
-    if not isinstance(data, dict):
-        # ``vision_json`` already logged any JSON-decode failure and returned no
-        # data; treat a missing/unparseable reply as an extraction failure rather
-        # than silently saving a blank page.
-        snippet = (raw or "").strip()
-        message = (
-            f"Model reply could not be parsed as usable JSON: {snippet[:500]}"
-            if snippet else "Model returned no usable reply."
-        )
-        return 'error', (ExtractionErrorLog.ERROR_PARSE, message)
-
-    raw_text = data.get("text")
-    text = raw_text.strip() if isinstance(raw_text, str) else ""
-    if not bool(data.get("has_text", True)):
-        text = ""
-
-    return 'ok', (
-        text,
-        bool(data.get("is_story_page", False)),
-        data.get("page_type", ""),
+    from extraction_core import attempt_page_extraction as shared_attempt
+    return shared_attempt(
+        image_bytes, client, ai_settings, label=label, vision_json_call=vision_json,
     )
 
 

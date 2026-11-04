@@ -1,0 +1,31 @@
+{
+  "version": "pilot-metrics-v2-wordless-agreement-2026-11-04",
+  "normalization_version": "pilot-normalization-v1",
+  "primary_endpoint": "book_macro_ocr_token_multiset_f1",
+  "interpretation": "pilot reference-agreement; independently verified annotations reported separately",
+  "eligibility": ["observed", "verified"],
+  "excluded_reference_statuses": ["missing", "ambiguous", "not_annotated"],
+  "normalization": "NFKC, casefold, collapsed whitespace, canonical apostrophes; Unicode alphanumeric words with internal apostrophes; retain diacritics, numbers and repetitions; no stemming or stopword removal",
+  "uncertainty": "Explicit [?], [illegible], [unreadable] and [unclear] markers consume tokens and never match, including marker versus marker",
+  "empty_story_reference": "wordless agreement subgroup; agreed_wordless/disputed_wordless; failed and unrun retained in intended denominator; no token F1",
+  "empty_nonstory_reference": "not_annotated because importer deliberately blanked these pages",
+  "failed_text_prediction": "zero recovered content in intended denominator",
+  "unrun_text_prediction": "zero recovered content in intended denominator and incomplete run flag",
+  "ocr_matching_unit": "photographed page or spread, never adjacent-page pooling",
+  "ordered_secondary_metrics": "CER retains normalized punctuation; WER uses normalized tokens; insertions may exceed 1.0",
+  "character_matching": "book-local one-to-one exact normalized variant overlap; one leading article/possessive determiner stripped symmetrically; ambiguous assignments report conservative/optimistic bounds",
+  "incomplete_credits": "known-credit recall; no strict set accuracy or precision against incomplete author/illustrator lists",
+  "themes": "not_annotated; never score default false values",
+  "bootstrap_unit": "book",
+  "bootstrap_repeats": 2000,
+  "bootstrap_seed": 20261104,
+  "sampling": "stratified inverse-probability population estimates; challenges reported separately",
+  "reviewed_equivalences": {},
+  "excluded_metadata_only_titles": [
+    "I Love Christmas",
+    "Invisible Isabelle",
+    "Seasons",
+    "Ten Wriggly, Wiggly Caterpillars",
+    "Things You Should Know about Bugs"
+  ]
+}
