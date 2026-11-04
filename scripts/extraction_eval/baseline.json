@@ -19,13 +19,40 @@
     "enable_crop_quality_gate": true
   },
   "pricing": {
-    "verified": false,
-    "verified_at": null,
-    "source": "UNVERIFIED planning defaults; human must check current account rates and provider limits before execution",
+    "verified": true,
+    "verified_at": "2026-11-04T23:03:19.304138+00:00",
+    "source": "Verified 2026-11-04 against docs.anthropic.com pricing (Sonnet 5 = $2/$10 per MTok, cache read $0.20, 5-min cache write $2.50) and the repository's ai_pricing.py, which is the same table record_api_usage bills against. Sonnet 4.6 and Haiku 4.5 base rates were already correct; their cache rates now use ai_pricing.py's 0.1x/1.25x multipliers.",
     "models": {
-      "claude-sonnet-5": {"input": 3, "output": 15, "cache_read": 0.3, "cache_write": 6, "max_input_tokens": 200000, "max_output_tokens": 8192, "max_images": 100, "max_request_bytes": 32000000},
-      "claude-sonnet-4-6": {"input": 3, "output": 15, "cache_read": 0.3, "cache_write": 6, "max_input_tokens": 200000, "max_output_tokens": 8192, "max_images": 100, "max_request_bytes": 32000000},
-      "claude-haiku-4-5": {"input": 1, "output": 5, "cache_read": 0.1, "cache_write": 2, "max_input_tokens": 200000, "max_output_tokens": 8192, "max_images": 100, "max_request_bytes": 32000000}
+      "claude-sonnet-5": {
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.2,
+        "cache_write": 2.5,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 8192,
+        "max_images": 100,
+        "max_request_bytes": 32000000
+      },
+      "claude-sonnet-4-6": {
+        "input": 3,
+        "output": 15,
+        "cache_read": 0.3,
+        "cache_write": 3.75,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 8192,
+        "max_images": 100,
+        "max_request_bytes": 32000000
+      },
+      "claude-haiku-4-5": {
+        "input": 1,
+        "output": 5,
+        "cache_read": 0.1,
+        "cache_write": 1.25,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 8192,
+        "max_images": 100,
+        "max_request_bytes": 32000000
+      }
     }
   }
 }
