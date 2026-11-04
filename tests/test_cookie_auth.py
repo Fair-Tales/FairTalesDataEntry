@@ -110,6 +110,16 @@ class _FakeManager:
     def __init__(self, cookies=None):
         self.cookies = dict(cookies or {})
         self.deleted = []
+        self.set_calls = []
+        self.set_result = None
+        self.set_error = None
+
+    def set(self, name, value, **kwargs):
+        self.set_calls.append((name, value, kwargs))
+        if self.set_error is not None:
+            raise self.set_error
+        self.cookies[name] = value
+        return self.set_result
 
     def delete(self, name, key="delete"):
         self.deleted.append((name, key))
@@ -257,6 +267,126 @@ def test_transient_failure_keeps_cookie_before_fingerprint_check(restore_env):
     cookie_auth.restore_session_from_cookie()
     assert restore_env["state"].get("authentication_status") is None
     assert restore_env["cleared"] == []
+
+
+# ---------------------------------------------------------------------------
+# set_remember_cookie: a bool indicating issuance, not browser acknowledgement.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def write_env(monkeypatch, signing_key):
+    manager = _FakeManager()
+    env = {
+        "manager": manager,
+        "user": _FakeUserDoc({"password": HASH}),
+        "user_error": None,
+        "lookups": [],
+    }
+    monkeypatch.setattr(cookie_auth, "_cookie_manager", lambda: env["manager"])
+
+    def fake_get_user(username):
+        env["lookups"].append(username)
+        if env["user_error"] is not None:
+            raise env["user_error"]
+        return env["user"]
+
+    monkeypatch.setattr(cookie_auth, "get_user", fake_get_user)
+    return env
+
+
+@pytest.mark.parametrize("component_result", [None, False])
+def test_set_cookie_returns_true_after_one_fingerprint_bound_write(
+    write_env, component_result,
+):
+    """The component's own return value is not the issuance contract."""
+    manager = write_env["manager"]
+    manager.set_result = component_result
+    before = datetime.now(timezone.utc)
+
+    assert cookie_auth.set_remember_cookie("alice@example.com") is True
+
+    after = datetime.now(timezone.utc)
+    assert write_env["lookups"] == ["alice@example.com"]
+    assert len(manager.set_calls) == 1
+    name, token, kwargs = manager.set_calls[0]
+    assert name == cookie_auth.COOKIE_NAME
+    assert kwargs["key"] == "remember_set"
+    assert kwargs["same_site"] == "lax"
+    assert before + cookie_auth.REMEMBER_DURATION <= kwargs["expires_at"]
+    assert kwargs["expires_at"] <= after + cookie_auth.REMEMBER_DURATION
+    assert cookie_auth._verify_token(token) == {
+        "u": "alice@example.com",
+        "exp": int(kwargs["expires_at"].timestamp()),
+        "pfp": cookie_auth._password_fingerprint(HASH, KEY),
+    }
+
+
+@pytest.mark.parametrize(
+    "no_write_reason",
+    ["no_key", "no_manager", "lookup_failure", "no_user", "no_hash", "empty_hash", "null_hash"],
+)
+def test_set_cookie_returns_false_without_a_write(
+    write_env, monkeypatch, no_write_reason,
+):
+    manager = write_env["manager"]
+    if no_write_reason == "no_key":
+        monkeypatch.setattr(cookie_auth, "_signing_key", lambda: None)
+    elif no_write_reason == "no_manager":
+        write_env["manager"] = None
+    elif no_write_reason == "lookup_failure":
+        write_env["user_error"] = google_exceptions.ServiceUnavailable("offline")
+    elif no_write_reason == "no_user":
+        write_env["user"] = None
+    elif no_write_reason == "no_hash":
+        write_env["user"] = _FakeUserDoc({"username": "alice@example.com"})
+    elif no_write_reason == "empty_hash":
+        write_env["user"] = _FakeUserDoc({"password": ""})
+    elif no_write_reason == "null_hash":
+        write_env["user"] = _FakeUserDoc({"password": None})
+
+    assert cookie_auth.set_remember_cookie("alice@example.com") is False
+    assert manager.set_calls == []
+    if no_write_reason in {"no_key", "no_manager"}:
+        assert write_env["lookups"] == []
+
+
+def test_set_cookie_logs_transient_lookup_failure(write_env, caplog):
+    write_env["user_error"] = google_exceptions.ServiceUnavailable("offline")
+
+    assert cookie_auth.set_remember_cookie("alice@example.com") is False
+
+    assert write_env["manager"].set_calls == []
+    assert any(
+        record.name == "cookie_auth"
+        and record.levelname == "WARNING"
+        and "user lookup failed" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [RuntimeError("component failed"), google_exceptions.ServiceUnavailable("component failed")],
+)
+def test_set_cookie_propagates_manager_errors(write_env, error):
+    write_env["manager"].set_error = error
+
+    with pytest.raises(type(error)) as caught:
+        cookie_auth.set_remember_cookie("alice@example.com")
+
+    assert caught.value is error
+    assert len(write_env["manager"].set_calls) == 1
+
+
+def test_set_cookie_propagates_unexpected_lookup_error(write_env):
+    error = RuntimeError("unexpected lookup failure")
+    write_env["user_error"] = error
+
+    with pytest.raises(RuntimeError) as caught:
+        cookie_auth.set_remember_cookie("alice@example.com")
+
+    assert caught.value is error
+    assert write_env["manager"].set_calls == []
 
 
 # ---------------------------------------------------------------------------

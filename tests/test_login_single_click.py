@@ -16,13 +16,18 @@ History: #174 has regressed repeatedly. Two independent causes were found:
    form as a login form and fill via real input events. A specific
    ``Login.missing_fields`` warning guards the residual empty-submit case.
 
-``pages/login.py`` executes Streamlit calls at import time, so these are
-source-level assertions — they lock the load-bearing properties of the page
-text so a refactor cannot silently reintroduce either cause.
+``pages/login.py`` executes Streamlit calls at import time. Source assertions
+lock the form properties; AST extraction executes its real authenticated
+branch without importing the page or contacting external services.
 """
 
+import ast
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
+
+from cookie_auth import RESTORED_FLAG
 from text_content import Login
 
 LOGIN_SRC = (Path(__file__).parent.parent / "pages" / "login.py").read_text()
@@ -77,3 +82,131 @@ def test_cookie_write_not_inside_login_form():
     assert "set_remember_cookie" not in _form_block()
     # ... and the deferred write must still exist somewhere on the page.
     assert "set_remember_cookie" in LOGIN_SRC
+
+
+class _Stopped(BaseException):
+    pass
+
+
+class _SwitchedPage(BaseException):
+    pass
+
+
+def _authenticated_branch(state, cookie_result):
+    """Compile the real top-level branch with a tiny Streamlit control fake."""
+    tree = ast.parse(LOGIN_SRC)
+    branch = next(
+        node for node in tree.body
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Call)
+        and isinstance(node.test.func, ast.Name)
+        and node.test.func.id == "is_authenticated"
+    )
+    code = compile(ast.Module(body=[branch], type_ignores=[]), "pages/login.py", "exec")
+    events = {"cookie_calls": [], "notices": [], "stops": [], "redirects": []}
+
+    def write_cookie(username):
+        events["cookie_calls"].append(username)
+        return cookie_result
+
+    def stop():
+        events["stops"].append(True)
+        raise _Stopped()
+
+    def switch_page(path):
+        events["redirects"].append(path)
+        raise _SwitchedPage()
+
+    namespace = {
+        "st": SimpleNamespace(
+            session_state=state,
+            info=events["notices"].append,
+            stop=stop,
+            switch_page=switch_page,
+        ),
+        "is_authenticated": lambda: state.get("authentication_status") is True,
+        "set_remember_cookie": write_cookie,
+        "Login": Login,
+        "RESTORED_FLAG": RESTORED_FLAG,
+    }
+    return lambda: exec(code, namespace), events
+
+
+def test_no_cookie_write_redirects_in_same_execution():
+    state = {
+        "authentication_status": True,
+        "username": "alice@example.com",
+        "_pending_remember_cookie": "alice@example.com",
+        "_post_login_redirect": True,
+    }
+    execute, events = _authenticated_branch(state, cookie_result=False)
+
+    with pytest.raises(_SwitchedPage):
+        execute()
+
+    assert events == {
+        "cookie_calls": ["alice@example.com"],
+        "notices": [],
+        "stops": [],
+        "redirects": ["./pages/landing.py"],
+    }
+    assert state["authentication_status"] is True
+    assert state["username"] == "alice@example.com"
+    assert "_pending_remember_cookie" not in state
+    assert "_post_login_redirect" not in state
+
+
+def test_issued_cookie_stops_once_then_redirects_without_reissuing():
+    state = {
+        "authentication_status": True,
+        "username": "alice@example.com",
+        "_pending_remember_cookie": "alice@example.com",
+        "_post_login_redirect": True,
+    }
+    execute, events = _authenticated_branch(state, cookie_result=True)
+
+    with pytest.raises(_Stopped):
+        execute()
+
+    assert events == {
+        "cookie_calls": ["alice@example.com"],
+        "notices": [Login.signing_in],
+        "stops": [True],
+        "redirects": [],
+    }
+    assert state["authentication_status"] is True
+    assert state["_post_login_redirect"] is True
+    assert "_pending_remember_cookie" not in state
+
+    with pytest.raises(_SwitchedPage):
+        execute()
+
+    assert events["cookie_calls"] == ["alice@example.com"]
+    assert events["notices"] == [Login.signing_in]
+    assert events["stops"] == [True]
+    assert events["redirects"] == ["./pages/landing.py"]
+    assert state["authentication_status"] is True
+    assert state["username"] == "alice@example.com"
+    assert "_post_login_redirect" not in state
+
+
+@pytest.mark.parametrize("redirect_flag", ["_post_login_redirect", RESTORED_FLAG])
+def test_no_pending_cookie_preserves_ordinary_redirect(redirect_flag):
+    state = {
+        "authentication_status": True,
+        "username": "alice@example.com",
+        redirect_flag: True,
+    }
+    execute, events = _authenticated_branch(state, cookie_result=True)
+
+    with pytest.raises(_SwitchedPage):
+        execute()
+
+    assert events == {
+        "cookie_calls": [],
+        "notices": [],
+        "stops": [],
+        "redirects": ["./pages/landing.py"],
+    }
+    assert state["authentication_status"] is True
+    assert state["username"] == "alice@example.com"

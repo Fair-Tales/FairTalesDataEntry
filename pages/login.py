@@ -197,15 +197,15 @@ if is_authenticated():
     # username stashed. Writing the cookie HERE — at the top of the page, OUTSIDE
     # the login st.form — lets the CookieManager ``set`` component trigger its
     # value-change rerun normally (a form would suppress it, which is what caused
-    # the two-click bug). We must NOT redirect on this same run: st.switch_page
-    # would abort the run before the component dispatches its write, so the cookie
-    # would never persist (#111). Write, show a brief notice, and st.stop(); the
-    # component write triggers the next run, on which (no pending cookie) the
+    # the two-click bug). Wait only when a write was issued: st.switch_page would
+    # abort that run before the component dispatches its write (#111). If cookie
+    # preparation failed, continue the authenticated redirect immediately because
+    # no component write will trigger a rerun. After issuance, show a brief notice
+    # and st.stop(); the write triggers the next run, on which (no pending cookie) the
     # _post_login_redirect branch below sends the user home. Net: one Confirm
     # click for both remember-on and remember-off.
     pending_remember = st.session_state.pop('_pending_remember_cookie', None)
-    if pending_remember:
-        set_remember_cookie(pending_remember)
+    if pending_remember and set_remember_cookie(pending_remember):
         st.info(Login.signing_in)
         st.stop()
     # If the user was just re-authenticated from a remember-me cookie on a hard

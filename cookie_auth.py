@@ -234,18 +234,19 @@ def _cookie_manager():
     return st.session_state.get(_COOKIE_MANAGER_KEY)
 
 
-def set_remember_cookie(username):
-    """Write a signed, 7-day remember-me cookie for ``username``.
+def set_remember_cookie(username) -> bool:
+    """Issue a signed, 7-day cookie write and report whether it was issued.
 
-    No-op when remember-me is disabled or the cookie component is unavailable.
+    Return False when preparation fails or the cookie component is unavailable.
+    True means a write was issued, not that the browser confirmed persistence.
     Stores only the username + expiry + HMAC signature — never the password.
     """
     key = _signing_key()
     if key is None:
-        return
+        return False
     manager = _cookie_manager()
     if manager is None:
-        return
+        return False
     # Bind the token to the user's current password hash (#238) so a later
     # password reset invalidates it. One read at mint time is acceptable (the
     # login flow does not carry the user doc down to here). A transient lookup
@@ -259,14 +260,14 @@ def set_remember_cookie(username):
             "Remember-me cookie not written for user=%s: user lookup failed "
             "(%s).", username, exc,
         )
-        return
+        return False
     password_hash = _stored_password_hash(user) if user is not None else ""
     if not password_hash:
         logger.warning(
             "Remember-me cookie not written for user=%s: no stored password "
             "hash to fingerprint.", username,
         )
-        return
+        return False
     expiry = datetime.now(timezone.utc) + REMEMBER_DURATION
     token = _make_token(username, expiry, key, password_hash)
     # same_site="lax" (#207): Streamlit Cloud fronts every cold visit with a
@@ -289,6 +290,7 @@ def set_remember_cookie(username):
         expires_at=expiry,
         same_site="lax",
     )
+    return True
 
 
 def clear_remember_cookie():
