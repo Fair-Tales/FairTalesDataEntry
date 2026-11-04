@@ -35,11 +35,14 @@ cp scripts/extraction_eval/baseline.json /secure/fairtales-eval/baseline.json
 ```
 
 Before proceeding, inspect snapshot `audit`/`excluded_books` and review the local
-configuration. The checked-in price table is deliberately **unverified**, because
-the repository's Sonnet 5 introductory pricing is stale. Confirm current account
-input/output/cache prices, context/output/image/request-byte limits and any
-applicable multipliers, then update `pricing.models`, `pricing.source`,
-`pricing.verified_at` and set `pricing.verified` to `true`. Rates are USD per
+configuration. The checked-in price table was verified on 2026-11-04 against
+docs.anthropic.com and this repository's `ai_pricing.py`, which is the same
+table `record_api_usage` bills against; `pricing.verified` is `true`. Note that
+Sonnet 5's $2/$10 per MTok is NOT stale introductory pricing - it became
+permanent on 2026-08-10. Re-confirm current account input/output/cache prices,
+context/output/image/request-byte limits and any applicable multipliers before
+a large run, then update `pricing.models`, `pricing.source`, `pricing.verified_at`
+and keep `pricing.verified` `true`. Rates are USD per
 million tokens. A rate/limit cannot silently default to zero. Confirm settings
 match the intended baseline; the template freezes repository defaults, not a
 live admin-settings document. Generation temperatures are left as production
