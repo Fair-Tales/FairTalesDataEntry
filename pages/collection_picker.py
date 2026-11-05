@@ -26,6 +26,7 @@ from streamlit_option_menu import option_menu
 from st_keyup import st_keyup
 
 from text_content import Alerts, CollectionPicker, PhotoUpload
+from text_content.batch_upload import BatchUpload
 from utilities import (
     check_authentication_status,
     page_layout,
@@ -40,7 +41,10 @@ from photo_upload import (
     get_upload_session_id,
     generate_put_urls,
     generate_manifest_put_url,
-    build_uploader_html,
+    build_batch_uploader_html,
+    list_uploaded_keys,
+    read_upload_manifest,
+    strict_manifest_matches,
     fetch_uploaded_photos,
     cleanup_prefix,
     reset_upload_session,
@@ -395,7 +399,8 @@ def method_photo():
     st.subheader(CollectionPicker.photo_header)
     st.write(CollectionPicker.photo_instructions)
 
-    ai_available = "ANTHROPIC_API_KEY" in st.secrets
+    client = get_anthropic_client()
+    ai_available = client is not None
     if not ai_available:
         st.warning(CollectionPicker.photo_no_api_key)
 
@@ -407,6 +412,7 @@ def method_photo():
     # way. These cover/spine photos are transient — only used to read titles, NEVER
     # archived as book pages — so the temp prefix is cleaned up after extraction.
     session_id = get_upload_session_id("collection")
+    fs = get_s3_filesystem()
 
     upload_method = option_menu(
         None,
@@ -425,20 +431,26 @@ def method_photo():
         st.write(CollectionPicker.photo_direct_upload_instructions)
         put_urls = generate_put_urls("collection", session_id)
         manifest_url = generate_manifest_put_url("collection", session_id)
-        st.iframe(build_uploader_html(put_urls, manifest_url), height=460)
+        manifest = read_upload_manifest(fs, "collection", session_id)
+        st.iframe(build_batch_uploader_html(
+            put_urls, manifest_url, generation=session_id, initial=manifest,
+        ), height=460)
 
     if st.button(
         CollectionPicker.photo_extract_button,
         disabled=not ai_available,
         key="collection_photo_extract_button",
     ):
-        fs = get_s3_filesystem()
+        keys = list_uploaded_keys(fs, "collection", session_id)
+        manifest = read_upload_manifest(fs, "collection", session_id)
+        if not strict_manifest_matches(manifest, keys, generation=session_id):
+            st.warning(BatchUpload.waiting)
+            return
         pages = fetch_uploaded_photos(fs, "collection", session_id)
         if not pages:
             st.warning(CollectionPicker.photo_no_photos_uploaded)
         else:
             images = [data for _, data in pages]
-            client = get_anthropic_client()
             extracted = None
             try:
                 with st.spinner(CollectionPicker.photo_extracting):
@@ -447,9 +459,9 @@ def method_photo():
                 st.error(CollectionPicker.photo_extract_failed.format(error=exc))
             # Transient photos — drop the temp prefix + session id now they have
             # been read (they are never archived as book pages).
-            cleanup_prefix(fs, "collection", session_id)
-            reset_upload_session("collection")
             if extracted is not None:
+                cleanup_prefix(fs, "collection", session_id)
+                reset_upload_session("collection")
                 st.session_state["collection_photo_results"] = extracted
 
     results = st.session_state.get("collection_photo_results")

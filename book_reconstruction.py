@@ -79,6 +79,7 @@ from s3_constants import (
     count_folder_pages,
 )
 from image_processing import exif_transpose_bytes
+from page_results import apply_page_correction
 from data_structures import (
     Book, Page, Character, Alias, Author, Illustrator, Publisher,
     ExtractionErrorLog, log_extraction_error,
@@ -385,8 +386,11 @@ def _process_pages(book, pages, client, fs, progress):
         # extraction-failure path, whose detail is already logged by
         # ``extract_page_info`` itself.
         try:
-            bytes_for_extraction, _method, _rotation_uncertain = _process_page(
+            bytes_for_extraction, method, rotation_uncertain = _process_page(
                 raw_bytes, page_number, photos_url, fs, client
+            )
+            apply_page_correction(
+                page, corrected=method is not None, rotation_uncertain=rotation_uncertain,
             )
 
             try:

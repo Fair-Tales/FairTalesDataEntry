@@ -1,0 +1,32 @@
+"""Strings for conservative batch splitting and recoverable upload chunks."""
+
+
+class BatchUpload:
+    instructions = (
+        "Upload photos in capture order, in selections of at most 60 photos. "
+        "A book may continue in the next selection. Finish each selection here, "
+        "then add another selection or finish the batch."
+    )
+    chunk_caption = "Selection {number}: photos start at position {start}."
+    finish_chunk = "Finish this selection"
+    finish_batch = "Finish batch"
+    next_chunk = "Add another selection"
+    refresh = "Check upload progress"
+    ready = "This selection is complete and its photo order is frozen."
+    frozen = "Batch finished: {count} photos in capture order."
+    waiting = "Finish the photo selection in the uploader before continuing. Failed or missing photos must be retried."
+    retry = "Retry failed photos"
+    resume = "To resume an interrupted selection, select the same photos again. Completed photos are retained."
+    mismatch = "Select exactly the same photo names and sizes to resume this selection."
+    too_large = "One or more photos exceed 50 MB. No photos from this selection were uploaded."
+    too_many = "Select at most 60 photos at a time; no photos from this selection were uploaded."
+    manifest_failed = "Upload progress could not be saved. Retry before continuing."
+    chunk_finished = "Selection finished. Return to the page and check upload progress."
+    corrupt = "Photo {name} cannot be decoded. Replace it before processing the batch."
+    ambiguous = "Photo {name} is very dark but is not an unambiguous black separator. Review or replace it before processing."
+    all_black = "The batch contains only black separators, so no books can be created."
+    fallback_limit = "No black separators were found. Cover detection is limited to {limit} photos; split this upload into smaller batches or add deliberate separators."
+    bad_covers = "Cover detection returned invalid boundaries. Review the source photos before trying again."
+    incomplete = "The upload has failed, missing, or unfinished photos. Complete every selection before finishing the batch."
+    invalid_state = "The saved upload state is invalid. Keep the source photos and contact an administrator."
+    chunk_limit = "This batch has reached its selection limit. Finish it before starting another batch."

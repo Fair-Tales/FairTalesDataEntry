@@ -217,7 +217,7 @@ def upload_prefix(flow_key, session_id):
     return f"{UPLOAD_PREFIX_ROOT}/{flow_key}/{session_id}"
 
 
-def generate_put_urls(flow_key, session_id, count=MAX_UPLOAD_PAGES):
+def generate_put_urls(flow_key, session_id, count=MAX_UPLOAD_PAGES, *, start_index=1):
     """Return ``count`` presigned PUT URLs for
     ``uploads/{flow_key}/{session_id}/page_{i}.jpg``.
 
@@ -226,7 +226,7 @@ def generate_put_urls(flow_key, session_id, count=MAX_UPLOAD_PAGES):
     """
     client = _s3_client()
     urls = []
-    for i in range(1, count + 1):
+    for i in range(start_index, start_index + count):
         key = f"{upload_prefix(flow_key, session_id)}/page_{i}.jpg"
         urls.append(
             client.generate_presigned_url(
@@ -285,8 +285,18 @@ def manifest_matches(manifest, keys):
     uploaded = manifest.get("uploaded")
     if not isinstance(uploaded, list) or not uploaded:
         return False
+    if manifest.get("failed", 0) != 0:
+        return False
+    if "state" in manifest and manifest.get("state") != "complete":
+        return False
+    if any(not isinstance(name, str) for name in uploaded):
+        return False
+    if len(uploaded) != len(set(uploaded)) or missing_upload_slots(uploaded):
+        return False
+    if "count" in manifest and manifest.get("count") != len(uploaded):
+        return False
     names = {key.rsplit("/", 1)[-1] for key in keys}
-    return names == {str(name) for name in uploaded}
+    return names == set(uploaded)
 
 
 def upload_batch_ready(fs, flow_key, session_id):
@@ -753,3 +763,319 @@ def build_uploader_html(put_urls, manifest_url=None):
         .replace("__SELECT_LABEL__", BookPhotoEntry.upload_select_button)
         .replace("__HINT__", BookPhotoEntry.upload_component_hint)
     )
+
+
+# Strict, immutable upload generations used by unattended multi-book batches.
+# The legacy uploader above remains available to existing single-book sessions.
+BATCH_STATE_FILENAME = "upload_state.json"
+MAX_BATCH_CHUNKS = 100
+MAX_BATCH_UPLOAD_PHOTOS = 1200
+
+
+def _batch_state_path(session_id):
+    return f"{S3_BUCKET}/batch_sources/{session_id}/{BATCH_STATE_FILENAME}"
+
+
+def _write_upload_json(fs, path, value):
+    with fs.open(path, "wb") as handle:
+        handle.write(json.dumps(value).encode("utf-8"))
+
+
+def get_batch_upload_state(fs, session_id):
+    """Recover chunk allocation from storage, independently of browser state."""
+    from text_content.batch_upload import BatchUpload
+
+    try:
+        with fs.open(_batch_state_path(session_id), "rb") as handle:
+            state = json.load(handle)
+    except FileNotFoundError:
+        state = {"version": 1, "chunks": [{"index": 0, "offset": 0}], "finished": False}
+        _write_upload_json(fs, _batch_state_path(session_id), state)
+    except (ValueError, OSError) as exc:
+        raise ValueError(BatchUpload.invalid_state) from exc
+    chunks = state.get("chunks") if isinstance(state, dict) else None
+    if (not isinstance(chunks, list) or not chunks or len(chunks) > MAX_BATCH_CHUNKS
+            or any(not isinstance(chunk, dict) or chunk.get("index") != i
+                   or type(chunk.get("offset")) is not int or chunk.get("offset", -1) < 0
+                   for i, chunk in enumerate(chunks))):
+        raise ValueError(BatchUpload.invalid_state)
+    return state
+
+
+def _chunk_session(session_id, index):
+    return f"{session_id}/chunks/{index:04d}"
+
+
+def strict_manifest_matches(manifest, keys, *, generation, start_index=1):
+    """Require a frozen generation, zero failures and every expected slot.
+
+    A completed manifest cannot describe just successful PUTs: the browser saves
+    every selected slot before beginning uploads. A generation allows only one
+    immutable selection, preventing a previous completion from matching a new
+    selection before that new selection's first PUT reaches storage.
+    """
+    if not isinstance(manifest, dict):
+        return False
+    expected = manifest.get("expected")
+    uploaded = manifest.get("uploaded")
+    if (manifest.get("generation") != generation or manifest.get("state") != "complete"
+            or manifest.get("failed") != 0 or not isinstance(expected, list)
+            or not expected or len(expected) > MAX_UPLOAD_PAGES
+            or not isinstance(uploaded, list)
+            or any(not isinstance(name, str) for name in expected + uploaded)):
+        return False
+    names = [f"page_{n}.jpg" for n in range(start_index, start_index + len(expected))]
+    return (expected == names and len(uploaded) == len(set(uploaded))
+            and len(keys) == len(expected) and set(uploaded) == set(expected)
+            and {key.rsplit("/", 1)[-1] for key in keys} == set(expected))
+
+
+def batch_chunk_snapshot(fs, session_id, chunk):
+    """Return readiness and globally ordered source descriptors for one chunk."""
+    accepted = chunk.get("accepted_sources")
+    if accepted is not None:
+        valid = (isinstance(accepted, list) and 0 < len(accepted) <= MAX_UPLOAD_PAGES
+                 and all(isinstance(source, dict)
+                         and source.get("position") == chunk.get("offset", 0) + index
+                         and isinstance(source.get("key"), str)
+                         for index, source in enumerate(accepted, 1)))
+        return bool(valid), accepted if valid else [], None
+    chunk_id = _chunk_session(session_id, chunk["index"])
+    keys = list_uploaded_keys(fs, "batch", chunk_id)
+    manifest = read_upload_manifest(fs, "batch", chunk_id)
+    ready = strict_manifest_matches(
+        manifest, keys, generation=chunk_id, start_index=chunk["offset"] + 1,
+    )
+    sources = [
+        {"name": key.rsplit("/", 1)[-1], "key": key, "position": chunk["offset"] + i}
+        for i, key in enumerate(keys, 1)
+    ] if ready else []
+    return ready, sources, manifest
+
+
+def _completed_batch_sources(fs, session_id, state, on_chunk=None):
+    from text_content.batch_upload import BatchUpload
+
+    sources = []
+    for chunk in state.get("chunks", []):
+        if chunk.get("offset") != len(sources):
+            raise ValueError(BatchUpload.invalid_state)
+        accepted = chunk.get("accepted_sources")
+        if accepted is not None:
+            if (not isinstance(accepted, list) or not accepted
+                    or any(not isinstance(source, dict)
+                           or source.get("position") != len(sources) + index
+                           or not isinstance(source.get("key"), str)
+                           for index, source in enumerate(accepted, 1))):
+                raise ValueError(BatchUpload.invalid_state)
+            chunk_sources = accepted
+        else:
+            ready, chunk_sources, _manifest = batch_chunk_snapshot(fs, session_id, chunk)
+            if not ready:
+                raise ValueError(BatchUpload.incomplete)
+            if on_chunk is not None:
+                on_chunk(chunk["index"], chunk_sources)
+                # Only successful durable staging permits recovery without the
+                # temporary objects/manifests, which may expire after seven days.
+                chunk["accepted_sources"] = chunk_sources
+                _write_upload_json(fs, _batch_state_path(session_id), state)
+        sources.extend(chunk_sources)
+    return sources
+
+
+def append_batch_upload_chunk(fs, session_id, *, on_chunk=None):
+    """Freeze and hand off completed sources before allocating fresh PUT slots."""
+    from text_content.batch_upload import BatchUpload
+
+    state = get_batch_upload_state(fs, session_id)
+    if state.get("finished"):
+        raise ValueError(BatchUpload.invalid_state)
+    sources = _completed_batch_sources(fs, session_id, state, on_chunk)
+    if len(state["chunks"]) >= MAX_BATCH_CHUNKS or len(sources) >= MAX_BATCH_UPLOAD_PHOTOS:
+        raise ValueError(BatchUpload.chunk_limit)
+    state["chunks"].append({"index": len(state["chunks"]), "offset": len(sources)})
+    _write_upload_json(fs, _batch_state_path(session_id), state)
+    return state
+
+
+def finish_batch_upload(fs, session_id, *, on_chunk=None):
+    """Freeze the full ordered source manifest, only after every chunk finished."""
+    state = get_batch_upload_state(fs, session_id)
+    sources = _completed_batch_sources(fs, session_id, state, on_chunk)
+    state["finished"] = True
+    _write_upload_json(fs, _batch_state_path(session_id), state)
+    return sources
+
+
+_STRICT_UPLOADER_TEMPLATE = """
+<div id="ftu-strict">
+  <input id="batch-upload-input" type="file" accept="image/*" multiple>
+  <button id="batch-upload-retry" type="button">__RETRY__</button>
+  <button id="batch-upload-finish" type="button" disabled>__FINISH__</button>
+  <p id="batch-upload-status"></p>
+  <ul id="batch-upload-list"></ul>
+</div>
+<script>
+(function () {
+  var URLS = __URLS__, MANIFEST_URL = __MANIFEST_URL__;
+  var GENERATION = __GENERATION__, START = __START__, MAX_BYTES = __MAX_BYTES__;
+  var TEXT = __TEXT__, saved = __INITIAL__;
+  var input = document.getElementById("batch-upload-input");
+  var finish = document.getElementById("batch-upload-finish");
+  var retry = document.getElementById("batch-upload-retry");
+  var status = document.getElementById("batch-upload-status");
+  var list = document.getElementById("batch-upload-list");
+  var descriptors = saved && saved.files || [];
+  var uploaded = saved && saved.uploaded || [];
+  var expected = saved && saved.expected || [];
+  var files = [], rows = [], busy = false, frozen = saved && saved.state === "complete";
+  var sequence = Promise.resolve();
+  input.disabled = frozen;
+  status.textContent = frozen ? TEXT.finished : (expected.length ? TEXT.resume : "");
+
+  function put(url, data) {
+    return new Promise(function(resolve, reject) {
+      var xhr = new XMLHttpRequest();
+      xhr.open("PUT", url, true);
+      xhr.timeout = 180000;
+      xhr.onload = function() { if (xhr.status >= 200 && xhr.status < 300) resolve(); else reject(new Error("PUT " + xhr.status)); };
+      xhr.onerror = function() { reject(new Error("network")); };
+      xhr.ontimeout = function() { reject(new Error("timeout")); };
+      xhr.send(data);
+    });
+  }
+  function save(state) {
+    var body = JSON.stringify({version: 2, generation: GENERATION, state: state,
+      expected: expected.slice(), uploaded: uploaded.slice(), files: descriptors.slice(),
+      count: uploaded.length, failed: expected.length - uploaded.length});
+    // Serialize manifest PUTs: an earlier pending checkpoint cannot overwrite
+    // a later completed generation after a slow network response.
+    sequence = sequence.catch(function() {}).then(function() { return put(MANIFEST_URL, body); });
+    return sequence;
+  }
+  function showRows() {
+    list.textContent = "";
+    rows = descriptors.map(function(d, i) {
+      var row = document.createElement("li");
+      row.textContent = d.name + (uploaded.indexOf(expected[i]) >= 0 ? " ✓" : " …");
+      list.appendChild(row); return row;
+    });
+  }
+  async function uploadMissing() {
+    if (busy || frozen || !files.length) return;
+    busy = true; input.disabled = true; finish.disabled = true; retry.disabled = true;
+    try {
+      // No photo PUT starts until the exact selected slots are durably recorded.
+      await save("uploading");
+      for (var i = 0; i < files.length; i++) {
+        if (uploaded.indexOf(expected[i]) >= 0) continue;
+        try {
+          await put(URLS[i], files[i]);
+          uploaded.push(expected[i]);
+          rows[i].textContent = descriptors[i].name + " ✓";
+        } catch (error) {
+          rows[i].textContent = descriptors[i].name + " ✗";
+        }
+        await save("uploading");
+      }
+      status.textContent = TEXT.uploaded.replace("{done}", uploaded.length).replace("{total}", expected.length);
+      finish.disabled = uploaded.length !== expected.length;
+    } catch (error) { status.textContent = TEXT.manifest_failed; }
+    busy = false; input.disabled = false; retry.disabled = false;
+  }
+  input.addEventListener("change", function() {
+    if (frozen || busy) return;
+    var selected = Array.prototype.slice.call(input.files);
+    input.value = "";
+    selected.sort(function(a,b) { return a.name.localeCompare(b.name, undefined, {numeric:true, sensitivity:"base"}); });
+    if (!selected.length) return;
+    if (selected.length > URLS.length) { status.textContent = TEXT.too_many; return; }
+    if (selected.some(function(f) { return f.size > MAX_BYTES; })) { status.textContent = TEXT.too_large; return; }
+    var next = selected.map(function(f) { return {name:f.name, size:f.size}; });
+    if (descriptors.length && JSON.stringify(next) !== JSON.stringify(descriptors)) { status.textContent = TEXT.mismatch; return; }
+    descriptors = next;
+    expected = selected.map(function(_, i) { return "page_" + (START+i) + ".jpg"; });
+    files = selected; showRows(); uploadMissing();
+  });
+  retry.addEventListener("click", uploadMissing);
+  finish.addEventListener("click", async function() {
+    if (busy || frozen || !expected.length || uploaded.length !== expected.length) return;
+    busy = true; input.disabled = true; finish.disabled = true; retry.disabled = true;
+    try { await save("complete"); frozen = true; status.textContent = TEXT.finished; }
+    catch (error) { status.textContent = TEXT.manifest_failed; input.disabled = false; finish.disabled = false; retry.disabled = false; }
+    busy = false;
+  });
+  showRows();
+  if (!frozen && expected.length && uploaded.length === expected.length) finish.disabled = false;
+})();
+</script>
+"""
+
+
+def build_batch_uploader_html(put_urls, manifest_url, *, generation, start_index=1, initial=None):
+    """A single immutable generation with resumable failed-slot retries."""
+    from text_content.batch_upload import BatchUpload
+
+    texts = {
+        "resume": BatchUpload.resume, "finished": BatchUpload.chunk_finished,
+        "manifest_failed": BatchUpload.manifest_failed, "mismatch": BatchUpload.mismatch,
+        "too_many": BatchUpload.too_many, "too_large": BatchUpload.too_large,
+        "uploaded": BookPhotoEntry.upload_progress,
+    }
+    if not isinstance(initial, dict) or initial.get("generation") != generation or initial.get("version") != 2:
+        initial = None
+
+    def script_json(value):
+        return json.dumps(value).replace("<", "\\u003c").replace(">", "\\u003e")
+
+    replacements = {
+        "__URLS__": script_json(put_urls), "__MANIFEST_URL__": script_json(manifest_url),
+        "__GENERATION__": script_json(generation), "__START__": str(start_index),
+        "__MAX_BYTES__": str(MAX_UPLOAD_BYTES), "__INITIAL__": script_json(initial),
+        "__TEXT__": script_json(texts), "__RETRY__": BatchUpload.retry,
+        "__FINISH__": BatchUpload.finish_chunk,
+    }
+    html = _STRICT_UPLOADER_TEMPLATE
+    for key, value in replacements.items():
+        html = html.replace(key, value)
+    return html
+
+
+def render_batch_upload(fs, session_id, *, on_chunk=None):
+    """Render bounded chunks; return frozen source descriptors after Finish batch.
+
+    ``on_chunk(index, sources)`` is an idempotent durable staging callback. It
+    executes on the script thread before advancing the upload or finishing it.
+    No extraction runs here and no source object is deleted.
+    """
+    from text_content.batch_upload import BatchUpload
+
+    state = get_batch_upload_state(fs, session_id)
+    if state.get("finished"):
+        sources = _completed_batch_sources(fs, session_id, state, on_chunk)
+        st.success(BatchUpload.frozen.format(count=len(sources)))
+        return sources
+    st.write(BatchUpload.instructions)
+    chunk = state["chunks"][-1]
+    chunk_id = _chunk_session(session_id, chunk["index"])
+    ready, _sources, manifest = batch_chunk_snapshot(fs, session_id, chunk)
+    st.caption(BatchUpload.chunk_caption.format(number=chunk["index"] + 1, start=chunk["offset"] + 1))
+    if not ready:
+        urls = generate_put_urls(
+            "batch", chunk_id, count=min(MAX_UPLOAD_PAGES, MAX_BATCH_UPLOAD_PHOTOS - chunk["offset"]),
+            start_index=chunk["offset"] + 1,
+        )
+        url = generate_manifest_put_url("batch", chunk_id)
+        st.iframe(build_batch_uploader_html(
+            urls, url, generation=chunk_id, start_index=chunk["offset"] + 1, initial=manifest,
+        ), height=460)
+        st.info(BatchUpload.waiting)
+        st.button(BatchUpload.refresh, key="batch_upload_refresh_button")
+        return None
+    st.success(BatchUpload.ready)
+    if st.button(BatchUpload.next_chunk, key="batch_upload_next_chunk_button"):
+        append_batch_upload_chunk(fs, session_id, on_chunk=on_chunk)
+        st.rerun()
+    if st.button(BatchUpload.finish_batch, key="batch_upload_finish_button"):
+        return finish_batch_upload(fs, session_id, on_chunk=on_chunk)
+    return None
