@@ -316,3 +316,90 @@ rotation_uncertain into registration even on OCR failure, using `page_results`.
 That guarded module was not modified. The new batch finalizer and reconstruction path
 already preserve these flags. Legacy precomputed-empty handoff inside guarded utilities
 also remains unchanged; durable batch review handles empty success explicitly.
+
+## 014 — Alias/character data model driven by downstream NLP, and the measurement framework after cancelling fresh annotation (2026-11-05)
+
+**Context.** The 20-book baseline harness run scored OCR at 0.9906 book-macro F1 but
+alias F1 at 0.581 (precision 0.447, recall 0.830). Investigation established that the
+precision figure is a property of the reference, not the pipeline: across the pilot
+corpus the students recorded 200 aliases against 1,494 characters (0.13 per character),
+48% of books record none at all, the median is 1 where any exist, and 67% are lowercase
+descriptive forms such as `the brown bear` or `her daughter`. See
+`planning/human_alias_behaviour_2026-11-05.md`.
+
+**Decisions (Chris, 2026-11-05).**
+
+1. **No fresh annotation round.** A complete independent double-annotation programme was
+   designed and costed at ~550 person-hours; it is cancelled, not deferred. Every metric
+   must be computable from the existing pilot reference, the pipeline's own output, the
+   already-adjudicated artefacts, or the frozen rotation fixtures.
+2. **Recovering the students' aliases plus extras is the desired behaviour.** Alias
+   recall against the student reference is the headline alias metric. Reference
+   *precision* is retired as a target and reported only as a diagnostic, always with the
+   48%-empty caveat attached, because no pipeline improvement can raise it.
+3. **Duplication is handled by grouping, never deletion.** The rule is derived from the
+   downstream tasks the alias data feeds — speaker attribution, and extraction of the
+   language relating to each character — not from tidiness. A deleted surface form can no
+   longer match its mentions, so deletion is downstream recall loss. Measured over the
+   dev20 output: exact casefolded matching finds 811 of 916 candidate mention
+   occurrences; preserving every recorded surface and making articles optional at match
+   time finds all 916, of which 894 (97.6%) resolve to a single character. A rule that
+   deletes determiner-duplicate rows removes nine aliases and finds exactly the same 916.
+   Deletion therefore buys nothing and costs rows.
+4. **Articles are optional at match time; possessives are not.** `a`/`an`/`the` are
+   optional when matching mentions. Possessives and relational possessors are preserved,
+   because the possessor is the evidence of which character is meant — collapsing
+   `Marlon's mum` into `his mum` destroys exactly the discrimination that identity
+   correctness depends on. Possessive stripping is confined to the permissive M1
+   groundedness check, whose question is only whether the text exists at all. The two
+   normalisers are deliberately separate and must not call each other.
+5. **Alias storage: raw surface form and canonical form as separate fields.** A human
+   entering one form is sufficient; the canonical value is derived deterministically on
+   write and is overridable, with the override explicit in the data. Records written
+   before this change have no canonical field: the read path falls back rather than
+   raising or dropping the alias. The backfill over the existing 1,494 characters and
+   200 aliases is purely rule-based, costs nothing in API calls, is dry-run by default,
+   idempotent, and overwrites nothing a student entered.
+6. **No bias between merging and splitting identities.** Neither error is acceptable, so
+   the design discriminates on textual evidence instead of adopting a prior. False-merge
+   and false-split rates are reported separately with separate targets, never combined
+   into one score. Unresolved identity ambiguity is represented as unresolved.
+7. **Character-associated language is stored as separately labelled relations** — the
+   character's own speech, narration about them, and language addressed to them — so any
+   combination can be analysed later without re-running the pipeline.
+8. **Publisher is recorded as two separate fields** (imprint and publishing house), with
+   migration and scoring specified. This is convention C4 and is settled.
+9. **Convention status.** C3 (descriptive aliases in scope) and C4 are accepted. C1
+   (preserve book-authored lettering including illustration lettering, tagged), C2
+   (`contains_story` means participation in the main work) and C6 (credited retellers
+   count as authors) remain **provisional research conventions**: implemented as
+   defaults, with the convention version recorded in the output so any of them can be
+   revisited without re-running. Pipeline agreement cannot validate a research
+   convention, and these are Chris's judgement, not findings.
+10. **Claims are exploratory and pilot-only.** Whether mentions are attributed to the
+    *right* character is unmeasured and unmeasurable without labels we have chosen not to
+    create. The mention-attribution metric is therefore labelled a dictionary-uniqueness
+    diagnostic, never accuracy. The transcription result is the strong, fully supported
+    claim.
+11. **Holdout.** The usable pool is 161 locally verified books (90 with student aliases),
+    not the whole 276. The overfitting check is 40 books, sampled 27 alias-positive and
+    13 alias-zero under a frozen seed, run as a *paired* baseline-and-candidate
+    comparison at $57.73 with request reuse. Forty books buys roughly ±7 points on alias
+    recall and ±8 on groundedness — coarse, but enough to expose real overfitting.
+
+**Metrics after this decision.** Alias recall (headline), M1 groundedness (93.8% at
+baseline: 97 of 112 aliases verbatim in the pipeline's own text, 8 more after determiner
+stripping, 7 ungrounded), M2 redundancy, M3 referent collision, M4 mention attribution
+(diagnostic only). An empty output is *undefined* groundedness, never perfect
+groundedness. Groundedness carries a known confound: an alias can be ungrounded because
+the text is missing rather than because the alias is wrong.
+
+**Billing.** The Anthropic API key was moved to a Console organisation linked to Chris's
+Ultra subscription, so pipeline spend draws on the $200 monthly credit allowance instead
+of the production card. That organisation has no payment method attached, which proves
+the credits are being used but means API calls hard-stop when the allowance is exhausted
+rather than falling back — a live-app failure mode that did not previously exist.
+Credits expire at the end of each billing cycle and do not roll over.
+
+See `planning/pipeline_improvement_design_2026-11-05.md` and
+`planning/alias_duplication_findings_2026-11-05.md`.
