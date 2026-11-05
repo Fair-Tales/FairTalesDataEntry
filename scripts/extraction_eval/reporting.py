@@ -49,6 +49,41 @@ def _image(path, base, output, label):
     return f'<figure><img loading="lazy" src="{html.escape(source, quote=True)}" alt="{html.escape(label)}"><figcaption>{html.escape(label)}</figcaption></figure>'
 
 
+def snapshot_audit_provenance(manifest):
+    """Keep missing legacy audit provenance unknown, even if consistency was asserted."""
+    recorded = manifest.get("audits")
+    recorded = recorded if isinstance(recorded, dict) else {}
+    audits = {name: value if isinstance(value, bool) else None
+              for name in ("source_changes", "membership")
+              for value in (recorded.get(name),)}
+    if any(value is None for value in audits.values()):
+        status = "unknown"
+    elif all(audits.values()):
+        status = "audited"
+    elif any(audits.values()):
+        status = "partially_audited"
+    else:
+        status = "not_audited"
+    consistent = manifest.get("source_consistent")
+    if consistent is not False and not (status == "audited" and consistent is True):
+        consistent = None
+    return {"snapshot_audits": audits, "snapshot_audit_status": status,
+            "snapshot_source_consistent": consistent}
+
+
+def snapshot_audit_description(manifest):
+    """Describe the audit coverage and consistency without claiming unrun checks passed."""
+    provenance = snapshot_audit_provenance(manifest)
+    audits = provenance.get("snapshot_audits", {})
+    states = {True: "ran", False: "not run", None: "unknown"}
+    consistency = {True: "verified", False: "changes detected", None: "not verified"}
+    status = str(provenance.get("snapshot_audit_status", "unknown")).replace("_", " ").upper()
+    return (f"Snapshot audits: {status}. "
+            f"Source-change audit: {states.get(audits.get('source_changes'), 'unknown')}; "
+            f"membership audit: {states.get(audits.get('membership'), 'unknown')}. "
+            f"Source consistency: {consistency.get(provenance.get('snapshot_source_consistent'), 'not verified')}.")
+
+
 def write_reports(manifest, predictions, out, protocol=None, selection=None, calls=None):
     """Write summary.json, books.csv, pages.csv, calls.csv and inspection.html.
 
@@ -81,6 +116,7 @@ def write_reports(manifest, predictions, out, protocol=None, selection=None, cal
                 score[key] = sample[key]
         scores.append(score)
     summary = aggregate(scores, protocol)
+    summary.update(snapshot_audit_provenance(manifest))
     summary.update({"snapshot_id": manifest.get("snapshot_id"), "run_id": predictions.get("run_id"),
                     "selection": selection, "snapshot_exclusions": manifest.get("excluded_books", manifest.get("exclusions", [])),
                     "adjudication": manifest.get("adjudication"),
@@ -149,6 +185,7 @@ def write_reports(manifest, predictions, out, protocol=None, selection=None, cal
                 '<p>Imported OCR, cleaning and some metadata are AI-derived. These results measure agreement, not independently verified accuracy. '
                 'Wordless agreement has a separate denominator. Disputed wordless pages require human adjudication. '
                 'Failed or unrun eligible text recovers zero tokens; incomplete work remains visible.</p>'
+                f'<p><strong>{html.escape(snapshot_audit_description(manifest))}</strong></p>'
                 f'<details open><summary>Run summary and denominators</summary><pre>{_pretty(summary)}</pre></details>'
                 + "\n".join(sections) + '</body></html>')
     _atomic_text(output / "inspection.html", document)

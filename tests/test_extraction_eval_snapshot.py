@@ -76,7 +76,7 @@ def source():
 
 
 def test_frozen_eligibility_wordless_nonstory_and_raw_schema(tmp_path, source):
-    manifest = create_snapshot(tmp_path, source)
+    manifest = create_snapshot(tmp_path, source, audit=True)
     book = manifest.get("books")[0]
     first, wordless, nonstory = book.get("pages")
     assert first.get("reference", {}).get("text", {}).get("status") == "observed"
@@ -134,12 +134,12 @@ def test_variants_ignored_duplicates_and_document_id_mismatch_audited(tmp_path, 
 def test_resume_partial_download_reuses_images_and_frozen_reference(tmp_path, source):
     source.fail_image = "sawimages/Story/page_2.jpg"
     with pytest.raises(OSError, match="interrupted"):
-        create_snapshot(tmp_path, source)
+        create_snapshot(tmp_path, source, audit=True)
     assert (tmp_path / "inventory.json").is_file()
     assert not (tmp_path / "manifest.json").exists()
     source.fail_image = None
     source.documents.get("pages/story_1").get("data")["text"] = "Changed after freeze"
-    manifest = create_snapshot(tmp_path, source)
+    manifest = create_snapshot(tmp_path, source, audit=True)
     assert source.reads.count("sawimages/Story/page_1.jpg") == 1
     assert manifest.get("books")[0].get("pages")[0].get("reference", {}).get("text", {}).get("value") == "Once upon a time"
     assert manifest.get("source_consistent") is False

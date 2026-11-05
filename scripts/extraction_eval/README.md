@@ -34,7 +34,48 @@ mkdir -p /secure/fairtales-eval
 cp scripts/extraction_eval/baseline.json /secure/fairtales-eval/baseline.json
 ```
 
-Before proceeding, inspect snapshot `audit`/`excluded_books` and review the local
+The default snapshot makes **one capture pass** over Firestore. It does not
+re-read every captured document or repeat the membership queries afterward.
+The example above captures the whole `pilot_import` population; the later
+`extract --limit 20` selects twenty books from that local snapshot. To capture
+only particular books, supply snapshot `--books ID_OR_TITLE ...`.
+
+Before the first Firestore read, snapshot prints a conservative read estimate
+and the requested audits. An estimate above **10,000 reads** requires the
+literal **`AFFIRMATIVE`**; Enter/yes does not authorize reads. The planning inputs
+are `--estimated-books 195` (the entire matching population, including discovery
+when `--books` selects a subset) and `--estimated-documents-per-book 50`.
+`--read-confirmation-threshold` changes the confirmation threshold. Estimates
+include allowances for empty queries and requested audits, but are not billing
+guarantees or knowledge of the project's remaining shared quota. Set the
+planning inputs conservatively for a different corpus. No Firestore count
+query is used to obtain the estimate.
+
+Concurrent source changes remain a reproducibility concern. Opt in to
+`--audit-source-changes` to re-read captured documents and image metadata,
+`--audit-membership` to repeat collection and image-inventory checks, or
+`--audit` for both. These extra passes
+can roughly triple reads for a complete snapshot and appear in the up-front
+estimate. The manifest records `audits.source_changes` and `audits.membership`
+separately. `source_consistent` is `null` when a clean snapshot has not completed
+both audits, `true` only when both found no changes, and `false` when changes
+were detected. Existing structural findings remain in `audit`; that list alone
+does not mean either optional source audit ran.
+
+Capture retains documents and query cursors together, checkpoints completed
+queries, and saves partial results on exceptions, including quota exhaustion.
+Resume continues from the saved position without re-reading captured documents.
+Reuse the same snapshot
+command, output directory and audit settings after an interruption; image
+checkpoints in `images-progress.json` are reused too. Firestore
+`ResourceExhausted` stops immediately without retrying and saves partial state.
+The diagnostic identifies the exhausted project quota and the daily free-tier
+reset at approximately midnight US/Pacific. Wait for quota availability before
+rerunning the command. The estimate on resume accounts for saved work; requested
+audits still perform their explicit verification reads. A completed snapshot
+replay verifies local hashes without connecting to either service.
+
+Before proceeding, inspect snapshot `audits`/`audit`/`excluded_books` and review the local
 configuration. The checked-in price table was verified on 2026-11-04 against
 docs.anthropic.com and this repository's `ai_pricing.py`, which is the same
 table `record_api_usage` bills against; `pricing.verified` is `true`. Note that
@@ -146,11 +187,11 @@ pages even when some annotations or images are absent.
 The snapshot uses original `page_N.jpg` objects, never `_cropped` or `_display`
 derivatives. It preserves real page numbers, image hashes, available S3 versions,
 referenced entities, source timestamps, gaps, duplicates and ID/folder conflicts.
-Source versions and collection membership are checked again at completion.
-Changed-source snapshots are flagged and rejected by extraction/scoring: make a
-new snapshot after resolving the changes. An interrupted snapshot resumes its
-frozen inventory; a completed snapshot replay verifies local hashes without
-connecting to either service.
+Source versions and collection membership are checked again only when their
+respective optional audits are enabled. Detected source changes are flagged
+and rejected by extraction/scoring: make a new snapshot after resolving them.
+Unaudited snapshots remain usable, with their incomplete consistency
+verification carried into the score reports.
 
 ## What the scores mean
 
@@ -256,6 +297,10 @@ config too: if you change prices afterward, use a new run directory.
 locally to inspect original/corrected images, reference/predicted text, missing
 and extra tokens, ordered differences, story labels, metadata, character
 attachments, errors and costs. It uses no remote scripts, fonts or images.
+The console and HTML prominently state which snapshot audits ran and whether
+source consistency was verified. `summary.json` includes `snapshot_audits`,
+`snapshot_audit_status` and `snapshot_source_consistent`. Missing legacy audit
+provenance is reported as unknown, never assumed to mean audited.
 
 Review disagreements **and a random sample of apparent successes**. Where
 possible transcribe independently before looking at model predictions. A local
