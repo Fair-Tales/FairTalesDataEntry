@@ -256,3 +256,63 @@ Status: `accepted` | `superseded` | `deprecated`.
 **Consequences / follow-up:**
 - Residual: a hard reload issued in the ~sub-second window between Sign Out and the deferred delete completing can still restore in a NEW session; far smaller than before (the delete now actually runs) — revisit only if server-side revocation lands.
 - Live verification required on Streamlit Cloud (refresh-restore over the auth bounce cannot be exercised locally).
+
+## 013 — Durable bulk photo batches with the complete shared pipeline (2026-11-04)
+
+**Status:** implemented behind `BATCH_UPLOAD_DURABLE_ENABLED=true`; off by default pending pilot.
+
+A batch owns ordered source records and stable group identities. Uploads accept immutable
+selections of at most 60 photos, up to 1,200 photos per batch. Every selected slot must
+succeed and the researcher explicitly finishes the selection and batch. Accepted chunks
+are copied and verified under `batch_sources/` before advancing; that prefix is excluded
+from orphan-book discovery and does not rely on the temporary uploads lifecycle. The
+bounded upload allocation record is stored there too. Unaccepted uploads, including
+phone uploads awaiting desktop acceptance, still require reopening before temporary
+objects expire. Sources are retained; retention/deletion is a separate admin policy.
+
+The conservative splitter requires mean luminance below 5 and maximum luminance below
+18 for a separator. Ambiguous dark frames and corrupt photos fail visibly. Cover fallback
+is bounded to 60 thumbnails. Metadata uses the existing helper with at most 60 images per
+book; larger groups retain their pages and require manual metadata. The first/last photos,
+source ranges and editable titles must be reviewed before confirmation. Black frames do
+not become book pages; a chunk boundary never implies a book boundary.
+
+Books and group bindings are created atomically, including title collisions. Each group
+gets an immutable job identity, source keys, validated settings and processing version.
+`BatchBook` adds provenance through Field descriptors without changing shared `Book`.
+Background jobs share one active-book scheduler per application process, process pages
+sequentially, and run the existing text-based whole-book character/alias detector. Page
+and character leases renew; owner/revision-checked commits reject stale/cancelled work.
+Owner-specific image artifacts prevent a stale worker overwriting the winning result.
+Empty character success, no usable text, failure and incomplete OCR coverage are distinct.
+A thread-local adapter injects explicit clients/settings and raw-client usage recording,
+without changing the shared extraction modules or their concurrent evaluation context.
+
+The script thread verifies final image copies, materializes Pages atomically and preserves
+later human edits. Character/Alias records are still created only through existing review
+and commit logic. Durable suggestions, including empty results, survive a fresh session.
+Explicit page retries invalidate prior suggestions; finalization replaces only unchanged
+pipeline placeholders/artifacts. Ordinary progress polling never starts paid work.
+
+The user-home Batch Upload action discovers owner batches across sessions. Explicit
+resume reconstructs jobs from stored sources and settings. Threads can continue after a
+tab closes while the application process remains alive; process shutdown requires resume.
+A provider response lost before persistence may be billed again on retry. Process-local
+admission is not an account-wide concurrency limit; external workers/shared admission
+remain future work. Backend choice is persisted and the old batch loop is unreachable
+from new uploads (its small compatibility adapter retains existing regression coverage).
+
+**Verification and rollout:** automated tests use only fakes, with outbound test sockets
+blocked. Transactional fakes exercise contention, expiry, stale writes, cancellation,
+replay, partial failure and finalization protection. Before enabling, verify real-device
+ordering, covered lenses versus dark covers, failed separators, cross-chunk books,
+browser/redeploy recovery, concurrent users, memory/quotas, and single-versus-batch
+text/correction/character/alias parity. Verify Firestore rules permit the new collections
+and S3 policy permits durable `batch_sources/` objects; no live service was accessed here.
+
+**Guarded follow-up:** the old single-book uploader's OCR exception path still loses
+already-known correction flags. Its produce/error contract must carry corrected and
+rotation_uncertain into registration even on OCR failure, using `page_results`.
+That guarded module was not modified. The new batch finalizer and reconstruction path
+already preserve these flags. Legacy precomputed-empty handoff inside guarded utilities
+also remains unchanged; durable batch review handles empty success explicitly.

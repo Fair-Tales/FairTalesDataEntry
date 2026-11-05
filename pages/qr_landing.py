@@ -7,6 +7,7 @@ from text_content import Instructions, Alerts, QrLanding
 from photo_upload import (
     generate_put_urls, generate_manifest_put_url, build_uploader_html,
     render_photo_instructions, render_uploaded_photos_list,
+    build_batch_uploader_html, read_upload_manifest, render_batch_upload,
 )
 
 # NB: this is a PUBLIC, token-authenticated deep-link reached from the phone QR —
@@ -57,9 +58,19 @@ else:
         # (single / batch / collection) is reading. No book context is needed — the
         # phone only uploads; the computer does the processing when the user returns
         # and taps its read button. Reuses the shared one-way uploader component.
-        put_urls = generate_put_urls(flow, session)
-        manifest_url = generate_manifest_put_url(flow, session)
-        st.iframe(build_uploader_html(put_urls, manifest_url), height=460)
+        if flow == "batch":
+            render_batch_upload(get_s3_filesystem(), session)
+        else:
+            put_urls = generate_put_urls(flow, session)
+            manifest_url = generate_manifest_put_url(flow, session)
+            if flow == "collection":
+                manifest = read_upload_manifest(get_s3_filesystem(), flow, session)
+                html = build_batch_uploader_html(
+                    put_urls, manifest_url, generation=session, initial=manifest,
+                )
+            else:
+                html = build_uploader_html(put_urls, manifest_url)
+            st.iframe(html, height=460)
         st.info(QrLanding.phone_done_instruction)
 
         # Live "uploaded so far" list (#186) so the user can SEE what has landed

@@ -402,6 +402,13 @@ class BatchBookEntry:
 
 class EnterText:
 
+    batch_detection_empty = "Automatic character detection found no characters."
+    batch_detection_incomplete = "Some pages could not be read. Character suggestions may be incomplete."
+    batch_detection_stale = "Page text has changed since automatic character detection. Re-run detection to review updated suggestions."
+    batch_detection_unavailable = "Automatic character detection did not complete. Use Re-run character detection to try again."
+    batch_detection_load_failed = "Saved character suggestions could not be loaded. Reopen this book to try again."
+    batch_detection_review_save_failed = "Characters were saved, but the review checkpoint could not be saved. Reopening may show these suggestions again."
+
     header = "Please enter text and add characters"
     # Leads with what the app has ALREADY done (#186): pilot users read the old
     # "enter with spelling verbatim" opening as an instruction to type the whole

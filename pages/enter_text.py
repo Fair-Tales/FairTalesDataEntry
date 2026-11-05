@@ -7,6 +7,7 @@ import anthropic
 # commit_detected_characters the local `firestore = st.session_state.firestore`
 # (the FirestoreWrapper) would shadow a module-level `firestore` name.
 from google.cloud.firestore_v1 import ArrayUnion
+from google.api_core.exceptions import GoogleAPIError
 from streamlit_dimensions import st_dimensions
 from utilities import (
     page_layout, confirm_submit, check_authentication_status,
@@ -23,6 +24,10 @@ from image_processing import make_display_copy, apply_manual_correction, load_pa
 from pages.uploader import extract_page_info, PageExtractionError
 from text_content import EnterText, ManageCharacters, AliasForm, CharacterForm
 from page_save_recovery import PageSaveRecovery
+from batch_finalization import (
+    BatchFinalizationError, stage_batch_character_review,
+    mark_batch_character_reviewed, page_text_revision,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -557,6 +562,8 @@ def rerun_detect():
     """
     if not _save_current_page_text():
         return
+    st.session_state.pop('_batch_character_result', None)
+    st.session_state.pop('_batch_character_review', None)
     stage_character_redetect(st.session_state, source=CHARACTER_AUTODETECT_SOURCE_MANUAL)
 
 
@@ -814,7 +821,7 @@ def manage_characters_entry(element):
     element.button(ManageCharacters.done_button, width="stretch", on_click=adding_text, key="enter_text_manage_done_button")
 
 
-def _filter_existing_characters(suggestions):
+def _filter_existing_characters(suggestions, *, book=None):
     """Drop suggestions whose name matches a character already entered for this
     book (case-insensitive), so detection is strictly ADDITIVE (#182): a
     (re-)run can only propose NEW characters/aliases and never replaces or
@@ -827,9 +834,10 @@ def _filter_existing_characters(suggestions):
     NAMES (#201) so the review form can say exactly which detected characters
     were dropped as already-saved — a bare count read as "the AI missed them".
     """
+    book = book if book is not None else st.session_state['current_book']
     existing = {
         name.lower()
-        for name in st.session_state['current_book'].get_character_dict()
+        for name in book.get_character_dict()
     }
     kept = [s for s in suggestions if s['name'].lower() not in existing]
     # Normalise each kept suggestion's aliases the SAME way commit_detected_
@@ -856,6 +864,10 @@ def run_character_detection():
     Returns True when suggestions were produced (and a rerun should follow),
     False otherwise (a warning/error has already been shown to the user).
     """
+    # An explicit retry has its own review lifecycle; it must not acknowledge
+    # the old durable batch result after detecting against newer page text.
+    st.session_state.pop('_batch_character_result', None)
+    st.session_state.pop('_batch_character_review', None)
     client = get_anthropic_client()
     if client is None:
         st.warning(EnterText.detect_no_api_key)
@@ -908,7 +920,7 @@ def _parse_aliases(text, exclude_name):
     return aliases
 
 
-def commit_detected_characters(rows):
+def commit_detected_characters(rows, *, book=None, suggestions=None):
     """Persist the reviewed character suggestions, honouring per-row actions.
 
     rows is aligned with st.session_state['_detected_characters']; each entry
@@ -916,7 +928,10 @@ def commit_detected_characters(rows):
     chosen action. 'Merge into' folds a row's names into the target character's
     aliases instead of creating a separate character.
     """
-    original_names = [s['name'] for s in st.session_state['_detected_characters']]
+    book = book if book is not None else st.session_state['current_book']
+    if suggestions is None:
+        suggestions = st.session_state['_detected_characters']
+    original_names = [s['name'] for s in suggestions]
     merge_prefix = EnterText.review_action_merge.split('{', 1)[0]
 
     # Rows the user wants to create, keyed by their original (AI) name so that
@@ -930,7 +945,7 @@ def commit_detected_characters(rows):
     # Existing characters already defined for this book are also valid merge
     # targets, resolved book-scoped (by reference) to avoid same-name collisions
     # across books.
-    existing_chars = st.session_state['current_book'].get_character_dict()
+    existing_chars = book.get_character_dict()
 
     # Fold merged rows into a to-be-created character's alias list, or queue them
     # to be attached to an already-existing book character.
@@ -970,7 +985,6 @@ def commit_detected_characters(rows):
     # once. Total cost is a small constant number of round-trips regardless of how
     # many characters/aliases were detected.
     firestore = st.session_state.firestore
-    book = st.session_state['current_book']
     # Build every Character/Alias with the book's DocumentReference, NOT its
     # title string: a title routes through the write-through ref-field setter's
     # book_dict lookup, which silently stores book=None on a cache-stale miss and
@@ -1098,6 +1112,18 @@ def commit_detected_characters(rows):
         )
     if unresolved:
         messages.append(EnterText.review_unresolved.format(names=", ".join(unresolved)))
+
+    review = st.session_state.get('_batch_character_review') or {}
+    if review and review.get('book_id') == book.document_id:
+        try:
+            mark_batch_character_reviewed(
+                firestore.connect_book(), book.document_id,
+                review.get('job_id'), review.get('revision'),
+            )
+        except GoogleAPIError:
+            logger.warning('Could not save batch character review checkpoint', exc_info=True)
+            messages.append(EnterText.batch_detection_review_save_failed)
+        st.session_state.pop('_batch_character_review', None)
 
     st.session_state['_detected_characters_result'] = messages
     st.session_state.pop('_detected_characters', None)
@@ -1232,6 +1258,19 @@ def character_review_form(element):
 
 
 def detect_entry(element):
+    batch_result = st.session_state.get('_batch_character_result') or {}
+    if batch_result.get('book_id') == st.session_state.current_book.document_id:
+        expected = batch_result.get('text_revision')
+        if expected and page_text_revision(st.session_state.book_pages_dict) != expected:
+            batch_result['status'] = 'stale'
+            st.session_state.pop('_detected_characters', None)
+            st.session_state.pop('_batch_character_review', None)
+        if batch_result.get('coverage') == 'incomplete':
+            element.warning(EnterText.batch_detection_incomplete)
+        if batch_result.get('status') == 'stale':
+            element.warning(EnterText.batch_detection_stale)
+        elif batch_result.get('status') == 'skipped':
+            element.info(EnterText.detect_no_text)
     if '_detected_characters' not in st.session_state:
         # Only fire the (paid, whole-book) AI call when a run has been explicitly
         # STAGED via stage_character_redetect, which sets ``_auto_run_detection``
@@ -1388,7 +1427,24 @@ if (
     # the "Re-run character detection" button uses, which is why that button
     # worked when first-landing auto-surfacing did not. Either way nothing is
     # written until the human reviews and submits "Create selected characters".
-    if consume_pending_character_autodetect(st.session_state):
+    # Batch jobs have a durable, book-scoped handoff. Empty success is a real
+    # result; neither it nor a failed/stale result silently starts a paid call.
+    try:
+        _batch_handoff = stage_batch_character_review(
+            st.session_state, st.session_state.current_book,
+            st.session_state.firestore.connect_book(),
+        )
+    except (GoogleAPIError, BatchFinalizationError):
+        logger.warning('Could not load durable character suggestions for %s', _book_id, exc_info=True)
+        st.warning(EnterText.batch_detection_load_failed)
+        # A read failure is not evidence that no precomputation exists.
+        _batch_handoff = True
+    if _batch_handoff and '_detected_characters' in st.session_state:
+        _suggestions, _skipped = _filter_existing_characters(
+            st.session_state['_detected_characters'], book=st.session_state.current_book,
+        )
+        st.session_state['_detected_characters'] = _suggestions
+    elif not _batch_handoff and consume_pending_character_autodetect(st.session_state):
         _precomputed = st.session_state.pop('_precomputed_character_suggestions', None)
         _precomputed_suggestions = usable_precomputed_suggestions(_precomputed, _book_id)
         if _precomputed_suggestions is not None:

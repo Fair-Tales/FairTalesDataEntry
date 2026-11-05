@@ -22,7 +22,7 @@ S3_BUCKET = "sawimages"
 #: Immediate child prefixes under the bucket that are NOT book folders and so
 #: must never be reported as "orphaned" (e.g. the transient direct-upload area
 #: ``uploads/{flow}/{session}/`` written by photo_upload.py / uploader.py).
-NON_BOOK_S3_PREFIXES = ("uploads",)
+NON_BOOK_S3_PREFIXES = ("uploads", "batch_sources")
 
 _PAGE_IMAGE_RE = re.compile(r"^page_(\d+)\.jpg$", re.IGNORECASE)
 

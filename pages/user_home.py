@@ -228,6 +228,7 @@ def add_book_from_photos():
     navigate_to("./pages/add_book_photos.py")
 
 def add_books_batch():
+    st.session_state.pop("durable_batch_id", None)
     # Clear any leftover batch-flow state so a new batch starts at the upload step.
     for _key in ('batch_step', 'batch_method', 'batch_detected', 'batch_results'):
         st.session_state.pop(_key, None)

@@ -1,68 +1,34 @@
-"""Durable background page-processing job for the photo-first book entry flow
-(#179).
+"""Durable, bounded book extraction using the application's shared helpers.
 
-The crop + rotation + OCR (+ whole-book character detection) pipeline is slow —
-minutes for a typical book — and previously only started when the user proceeded
-past the Add-Book metadata step. This module kicks that work off the moment the
-photos finish uploading so it runs WHILE the user checks the extracted metadata
-and enters the author / illustrator / publisher, and ``uploader``'s consume path
-finalises whatever is done.
+One daemon scheduler per application process advances one book at a time. The
+queue contains job identifiers and explicit clients, never image lists. Raw
+sources, settings, page results and character suggestions survive browser and
+process loss. Closing a browser does not stop a daemon; application shutdown
+can. Resuming after shutdown requires opening the batch again.
 
-What drives the processing (and the honest limitation)
-------------------------------------------------------
-Streamlit Cloud has **no separate always-on worker process**. The driver is a
-**daemon worker thread spawned by whichever browser session is currently
-active**. What makes this robust — and the point of this rewrite — is that the
-worker persists everything durably as it goes, so it is *not* the single point
-of failure:
-
-* **Job state + per-page results** live in Firestore
-  (``pipeline_jobs/{job_id}`` + a ``pages`` subcollection), not an in-RAM dict.
-* **Page images** (raw ``page_N.jpg`` + corrected ``page_N_cropped.jpg``) are
-  written to **S3 as each page is processed**, not held in memory.
-
-Consequences:
-
-* **Survives a websocket drop / reconnect** — the daemon thread is a process
-  thread independent of the websocket, so a brief reconnect never interrupts
-  it; and even if the server-side session is lost / the app is redeployed /
-  the process restarts (Streamlit Cloud sleeps and redeploys), the durable job
-  doc + already-written S3 images mean **no work is lost and none is redone** —
-  a later session's worker resumes from the durable state, processing only the
-  pages still marked pending (page-level lease claim, below).
-* **Flat memory footprint** — images live in S3, results in Firestore; the
-  process holds at most one page's bytes at a time.
-
-**The honest gap vs a true external worker:** because the driver is a thread
-inside an active session, if the user **fully closes the tab with no session
-active anywhere**, in-flight processing *pauses* — the job doc and the S3
-images that were already written persist, and processing *resumes from where it
-left off* the next time any session for that job runs the pipeline, but it does
-not advance while nobody is connected. A true external worker (e.g. a Cloud Run
-queue consumer) would keep going with the tab closed; that is out of scope on
-Streamlit Cloud, which has no place to run one.
-
-Thread-safety
--------------
-The worker is handed only **plain, thread-safe objects**, all constructed on the
-script thread by the starter/consumer and passed in: the app's ``s3fs``
-filesystem (``get_s3_filesystem()``), a raw ``google.cloud.firestore`` client
-(``FirestoreWrapper.connect_book()``), an ``anthropic`` client, and a **copy**
-of the validated AI settings dict. The worker NEVER touches ``st.session_state``
-/ ``st.cache_*`` / widgets, nor the session ``FirestoreWrapper`` (whose
-``connect_book`` reads/writes ``st.session_state`` via ``is_authenticated``).
-All ``Page.register()`` write-through work and ``extraction_errors`` logging
-stay on the script thread in the consumer.
+Entity persistence stays on the script thread. Operational jobs and claims use
+raw-client transactions; worker helpers receive a thread-local usage recorder.
+Leases reduce duplicate paid calls but cannot promise exactly-once billing if a
+process dies after a provider response and before its durable result commit.
 """
 
 import hashlib
 import logging
+import json
+from collections import deque
+from contextlib import contextmanager
 import threading
 import time
 import uuid
 from datetime import datetime, timezone, timedelta
 
 from google.cloud import firestore
+from google.api_core.exceptions import GoogleAPIError
+from anthropic import AnthropicError
+from botocore.exceptions import BotoCoreError, ClientError
+from cv2 import error as OpenCVError
+
+from pipeline_worker_runtime import worker_runtime
 
 from image_processing import correct_page_image, exif_transpose_bytes, make_display_copy
 from s3_constants import S3_BUCKET
@@ -96,7 +62,32 @@ _WORKER_EXTRACTION_LABEL = 'background_page_extraction'
 #: locally (a resuming session in a different process finds an empty registry
 #: and spawns its own).
 _ACTIVE_WORKERS = {}
-_REGISTRY_LOCK = threading.Lock()
+_REGISTRY_LOCK = threading.RLock()
+_ADAPTER_LOCK = threading.RLock()
+_WORK_QUEUE = deque()
+_SCHEDULER_THREAD = None
+PROCESSING_VERSION = 'batch-full-v1'
+_CHARACTER_TERMINAL = ('done', 'failed', 'skipped')
+_SERVICE_ERRORS = (GoogleAPIError, AnthropicError, BotoCoreError, ClientError,
+                   OpenCVError, OSError, ValueError, TypeError, KeyError, RuntimeError)
+
+
+class _DirectTransaction:
+    """Serial transaction adapter for minimal in-memory storage implementations.
+
+    Production Firestore clients always take the real transactional branch.
+    """
+    def set(self, reference, fields, merge=False):
+        reference.set(fields, merge=merge)
+
+
+def _atomic(db, callback):
+    factory = getattr(db, 'transaction', None)
+    if callable(factory):
+        return firestore.transactional(callback)(factory())
+    with _ADAPTER_LOCK:
+        return callback(_DirectTransaction())
+
 
 
 # ---------------------------------------------------------------------------
@@ -229,146 +220,284 @@ def _should_claim(data, now=None):
 
 def _claim_page(db, job_id, page_number, worker_id):
     page_ref = _page_ref(db, job_id, page_number)
-    transaction = db.transaction()
 
-    @firestore.transactional
-    def _txn(transaction):
+    def claim(transaction):
+        job = _job_ref(db, job_id).get(transaction=transaction).to_dict() or {}
         snap = page_ref.get(transaction=transaction)
         data = snap.to_dict() if snap.exists else None
-        if not _should_claim(data):
+        if job.get('status') in ('cancelled', 'finalized') or not _should_claim(data):
             return False
-        transaction.set(
-            page_ref,
-            {
-                'page_number': page_number,
-                'status': 'processing',
-                'claimed_by': worker_id,
-                'claimed_at': _now(),
-            },
-            merge=True,
-        )
+        transaction.set(page_ref, {
+            'page_number': page_number, 'status': 'processing',
+            'claimed_by': worker_id, 'claimed_at': _now(),
+        }, merge=True)
         return True
+    return _atomic(db, claim)
 
-    return _txn(transaction)
+
+def _owned_page_write(db, job_id, page_number, worker_id, fields):
+    """Discard results from expired owners or cancelled jobs atomically."""
+    page_ref = _page_ref(db, job_id, page_number)
+
+    def commit(transaction):
+        job = _job_ref(db, job_id).get(transaction=transaction).to_dict() or {}
+        page = page_ref.get(transaction=transaction).to_dict() or {}
+        # Minimal legacy test adapters did not record an owner; real claims do.
+        owner = page.get('claimed_by')
+        if (job.get('status') in ('cancelled', 'finalized')
+                or page.get('status') != 'processing'
+                or (owner != worker_id and (owner is not None or callable(getattr(db, 'transaction', None))))):
+            return False
+        transaction.set(page_ref, fields, merge=True)
+        if fields.get('status') in ('done', 'failed'):
+            metric = 'pages_done' if fields['status'] == 'done' else 'pages_failed'
+            transaction.set(_job_ref(db, job_id), {
+                metric: int(job.get(metric, 0)) + 1, 'updated_at': _now(),
+            }, merge=True)
+        return True
+    return _atomic(db, commit)
+
+
+@contextmanager
+def _renewing_lease(renew):
+    """Keep paid calls covered by a lease; stale owners cannot renew or commit."""
+    stop = threading.Event()
+
+    def heartbeat():
+        while not stop.wait(_CLAIM_LEASE_SECONDS / 3):
+            try:
+                if not renew():
+                    return
+            except _SERVICE_ERRORS as exc:
+                logger.warning('pipeline lease renewal failed: %s', exc)
+                return
+    thread = threading.Thread(target=heartbeat, name='pipeline-lease', daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=1)
+
+
+def _page_docs(db, job_id, page_count):
+    return [dict((_page_ref(db, job_id, number).get().to_dict() or {}),
+                 page_number=number)
+            for number in range(1, page_count + 1)]
+
+
+def _text_revision(page_docs):
+    """Content revision includes failed coverage as well as ordered story text."""
+    payload = [[p.get('page_number'), p.get('status'), p.get('text', ''),
+                bool(p.get('is_story'))] for p in page_docs]
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False).encode()).hexdigest()
+
+
+def _character_write(db, job_id, worker_id, revision, fields):
+    ref = _job_ref(db, job_id)
+
+    def commit(transaction):
+        job = ref.get(transaction=transaction).to_dict() or {}
+        if (job.get('status') in ('cancelled', 'finalized')
+                or job.get('character_status') != 'processing'
+                or job.get('character_claimed_by') != worker_id
+                or job.get('character_input_revision') != revision):
+            return False
+        pages = []
+        for number in range(1, job.get('page_count', 0) + 1):
+            data = _page_ref(db, job_id, number).get(transaction=transaction).to_dict() or {}
+            pages.append(dict(data, page_number=number))
+        if _text_revision(pages) != revision:
+            return False
+        transaction.set(ref, fields, merge=True)
+        return True
+    return _atomic(db, commit)
 
 
 # ---------------------------------------------------------------------------
 # Worker body.
 # ---------------------------------------------------------------------------
 
+def _stage_sources(fs, db, job_id, prefix, page_count, raw_bytes_list, cancelled):
+    """Checkpoint raw sources individually; absent input blocks, never blanks OCR."""
+    for number in range(1, page_count + 1):
+        if cancelled():
+            return False
+        page_ref = _page_ref(db, job_id, number)
+        page = page_ref.get().to_dict() or {}
+        destination = f'{prefix}/page_{number}.jpg'
+        try:
+            if not fs.exists(destination):
+                if raw_bytes_list is not None:
+                    if number > len(raw_bytes_list):
+                        raise ValueError('Missing raw upload slot')
+                    raw = raw_bytes_list[number - 1]
+                else:
+                    source = page.get('source_key')
+                    if not source:
+                        raise FileNotFoundError(destination)
+                    raw = _s3_read(fs, source)
+                _s3_write(fs, destination, exif_transpose_bytes(raw))
+            page_ref.set({'page_number': number, 'raw_staged': True,
+                          'staging_error': None}, merge=True)
+            _set_job_if_active(db, job_id, {'pages_staged': number})
+        except _SERVICE_ERRORS as exc:
+            logger.warning('background job %s: source %s unavailable: %s', job_id, number, exc)
+            page_ref.set({'page_number': number, 'raw_staged': False,
+                          'staging_error': str(exc)}, merge=True)
+            _set_job_if_active(db, job_id, {'status': 'blocked', 'staging_error': str(exc),
+                                           'updated_at': _now()})
+            return False
+    if cancelled():
+        return False
+    return _set_job_if_active(db, job_id, {
+        'raw_uploaded': True, 'staging_error': None, 'updated_at': _now(),
+    })
+
+
+def _publish_page_artifacts(fs, db, job_id, prefix, number):
+    """Publish only the winning claim's images; stale attempts stay unreferenced.
+
+    A crash after committing OCR but before publishing images resumes this
+    cheap step without repeating extraction. The job cannot complete until the
+    canonical images required by existing consumers are present.
+    """
+    page = _page_ref(db, job_id, number).get().to_dict() or {}
+    if page.get('status') not in ('done', 'failed'):
+        return
+    for field, suffix in (('corrected_source_key', 'cropped'), ('display_source_key', 'display')):
+        source = page.get(field)
+        target = f'{prefix}/page_{number}_{suffix}.jpg'
+        if source and source != target:
+            _s3_write(fs, target, _s3_read(fs, source))
+        elif (suffix == 'cropped' and page.get('corrected')
+              and page.get('artifacts_pending') and not fs.exists(target)):
+            raise FileNotFoundError(target)
+    def acknowledge(transaction):
+        job = _job_ref(db, job_id).get(transaction=transaction).to_dict() or {}
+        current = _page_ref(db, job_id, number).get(transaction=transaction).to_dict() or {}
+        if (job.get('status') in ('cancelled', 'finalized')
+                or current.get('status') != page.get('status')
+                or any(current.get(key) != page.get(key)
+                       for key in ('corrected_source_key', 'display_source_key'))):
+            return
+        transaction.set(_page_ref(db, job_id, number), {'artifacts_pending': False}, merge=True)
+    _atomic(db, acknowledge)
+
+
 def _run_worker(fs, db, client, settings, job_id, s3_prefix, page_count,
                 raw_bytes_list, cancel_event):
-    """Process the job durably: raw upload → per-page correction/OCR (each
-    persisted to S3 + Firestore) → whole-book character detection.
-
-    ``raw_bytes_list`` may be ``None`` on a resume with no in-memory photos —
-    the per-page phase then reads each raw ``page_N.jpg`` back from S3 (written
-    by the raw-upload phase, which only runs when bytes ARE available). Every
-    per-page failure is contained and recorded as a ``failed`` result so a
-    single bad page can never abort the rest.
-    """
+    """Advance one durable book; stage failures and page failures remain visible."""
+    # This compatibility wrapper calls extraction_core internally; keeping its
+    # injectable boundary preserves the existing single-upload test contract.
     from pages.uploader import attempt_page_extraction
 
     worker_id = uuid.uuid4().hex
     job_ref = _job_ref(db, job_id)
 
-    def _cancelled():
+    def cancelled():
         if cancel_event.is_set():
             return True
         snap = job_ref.get()
-        return (not snap.exists) or (snap.to_dict() or {}).get('status') == 'cancelled'
+        return not snap.exists or (snap.to_dict() or {}).get('status') in ('cancelled', 'finalized')
 
     try:
-        # Phase A — durable raw upload (only when we hold the bytes and it has
-        # not already run). Makes every raw page durable in S3 so a later resume
-        # (which may have no in-memory bytes) can still finish the per-page work.
-        snap = job_ref.get()
-        raw_uploaded = bool((snap.to_dict() or {}).get('raw_uploaded')) if snap.exists else False
-        if not raw_uploaded and raw_bytes_list is not None:
-            for i, raw_bytes in enumerate(raw_bytes_list):
-                if _cancelled():
-                    return
-                _s3_write(fs, f"{s3_prefix}/page_{i + 1}.jpg", exif_transpose_bytes(raw_bytes))
-            job_ref.set({'raw_uploaded': True, 'updated_at': _now()}, merge=True)
-
-        # Phase B — per-page correction + OCR, each result persisted immediately.
-        for page_number in range(1, page_count + 1):
-            if _cancelled():
-                return
-            if not _claim_page(db, job_id, page_number, worker_id):
-                continue  # already done, or fresh-claimed by another worker
-            page_ref = _page_ref(db, job_id, page_number)
-            try:
-                if raw_bytes_list is not None:
-                    raw_bytes = raw_bytes_list[page_number - 1]
-                else:
-                    raw_bytes = _s3_read(fs, f"{s3_prefix}/page_{page_number}.jpg")
-                oriented = exif_transpose_bytes(raw_bytes)  # idempotent
-                bytes_for_extraction, corrected, method, rotation_uncertain = (
-                    correct_page_image(oriented, client, settings)
-                )
-                if corrected is not None:
-                    _s3_write(fs, f"{s3_prefix}/page_{page_number}_cropped.jpg", corrected)
-                # Screen-sized display derivative (#184): enter-text ships this
-                # instead of the multi-MB original. Derive it from the corrected
-                # image when one exists (that is what enter-text shows by default),
-                # else the oriented raw.
-                _s3_write(
-                    fs, f"{s3_prefix}/page_{page_number}_display.jpg",
-                    make_display_copy(corrected if corrected is not None else oriented),
-                )
-                outcome, payload = attempt_page_extraction(
-                    bytes_for_extraction, client, settings, label=_WORKER_EXTRACTION_LABEL,
-                )
-                page_ref.set(
-                    _result_to_fields(
-                        outcome, payload, method, corrected is not None,
-                        rotation_uncertain,
-                    ),
-                    merge=True,
-                )
-            except Exception as exc:  # noqa: BLE001 - per-page isolation boundary, see docstring
-                logger.warning("background job %s: page %s failed: %s", job_id, page_number, exc)
-                page_ref.set(
-                    _result_to_fields('error', (type(exc).__name__, str(exc)), None, False),
-                    merge=True,
-                )
-
-        if _cancelled():
+        if cancelled():
             return
-
-        # Phase C — whole-book character detection over the persisted story
-        # text, so enter-text can show the review form without a further AI
-        # call. Only when it has not already been done for this job, AND every
-        # page has a TERMINAL result (#201): Phase B `continue`s past pages
-        # fresh-claimed by ANOTHER worker (overlapping resume — a second tab, a
-        # reconnected session, a redeploy), so this worker can reach here while
-        # those pages are still processing. Running detection then would read
-        # incomplete story text and stamp character_status='done', which BLOCKS
-        # recomputation — the review form silently misses characters. Leaving
-        # the status 'pending' instead hands detection to whichever worker
-        # finishes the final page (its own Phase C then sees all pages
-        # terminal), or, failing that, to the consumer's live fallback
-        # (usable_precomputed_suggestions returns None -> live run).
-        snap = job_ref.get()
-        job_data = snap.to_dict() or {}
-        if job_data.get('character_status') not in ('done', 'failed'):
+        if not _stage_sources(fs, db, job_id, s3_prefix, page_count, raw_bytes_list, cancelled):
+            return
+        job_data = job_ref.get().to_dict() or {}
+        if not _set_job_if_active(db, job_id, {'status': 'processing', 'updated_at': _now()}):
+            return
+        with worker_runtime(client, settings, db, job_id, job_data.get('batch_id')) as worker_client:
+            for page_number in range(1, page_count + 1):
+                if cancelled():
+                    return
+                if not _claim_page(db, job_id, page_number, worker_id):
+                    _publish_page_artifacts(fs, db, job_id, s3_prefix, page_number)
+                    continue
+                method, corrected, rotation_uncertain = None, None, False
+                artifacts = {}
+                try:
+                    with _renewing_lease(lambda: _owned_page_write(
+                        db, job_id, page_number, worker_id, {'claimed_at': _now()},
+                    )):
+                        raw_bytes = _s3_read(fs, f'{s3_prefix}/page_{page_number}.jpg')
+                        oriented = exif_transpose_bytes(raw_bytes)
+                        image, corrected, method, rotation_uncertain = correct_page_image(
+                            oriented, worker_client, settings,
+                        )
+                        if cancelled():
+                            return
+                        attempt_prefix = f'{s3_prefix}/_attempt_{page_number}_{worker_id}'
+                        if corrected is not None:
+                            path = f'{attempt_prefix}_cropped.jpg'
+                            _s3_write(fs, path, corrected)
+                            artifacts['corrected_source_key'] = path
+                        path = f'{attempt_prefix}_display.jpg'
+                        _s3_write(fs, path, make_display_copy(corrected if corrected is not None else oriented))
+                        artifacts['display_source_key'] = path
+                        outcome, payload = attempt_page_extraction(
+                            image, worker_client, settings, label=_WORKER_EXTRACTION_LABEL,
+                        )
+                        if cancelled():
+                            return
+                        fields = _result_to_fields(outcome, payload, method,
+                                                   corrected is not None, rotation_uncertain)
+                        _owned_page_write(db, job_id, page_number, worker_id, {**fields, **artifacts, 'artifacts_pending': True})
+                except _SERVICE_ERRORS as exc:
+                    logger.warning('background job %s: page %s failed: %s', job_id, page_number, exc)
+                    if not cancelled():
+                        fields = _result_to_fields('error', (type(exc).__name__, str(exc)),
+                                                   method, corrected is not None, rotation_uncertain)
+                        _owned_page_write(db, job_id, page_number, worker_id, {**fields, **artifacts, 'artifacts_pending': True})
+                if not cancelled():
+                    _publish_page_artifacts(fs, db, job_id, s3_prefix, page_number)
+            if cancelled():
+                return
             if _pages_all_terminal(db, job_id, page_count):
-                _detect_characters(db, job_id, client, settings)
-            else:
-                logger.info(
-                    "background job %s: deferring character detection — "
-                    "another worker still owns unfinished pages", job_id,
-                )
+                _detect_characters(db, job_id, worker_client, settings)
+            _refresh_completion(db, job_id)
+    except _SERVICE_ERRORS as exc:
+        logger.exception('background job %s: worker aborted', job_id)
+        if not cancel_event.is_set():
+            _set_job_if_active(db, job_id, {'status': 'blocked', 'worker_error': str(exc),
+                                          'updated_at': _now()})
 
-        job_ref.set({'status': 'complete', 'updated_at': _now()}, merge=True)
-    except Exception as exc:  # noqa: BLE001 - worker top-level guard: never crash the thread silently
-        logger.warning("background job %s: worker aborted: %s", job_id, exc)
-    finally:
-        with _REGISTRY_LOCK:
-            entry = _ACTIVE_WORKERS.get(job_id)
-            if entry is not None and entry.get('thread') is threading.current_thread():
-                _ACTIVE_WORKERS.pop(job_id, None)
+
+def _set_job_if_active(db, job_id, fields):
+    ref = _job_ref(db, job_id)
+    def commit(transaction):
+        job = ref.get(transaction=transaction).to_dict() or {}
+        if not job or job.get('status') in ('cancelled', 'finalized'):
+            return False
+        transaction.set(ref, fields, merge=True)
+        return True
+    return _atomic(db, commit)
+
+
+def _refresh_completion(db, job_id):
+    """Never mistake another worker's unfinished claims for complete extraction."""
+    ref = _job_ref(db, job_id)
+    def refresh(transaction):
+        job = ref.get(transaction=transaction).to_dict() or {}
+        if job.get('status') in ('cancelled', 'finalized'):
+            return
+        pages = [(_page_ref(db, job_id, n).get(transaction=transaction).to_dict() or {})
+                 for n in range(1, job.get('page_count', 0) + 1)]
+        finished = bool(pages) and all(p.get('status') in ('done', 'failed')
+                                       and not p.get('artifacts_pending') for p in pages)
+        complete = finished and job.get('character_status') in _CHARACTER_TERMINAL
+        failed = sum(p.get('status') == 'failed' for p in pages)
+        if complete:
+            state = ('failed' if failed == len(pages) else 'partial'
+                     if failed or job.get('character_status') == 'failed' else 'complete')
+        else:
+            state = 'waiting'
+        transaction.set(ref, {'status': state, 'extraction_complete': complete,
+                             'pages_done': sum(p.get('status') == 'done' for p in pages),
+                             'pages_failed': failed, 'updated_at': _now()}, merge=True)
+    return _atomic(db, refresh)
 
 
 def _pages_all_terminal(db, job_id, page_count):
@@ -392,66 +521,261 @@ def _pages_all_terminal(db, job_id, page_count):
 
 
 def _detect_characters(db, job_id, client, settings):
-    """Run character detection over the job's persisted story pages and store
-    the suggestions on the parent doc. Failure is recorded (not raised) so the
-    consumer falls back to a live detection run."""
-    job_ref = _job_ref(db, job_id)
-    story_pages = []
-    for page_snap in job_ref.collection('pages').stream():
-        data = page_snap.to_dict() or {}
-        if data.get('status') == 'done' and data.get('is_story') and (data.get('text') or '').strip():
-            story_pages.append((int(data.get('page_number', page_snap.id)), data['text']))
-    story_pages.sort()
+    """Lease the current complete text revision before the existing whole-book call."""
+    ref = _job_ref(db, job_id)
+    worker_id = uuid.uuid4().hex
+
+    def claim(transaction):
+        job = ref.get(transaction=transaction).to_dict() or {}
+        if job.get('status') in ('cancelled', 'finalized'):
+            return None
+        pages = []
+        for number in range(1, job.get('page_count', 0) + 1):
+            data = _page_ref(db, job_id, number).get(transaction=transaction).to_dict() or {}
+            pages.append(dict(data, page_number=number))
+        if not pages or any(p.get('status') not in ('done', 'failed') for p in pages):
+            return None
+        revision = _text_revision(pages)
+        if job.get('character_status') in _CHARACTER_TERMINAL:
+            if job.get('character_revision') == revision:
+                return None
+            if job.get('character_revision') is None and not job.get('processing_version'):
+                # Preserve legacy completed paid work; a new explicit retry
+                # transitions to pending before reaching this branch.
+                transaction.set(ref, {'character_revision': revision,
+                                      'character_input_revision': revision}, merge=True)
+                return None
+        claimed_at = job.get('character_claimed_at')
+        if (job.get('character_status') == 'processing' and claimed_at is not None
+                and claimed_at > _now() - timedelta(seconds=_CLAIM_LEASE_SECONDS)):
+            return None
+        # Reviewed suggestions remain available as an audit snapshot; retries
+        # mark their revision stale instead of replacing accepted entities.
+        transaction.set(ref, {
+            'character_status': 'processing', 'character_claimed_by': worker_id,
+            'character_claimed_at': _now(), 'character_input_revision': revision,
+            'character_review_stale': bool(job.get('character_reviewed_revision')
+                                          and job.get('character_reviewed_revision') != revision),
+        }, merge=True)
+        return pages, revision
+
+    claimed = _atomic(db, claim)
+    if claimed is None:
+        return
+    pages, revision = claimed
+    story_pages = [(p['page_number'], p.get('text')) for p in pages
+                   if p.get('status') == 'done' and p.get('is_story')
+                   and isinstance(p.get('text'), str) and p.get('text').strip()]
+    coverage = 'incomplete' if any(p.get('status') == 'failed' for p in pages) else 'complete'
+    fields = {'character_revision': revision, 'character_pages_used': len(story_pages),
+              'character_coverage': coverage, 'updated_at': _now()}
     if not story_pages:
-        job_ref.set({'character_status': 'skipped', 'updated_at': _now()}, merge=True)
+        fields.update(character_status='skipped', character_outcome='no_text',
+                      character_suggestions=[])
+        _character_write(db, job_id, worker_id, revision, fields)
         return
     try:
-        suggestions = detect_book_characters(
-            story_pages, client, model=settings['character_detection_model'],
-        )
-        job_ref.set(
-            {
-                'character_status': 'done',
-                'character_suggestions': suggestions,
-                # Diagnostic (#201): how many story pages fed this run, so a
-                # partial computation is detectable after the fact.
-                'character_pages_used': len(story_pages),
-                'updated_at': _now(),
-            },
-            merge=True,
-        )
-    except Exception as exc:  # noqa: BLE001 - optional precompute; consumer runs it live instead
-        logger.warning("background job %s: character detection failed: %s", job_id, exc)
-        job_ref.set(
-            {'character_status': 'failed', 'character_error': str(exc), 'updated_at': _now()},
-            merge=True,
-        )
+        with _renewing_lease(lambda: _character_write(
+            db, job_id, worker_id, revision, {'character_claimed_at': _now()},
+        )):
+            suggestions = detect_book_characters(
+                story_pages, client, model=settings.get('character_detection_model'),
+            )
+            if not isinstance(suggestions, list):
+                raise ValueError('Character detector returned no suggestion list')
+            fields.update(character_status='done', character_suggestions=suggestions,
+                          character_outcome='suggestions' if suggestions else 'empty',
+                          character_error=None)
+            _character_write(db, job_id, worker_id, revision, fields)
+    except _SERVICE_ERRORS as exc:
+        logger.warning('background job %s: character detection failed: %s', job_id, exc)
+        fields.update(character_status='failed', character_outcome='failed', character_error=str(exc))
+        _character_write(db, job_id, worker_id, revision, fields)
 
 
 # ---------------------------------------------------------------------------
 # Worker lifecycle (spawn / resume / cancel).
 # ---------------------------------------------------------------------------
 
+def _scheduler_loop():
+    global _SCHEDULER_THREAD
+    while True:
+        with _REGISTRY_LOCK:
+            if not _WORK_QUEUE:
+                _SCHEDULER_THREAD = None
+                return
+            job_id = _WORK_QUEUE.popleft()
+            entry = _ACTIVE_WORKERS.get(job_id)
+        if entry is None:
+            continue
+        fs, db, client = entry['dependencies']
+        try:
+            data = _job_ref(db, job_id).get().to_dict() or {}
+            if data and not entry['cancel'].is_set() and data.get('status') not in ('cancelled', 'finalized'):
+                _run_worker(fs, db, client, data.get('ai_settings') or entry['settings'],
+                            job_id, data['s3_prefix'], data['page_count'], None, entry['cancel'])
+        except Exception as exc:  # final isolation boundary: logged and persisted, never silent
+            logger.exception('pipeline scheduler: job %s failed', job_id)
+            try:
+                _set_job_if_active(db, job_id, {'status': 'blocked', 'worker_error': str(exc)})
+            except _SERVICE_ERRORS as persistence_error:
+                logger.warning('pipeline scheduler: job %s status could not be saved: %s',
+                               job_id, persistence_error)
+        finally:
+            with _REGISTRY_LOCK:
+                if _ACTIVE_WORKERS.get(job_id) is entry:
+                    _ACTIVE_WORKERS.pop(job_id, None)
+
+
 def _spawn_worker(fs, db, client, settings, job_id, s3_prefix, page_count, raw_bytes_list):
-    """Start a daemon worker for ``job_id`` in this process if one is not already
-    running here. Returns the (new or existing) registry entry."""
+    """Queue identifiers through the one-book process-wide admission limit."""
+    global _SCHEDULER_THREAD
+    # Legacy callers pass bytes. Stage them before enqueueing so waiting jobs
+    # cannot retain whole books in RAM. New batch callers pass durable refs.
+    if raw_bytes_list is not None:
+        if not _stage_sources(fs, db, job_id, s3_prefix, page_count, raw_bytes_list,
+                              lambda: (_job_ref(db, job_id).get().to_dict() or {}).get('status') == 'cancelled'):
+            return None
     with _REGISTRY_LOCK:
         entry = _ACTIVE_WORKERS.get(job_id)
-        if entry is not None and entry['thread'].is_alive():
+        if entry is not None:
             return entry
-        cancel_event = threading.Event()
-        thread = threading.Thread(
-            target=_run_worker,
-            args=(fs, db, client, dict(settings), job_id, s3_prefix, page_count,
-                  list(raw_bytes_list) if raw_bytes_list is not None else None,
-                  cancel_event),
-            name=f"background-page-job-{job_id}",
-            daemon=True,
-        )
-        entry = {'thread': thread, 'cancel': cancel_event}
+        if _SCHEDULER_THREAD is None or not _SCHEDULER_THREAD.is_alive():
+            _SCHEDULER_THREAD = threading.Thread(target=_scheduler_loop,
+                                                name='book-pipeline-scheduler', daemon=True)
+            start = True
+        else:
+            start = False
+        entry = {'thread': _SCHEDULER_THREAD, 'cancel': threading.Event(),
+                 'dependencies': (fs, db, client), 'settings': dict(settings)}
         _ACTIVE_WORKERS[job_id] = entry
-        thread.start()
-    return entry
+        _WORK_QUEUE.append(job_id)
+        if start:
+            _SCHEDULER_THREAD.start()
+        return entry
+
+
+def create_or_get_job(fs, db, client, ai_settings, *, job_id, source_keys,
+                      entered_by, book_id=None, batch_id=None, start=False):
+    """Create an immutable explicit job, or recover that same identity safely."""
+    if not job_id or '/' in job_id:
+        raise ValueError('Invalid pipeline job identity')
+    sources = list(source_keys)
+    if not sources or any(not isinstance(key, str) or not key for key in sources):
+        raise ValueError('A job requires ordered, durable source keys')
+    settings = _validated_settings(ai_settings)
+    source_hash = hashlib.sha256(json.dumps(sources).encode()).hexdigest()
+    ref = _job_ref(db, job_id)
+    def create(transaction):
+        snap = ref.get(transaction=transaction)
+        if snap.exists:
+            data = snap.to_dict() or {}
+            if (data.get('source_hash') != source_hash or data.get('entered_by') != entered_by
+                    or data.get('book_id') != book_id or data.get('batch_id') != batch_id):
+                raise ValueError('Pipeline job identity already binds different input')
+            return data
+        working_title = _placeholder_title(job_id)
+        data = {'job_id': job_id, 'entered_by': entered_by, 'book_id': book_id,
+                'batch_id': batch_id, 'page_count': len(sources), 'source_hash': source_hash,
+                's3_prefix': _s3_prefix_for(working_title), 'working_title': working_title,
+                'ai_settings': settings, 'processing_version': PROCESSING_VERSION,
+                'raw_uploaded': False, 'status': 'queued', 'extraction_complete': False,
+                'character_status': 'pending', 'character_suggestions': None,
+                'finalization_status': 'pending', 'created_at': _now(), 'updated_at': _now()}
+        transaction.set(ref, data)
+        return data
+    data = _atomic(db, create)
+    # Immutable parent hash makes interrupted source-doc creation replayable.
+    for number, key in enumerate(sources, 1):
+        _page_ref(db, job_id, number).set({'page_number': number, 'source_key': key}, merge=True)
+    link = {key: data.get(key) for key in ('job_id', 's3_prefix', 'working_title')}
+    if start:
+        resume_job(fs, db, client, job_id)
+    return link
+
+
+def _validated_settings(settings):
+    """Freeze existing validated app settings, rejecting malformed overrides."""
+    from utilities import (AI_SETTINGS_DEFAULTS, AI_SETTINGS_MODEL_KEYS,
+                           AI_MODEL_ALLOWLIST, AI_EDGE_MIN, AI_EDGE_MAX,
+                           AI_TOKENS_MIN, AI_TOKENS_MAX)
+    result = dict(AI_SETTINGS_DEFAULTS)
+    for key, value in dict(settings).items():
+        if key not in result:
+            continue
+        if key in AI_SETTINGS_MODEL_KEYS:
+            valid = value in AI_MODEL_ALLOWLIST
+        elif key.endswith('_max_edge'):
+            valid = isinstance(value, int) and not isinstance(value, bool) and AI_EDGE_MIN <= value <= AI_EDGE_MAX
+        elif key.endswith('_max_tokens'):
+            valid = isinstance(value, int) and not isinstance(value, bool) and AI_TOKENS_MIN <= value <= AI_TOKENS_MAX
+        else:
+            valid = isinstance(value, bool)
+        if not valid:
+            raise ValueError(f'Invalid pipeline setting: {key}')
+        result[key] = value
+    return result
+
+
+def resume_job(fs, db, client, job_id):
+    """Resume persisted sources/configuration without any original browser bytes."""
+    data = _job_ref(db, job_id).get().to_dict() or {}
+    if not data:
+        raise ValueError('Pipeline job does not exist')
+    if data.get('status') in ('cancelled', 'finalized') or data.get('extraction_complete'):
+        return None
+    if data.get('processing_version', PROCESSING_VERSION) != PROCESSING_VERSION:
+        raise ValueError('Pipeline job requires its original processing version')
+    settings = data.get('ai_settings')
+    if not settings:
+        raise ValueError('Legacy job requires settings from the single-book resume flow')
+    return _spawn_worker(fs, db, client, settings, job_id, data['s3_prefix'], data['page_count'], None)
+
+
+def get_job_progress(db, job_id):
+    """Nonblocking snapshot; no worker starts and no paid work is triggered."""
+    data = _job_ref(db, job_id).get().to_dict() or {}
+    if not data:
+        return None
+    data.pop('character_suggestions', None)
+    for key in ('pages_done', 'pages_failed', 'pages_staged'):
+        data.setdefault(key, 0)
+    return data
+
+
+def cancel_job(db, job_id):
+    """Durable cancellation invalidates all late page and character commits."""
+    with _REGISTRY_LOCK:
+        entry = _ACTIVE_WORKERS.get(job_id)
+        if entry is not None:
+            entry['cancel'].set()
+    _job_ref(db, job_id).set({'status': 'cancelled', 'updated_at': _now()}, merge=True)
+
+
+def retry_failed_pages(db, job_id):
+    """Explicit retry invalidates character suggestions; ordinary reruns do not."""
+    ref = _job_ref(db, job_id)
+    def retry(transaction):
+        job = ref.get(transaction=transaction).to_dict() or {}
+        if job.get('status') in ('cancelled', 'finalized') or not job.get('extraction_complete'):
+            return False
+        pages = [(n, _page_ref(db, job_id, n),
+                  _page_ref(db, job_id, n).get(transaction=transaction).to_dict() or {})
+                 for n in range(1, job.get('page_count', 0) + 1)]
+        failed = [(n, page_ref) for n, page_ref, data in pages if data.get('status') == 'failed']
+        if not failed and job.get('character_status') != 'failed':
+            return False
+        for number, page_ref in failed:
+            transaction.set(page_ref, {'status': 'pending', 'claimed_by': None,
+                                       'claimed_at': None}, merge=True)
+        transaction.set(ref, {'status': 'queued', 'extraction_complete': False,
+                             'character_status': 'pending', 'character_revision': None,
+                             'character_suggestions': None, 'character_review_stale': True,
+                             'finalization_status': 'pending',
+                             'materialized_character_revision': None,
+                             'pages_failed': 0, 'updated_at': _now()}, merge=True)
+        return True
+    return _atomic(db, retry)
 
 
 def start_page_processing_job(session_state, fs, db, client, ai_settings,
@@ -474,8 +798,7 @@ def start_page_processing_job(session_state, fs, db, client, ai_settings,
 
     existing = session_state.get(JOB_STATE_KEY)
     if existing is not None and existing.get('fingerprint') == fingerprint:
-        _spawn_worker(fs, db, client, ai_settings, existing['job_id'],
-                      existing['s3_prefix'], page_count, raw_bytes_list)
+        ensure_worker_running(fs, db, client, ai_settings, existing, raw_bytes_list)
         return existing
 
     job_id = uuid.uuid4().hex
@@ -490,7 +813,7 @@ def start_page_processing_job(session_state, fs, db, client, ai_settings,
     if candidate:
         try:
             collides = fs.exists(f"{S3_BUCKET}/{candidate}/page_1.jpg")
-        except Exception as exc:  # noqa: BLE001 - existence probe must never block job start
+        except _SERVICE_ERRORS as exc:  # noqa: BLE001 - existence probe must never block job start
             logger.warning("background job %s: title-collision probe failed: %s", job_id, exc)
             collides = True
         if not collides:
@@ -504,6 +827,8 @@ def start_page_processing_job(session_state, fs, db, client, ai_settings,
         'entered_by': entered_by,
         'fingerprint': fingerprint,
         'page_count': page_count,
+        'ai_settings': _validated_settings(ai_settings),
+        'processing_version': PROCESSING_VERSION,
         'working_title': working_title,
         'title_source': title_source,
         'extracted_title': candidate or None,
@@ -547,17 +872,15 @@ def get_active_job(session_state, db, raw_bytes_list):
     return link
 
 
-def ensure_worker_running(fs, db, client, ai_settings, link, raw_bytes_list):
-    """Guarantee a worker is advancing this job in the current process — spawns
-    one if the original session's worker isn't alive here (resume). A no-op when
-    the durable job has already completed (every page terminal + detection done),
-    so the common "worker finished during the metadata step" case does not spawn
-    a redundant thread."""
-    snap = _job_ref(db, link['job_id']).get()
-    if snap.exists and (snap.to_dict() or {}).get('status') == 'complete':
+def ensure_worker_running(fs, db, client, ai_settings, link, raw_bytes_list=None):
+    """Compatibility resume wrapper; persisted settings win over current UI settings."""
+    data = _job_ref(db, link['job_id']).get().to_dict() or {}
+    if not data or data.get('status') in ('cancelled', 'finalized') or data.get('extraction_complete'):
         return
-    _spawn_worker(fs, db, client, ai_settings, link['job_id'], link['s3_prefix'],
-                  len(raw_bytes_list), raw_bytes_list)
+    if not data.get('ai_settings'):
+        _job_ref(db, link['job_id']).set({'ai_settings': _validated_settings(ai_settings)}, merge=True)
+    _spawn_worker(fs, db, client, data.get('ai_settings') or ai_settings, link['job_id'],
+                  data.get('s3_prefix', link.get('s3_prefix')), data.get('page_count', 0), raw_bytes_list)
 
 
 def stamp_book_id(db, link, book_id):
@@ -566,7 +889,7 @@ def stamp_book_id(db, link, book_id):
     id. Best-effort."""
     try:
         _job_ref(db, link['job_id']).set({'book_id': book_id, 'updated_at': _now()}, merge=True)
-    except Exception as exc:  # noqa: BLE001 - non-critical linkage write
+    except _SERVICE_ERRORS as exc:  # noqa: BLE001 - non-critical linkage write
         logger.warning("background job %s: could not stamp book_id: %s", link['job_id'], exc)
 
 
@@ -655,13 +978,17 @@ def reconcile_s3_prefix(fs, link, final_title):
             return final_prefix  # nothing was written yet (all pages fell back)
         for key in fs.ls(working_prefix, detail=False):
             name = key.rsplit('/', 1)[-1]
-            fs.mv(key, f"{final_prefix}/{name}")  # server-side copy + delete
+            target = f"{final_prefix}/{name}"
+            fs.mv(key, target)  # server-side copy + delete
+            if not fs.exists(target):
+                raise OSError(f'Missing reconciled image: {name}')
         # Drop the now-empty working-prefix marker, if the store keeps one.
         if fs.exists(working_prefix):
             fs.rm(working_prefix, recursive=True)
-    except Exception as exc:  # noqa: BLE001 - reconciliation must not abort finalize
+    except _SERVICE_ERRORS as exc:
         logger.warning("background job %s: S3 reconcile %s -> %s failed: %s",
                        link['job_id'], working_prefix, final_prefix, exc)
+        raise
     link['s3_prefix'] = final_prefix
     return final_prefix
 
@@ -674,7 +1001,7 @@ def finalize_job(db, link, final_title):
              's3_prefix': _s3_prefix_for(final_title), 'updated_at': _now()},
             merge=True,
         )
-    except Exception as exc:  # noqa: BLE001 - non-critical status write
+    except _SERVICE_ERRORS as exc:  # noqa: BLE001 - non-critical status write
         logger.warning("background job %s: could not mark finalized: %s", link['job_id'], exc)
 
 
@@ -695,7 +1022,7 @@ def cancel_page_processing_job(session_state, db=None):
             _job_ref(db, link['job_id']).set(
                 {'status': 'cancelled', 'updated_at': _now()}, merge=True
             )
-        except Exception as exc:  # noqa: BLE001 - best-effort cancel
+        except _SERVICE_ERRORS as exc:  # noqa: BLE001 - best-effort cancel
             logger.warning("background job %s: could not mark cancelled: %s", link['job_id'], exc)
 
 
