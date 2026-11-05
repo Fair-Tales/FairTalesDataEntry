@@ -585,11 +585,14 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
     if copyright_text:
         isbn = extract_isbn(copyright_text)
         if isbn:
-            isbn_metadata = lookup_isbn(isbn)
+            lookup_outcome = {}
+            isbn_metadata = lookup_isbn(isbn, outcome_sink=lookup_outcome.update)
+            if lookup_outcome.get('status') == 'failed':
+                st.warning(BookPhotoEntry.isbn_lookup_failed)
             if isbn_metadata:
                 st.session_state['isbn_metadata'] = isbn_metadata
                 st.info(
-                    Uploader.isbn_metadata_found.format(isbn=isbn, title=isbn_metadata['title'])
+                    Uploader.isbn_metadata_found.format(isbn=isbn, title=isbn_metadata.get('title', ''))
                 )
 
     st.session_state['_upload_pipeline_done'] = True

@@ -14,6 +14,7 @@ class BatchPipeline:
     review_title = 'Book title'
     review_accept = 'I checked the book boundaries and titles above.'
     metadata_pending = 'Metadata may be incomplete or the previous call was interrupted. Review the title and details before creating this book.'
+    isbn_lookup_failures = '{count} books had no ISBN enrichment because the lookup failed. Review their details and fill in any gaps.'
     progress_header = 'Batch processing'
     progress_intro = 'Pages and whole-book character and alias suggestions are processed automatically. Leave this page open for finalization, or reopen the saved batch later.'
     progress_row = '{title}: {state}; pages {done}/{total}, failed {failed}; characters: {characters}; saved pages: {finalization}'

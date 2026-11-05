@@ -351,16 +351,120 @@ def test_snapshot_integrity_is_verified_before_extraction(snapshot_fixture):
         validate_inputs(snapshot, manifest, selection)
 
 
-def test_isbn_none_is_cached_and_dry_run_never_looks_up(tmp_path):
+def test_isbn_genuine_absence_is_cached_and_dry_run_never_looks_up(tmp_path):
     calls = []
-    lookup = cached_isbn_lookup(tmp_path, lambda isbn: calls.append(isbn))
-    assert lookup('123') is None
+    def provider(isbn, *, response_sink, outcome_sink):
+        calls.append(isbn)
+        response_sink({'totalItems': 0})
+        outcome_sink({'status': 'not_found', 'attempts': 1})
+        return None
+    lookup = cached_isbn_lookup(tmp_path, provider)
+    outcomes = []
+    assert lookup('123', outcome_sink=outcomes.append) is None
     assert lookup('123') is None
     assert calls == ['123']
+    assert outcomes == [{'status': 'not_found', 'attempts': 1}]
+    saved = json.loads((tmp_path / 'lookups' / f'{digest("123")}.json').read_text())
+    assert saved['raw_response'] == {'totalItems': 0}
     dry = cached_isbn_lookup(tmp_path, lambda isbn: pytest.fail('live lookup'), dry_run=True)
-    assert dry('123') is None
+    assert dry('123', outcome_sink=outcomes.append) is None
+    assert outcomes[0] == outcomes[1]
     with pytest.raises(DryRunMiss):
         dry('456')
+
+
+def test_isbn_failed_lookup_is_not_cached_and_next_call_retries(tmp_path):
+    calls, outcomes = [], []
+    def provider(isbn, *, response_sink, outcome_sink):
+        calls.append(isbn)
+        if len(calls) == 1:
+            outcome_sink({'status': 'failed', 'reason': 'http_error', 'http_status': 429})
+            return None
+        response_sink({'totalItems': 1})
+        outcome_sink({'status': 'found'})
+        return {'title': 'Recovered'}
+    lookup = cached_isbn_lookup(tmp_path, provider)
+    path = tmp_path / 'lookups' / f'{digest("123")}.json'
+    assert lookup('123', outcome_sink=outcomes.append) is None
+    assert not path.exists()
+    assert outcomes[0]['status'] == 'failed'
+    assert outcomes[0]['http_status'] == 429
+    assert lookup('123') == {'title': 'Recovered'}
+    assert path.exists()
+    assert lookup('123') == {'title': 'Recovered'}
+    assert calls == ['123', '123']
+
+
+def test_legacy_failed_isbn_cache_is_ignored_but_not_changed_during_dry_run(tmp_path):
+    path = tmp_path / 'lookups' / f'{digest("123")}.json'
+    poisoned = {'isbn': '123', 'value': None, 'raw_response': None}
+    atomic_json(path, poisoned)
+    dry = cached_isbn_lookup(tmp_path, lambda isbn: pytest.fail('live lookup'), dry_run=True)
+    with pytest.raises(DryRunMiss):
+        dry('123')
+    assert json.loads(path.read_text()) == poisoned
+    lookup = cached_isbn_lookup(tmp_path, lambda isbn: {'title': 'Recovered'})
+    assert lookup('123') == {'title': 'Recovered'}
+    assert json.loads(path.read_text())['value'] == {'title': 'Recovered'}
+
+
+@pytest.mark.parametrize('capture_raw', [False, True])
+def test_one_argument_isbn_lookup_without_answer_is_not_assumed_absent(tmp_path, capture_raw):
+    calls, outcomes = [], []
+    lookup = cached_isbn_lookup(tmp_path, lambda isbn: calls.append(isbn), capture_raw=capture_raw)
+    assert lookup('123', outcome_sink=outcomes.append) is None
+    assert lookup('123') is None
+    assert calls == ['123', '123']
+    assert outcomes[0]['status'] == 'failed'
+    assert not (tmp_path / 'lookups').exists()
+
+
+def test_isbn_lookup_with_opaque_signature_retains_single_argument_contract(tmp_path):
+    class Provider:
+        @property
+        def __signature__(self):
+            raise ValueError('No signature available')
+
+        def __call__(self, isbn):
+            return {'title': isbn}
+
+    lookup = cached_isbn_lookup(tmp_path, Provider(), capture_raw=True)
+    assert lookup('123') == {'title': '123'}
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_resume_retries_isbn_failure_without_repeating_vision(snapshot_fixture, tmp_path, config, legacy):
+    from scripts.extraction_eval.runner import Stages
+
+    snapshot, manifest, selection = snapshot_fixture
+    out = tmp_path / 'run'
+    out.mkdir()
+    value = {'title': 'Vision title', 'authors': [], 'publisher': None, 'isbn': '123',
+             'sources': {'title': {'source': 'title_page'}}}
+    if legacy:
+        atomic_json(out / 'lookups' / f'{digest("123")}.json',
+                    {'isbn': '123', 'value': None, 'raw_response': None})
+    else:
+        value.update(isbn_lookup={'status': 'failed', 'reason': 'http_error'},
+                     lookup_failed_fields=['authors', 'publisher'])
+    stages = Stages(out)
+    stages.put('selected:metadata', {'status': 'completed', 'value': value})
+    stages.close()
+    core, calls = FakeCore(), []
+    def provider(isbn):
+        calls.append(isbn)
+        return {'authors': ['Recovered author'], 'publisher': 'Recovered publisher'}
+    result = run_extract(snapshot, manifest, selection, out,
+                         SimpleNamespace(record_usage=lambda *args: None), config,
+                         core=core, isbn_lookup=provider, progress=lambda *args: None)
+    metadata = result['books']['selected']['metadata']['value']
+    assert calls == ['123']
+    assert all(operation != 'metadata' for operation, _ in core.calls)
+    assert metadata['title'] == 'Vision title'
+    assert metadata['authors'] == ['Recovered author']
+    assert metadata['publisher'] == 'Recovered publisher'
+    assert metadata['isbn_lookup']['status'] == 'found'
+    assert metadata['lookup_failed_fields'] == []
 
 
 def test_run_contract_rejects_changed_inputs(snapshot_fixture, tmp_path, config):

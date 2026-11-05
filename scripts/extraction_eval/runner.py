@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata
+import inspect
 from pathlib import Path
 import sqlite3
 import json
@@ -104,17 +105,75 @@ def validate_inputs(snapshot_dir, manifest, selection):
                     local_image(snapshot_dir, page)
 
 
-def cached_isbn_lookup(out, lookup, *, dry_run=False, capture_raw=False):
-    """Freeze even empty lookup responses. Dry runs never query Google Books."""
-    def fetch(isbn):
+def isbn_cache_outcome(saved):
+    """Classify a frozen provider answer, including legacy poisoned entries."""
+    outcome = saved.get("outcome") or {}
+    raw = saved.get("raw_response")
+    found = saved.get("value") is not None
+    absent = isinstance(raw, dict) and raw.get("totalItems") == 0
+    if outcome.get("status") == "failed" or not (found or absent):
+        return {**outcome, "status": "failed",
+                "reason": outcome.get("reason", "no_provider_response")}
+    return outcome or {"status": "found" if found else "not_found"}
+
+
+def metadata_with_lookup_outcome(metadata, out):
+    """Recover lookup provenance for old runs without changing their artifacts."""
+    value = dict(metadata)
+    isbn = value.get("isbn")
+    if isbn and not value.get("isbn_lookup") and out is not None:
         path = Path(out) / "lookups" / f"{digest(str(isbn))}.json"
         if path.exists():
-            return read_json(path).get("value")
+            value["isbn_lookup"] = isbn_cache_outcome(read_json(path))
+    if (value.get("isbn_lookup") or {}).get("status") == "failed":
+        value["lookup_failed_fields"] = [field for field in ("title", "authors", "publisher")
+                                         if not value.get(field)]
+    return value
+
+
+def cached_isbn_lookup(out, lookup, *, dry_run=False, capture_raw=False):
+    """Freeze provider answers, including absence, but never network failures.
+
+    Old null-value/null-response entries have no evidence of a provider answer
+    and are ignored. The optional outcome callback preserves the application's
+    dict-or-None contract while carrying failures into metadata scoring.
+    """
+    try:
+        parameters = inspect.signature(lookup).parameters.values()
+    except (TypeError, ValueError):
+        # Opaque callables retain the original single-positional-argument API.
+        parameters = ()
+    accepts_keywords = any(parameter.kind == inspect.Parameter.VAR_KEYWORD
+                           for parameter in parameters)
+    keyword_names = {parameter.name for parameter in parameters
+                     if parameter.kind != inspect.Parameter.POSITIONAL_ONLY}
+
+    def fetch(isbn, *, outcome_sink=None):
+        path = Path(out) / "lookups" / f"{digest(str(isbn))}.json"
+        if path.exists():
+            saved = read_json(path)
+            outcome = isbn_cache_outcome(saved)
+            if outcome.get("status") != "failed":
+                if outcome_sink is not None:
+                    outcome_sink(outcome)
+                return saved.get("value")
         if dry_run:
             raise DryRunMiss("Uncached ISBN lookup; dry run does not access the network")
-        raw = []
-        result = lookup(isbn, response_sink=raw.append) if capture_raw else lookup(isbn)
-        atomic_json(path, {"isbn": isbn, "value": result, "raw_response": raw[0] if raw else None})
+        raw, outcomes = [], []
+        kwargs = {}
+        if accepts_keywords or "response_sink" in keyword_names:
+            kwargs["response_sink"] = raw.append
+        if accepts_keywords or "outcome_sink" in keyword_names:
+            kwargs["outcome_sink"] = outcomes.append
+        result = lookup(isbn, **kwargs)
+        raw_response = raw[-1] if raw else None
+        saved = {"isbn": isbn, "value": result, "raw_response": raw_response,
+                 "outcome": outcomes[-1] if outcomes else {}}
+        outcome = isbn_cache_outcome(saved)
+        if outcome.get("status") != "failed":
+            atomic_json(path, {**saved, "outcome": outcome})
+        if outcome_sink is not None:
+            outcome_sink(outcome)
         return result
     return fetch
 
@@ -137,13 +196,23 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, dry_
     current_book_id = None
     isbn = cached_isbn_lookup(out, isbn_lookup, dry_run=dry_run, capture_raw=capture_lookup_raw)
 
-    def perform(key, callback):
+    def perform(key, callback, *, refresh_lookup=False):
         nonlocal stop_reason
         gateway.context = {"book_id": current_book_id, "stage": key}
         saved = stages.get(key)
+        refreshing_lookup = False
         if saved is not None:
-            return saved
-        if stop_reason:
+            value = metadata_with_lookup_outcome(saved.get("value") or {}, out) if refresh_lookup else {}
+            if saved.get("status") != "completed" or (value.get("isbn_lookup") or {}).get("status") != "failed":
+                return saved
+            if dry_run:
+                return {**saved, "value": value}
+            refreshing_lookup = True
+            # Preserve vision outputs and retry only the unmeasured dependency.
+            def callback():
+                from utilities import apply_isbn_metadata
+                return {**saved, "value": apply_isbn_metadata(value, isbn_lookup=isbn)}
+        if stop_reason and not refreshing_lookup:
             return {"status": "budget_stopped" if stop_reason[0] == "budget_stopped" else "pending", "error": stop_reason[1]}
         try:
             value = callback()
@@ -178,7 +247,7 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, dry_
                     raise ValueError("No images for metadata extraction")
                 value = core.extract_metadata(images, gateway, settings, gateway.record_usage, isbn)
                 return {"status": "completed", "value": value}
-            book_result["metadata"] = perform(f"{book_id}:metadata", metadata)
+            book_result["metadata"] = perform(f"{book_id}:metadata", metadata, refresh_lookup=True)
             for page in pages:
                 page_id = page.get("id")
                 def extract(page=page):

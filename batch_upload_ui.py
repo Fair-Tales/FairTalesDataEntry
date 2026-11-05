@@ -6,7 +6,7 @@ import streamlit as st
 import batch_pipeline as batches
 from data_structures.batch import BatchBook
 from image_processing import make_display_copy
-from text_content import BatchBookEntry
+from text_content import BatchBookEntry, BookPhotoEntry
 from text_content.batch_pipeline import BatchPipeline as Text
 from utilities import get_s3_filesystem, get_ai_settings, load_book_dict
 
@@ -20,6 +20,15 @@ def enabled():
 
 def _label(value):
     return Text.state_labels.get(value, Text.not_available)
+
+
+def _show_isbn_lookup_failures(metadata_rows):
+    count = sum(
+        (metadata.get('isbn_lookup') or {}).get('status') == 'failed'
+        for metadata in metadata_rows
+    )
+    if count:
+        st.warning(Text.isbn_lookup_failures.format(count=count))
 
 
 def _open_batch(batch_id):
@@ -90,6 +99,7 @@ def _review(batch, fs, client):
     method = {'black_frame': BatchBookEntry.method_black_frame,
               'cover_page': BatchBookEntry.method_cover_page}.get(batch.split_method, BatchBookEntry.method_single)
     st.info(method.format(count=len(groups)))
+    _show_isbn_lookup_failures(group.metadata or {} for group in groups)
     for group in groups:
         metadata = group.metadata or {}
         with st.expander(BatchBookEntry.book_summary.format(
@@ -97,6 +107,8 @@ def _review(batch, fs, client):
                 pages=len(group.positions)), expanded=True):
             if group.metadata_state != 'done':
                 st.warning(Text.metadata_pending)
+            if (metadata.get('isbn_lookup') or {}).get('status') == 'failed':
+                st.warning(BookPhotoEntry.isbn_lookup_failed)
             title = st.text_input(Text.review_title, value=metadata.get('title') or '',
                                   key=f'batch_title_{group.document_id}')
             if title != metadata.get('title', ''):
@@ -129,7 +141,9 @@ def _review(batch, fs, client):
 def _show_progress(batch, fs, client):
     import background_pipeline as pipeline
     batches.finalize_ready(batch, fs)
-    for row in batches.progress_snapshot(batch):
+    rows = batches.progress_snapshot(batch)
+    _show_isbn_lookup_failures(row.get('metadata') or {} for row in rows)
+    for row in rows:
         progress = row.get('progress') or {}
         title = (row.get('metadata') or {}).get('title') or BatchBookEntry.untitled_title.format(n=row['ordinal'])
         st.write(Text.progress_row.format(

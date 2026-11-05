@@ -5,7 +5,7 @@ Claude Haiku "locate" pass scans ALL page images to find the title page and the
 copyright/imprint page (whose position varies); a targeted Claude Sonnet "extract"
 pass then reads only those one or two pages — the title page for title/author(s)/
 illustrator(s) and the copyright page for publisher/first-published year/ISBN — and
-feeds any ISBN into the Google Books lookup (the most reliable source). The merged
+feeds any ISBN into Google Books to back-fill details missing from the photos. The merged
 result pre-populates the normal Add Book form (including the ``isbn_metadata``
 pre-fill). Extracted author/illustrator/publisher names are fuzzy-matched against
 the existing session lookup dicts before falling through to the existing "create
@@ -429,6 +429,9 @@ if _incomplete_count and not st.session_state.get('photos_ready_auto'):
 # Persistent "couldn't extract — enter manually" state, rendered OUTSIDE the
 # read-click block so the proceed button survives the rerun the click triggers.
 if st.session_state.get('photo_extract_empty'):
+    metadata = st.session_state.get('book_extraction') or {}
+    if (metadata.get('isbn_lookup') or {}).get('status') == 'failed':
+        st.warning(BookPhotoEntry.isbn_lookup_failed)
     st.warning(BookPhotoEntry.extract_empty)
     _diag = st.session_state.get('photo_extract_diag') or {}
     with st.expander(BookPhotoEntry.extract_diag_header):

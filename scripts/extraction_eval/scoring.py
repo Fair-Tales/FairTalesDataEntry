@@ -1,6 +1,7 @@
 """Pure reference-agreement metrics over frozen references and cached predictions.
 
-Eligibility is a property of the snapshot, never inferred from a prediction.
+Reference eligibility is a property of the snapshot. Metadata additionally
+excludes fields whose ISBN enrichment could not be measured due to lookup failure.
 All returned objects are JSON serializable. None denotes an undefined metric,
 never a perfect score for two empty sets.
 """
@@ -240,6 +241,9 @@ def score_metadata(field, reference, prediction, equivalences=None):
     reference = _reference(reference)
     actual, status = _prediction(prediction)
     base = _base(reference, status)
+    if status == "lookup_failed":
+        base.update(eligible=False, exclusion="lookup_failed" if base["eligible"]
+                    else reference.get("status", "missing"))
     result = {**base, "field": field, "exact": None, "reviewed_equivalent": None,
               "similarity": None, "reference_value": reference.get("value"),
               "prediction_value": actual, "complete_reference": reference.get("complete", False)}
@@ -415,7 +419,9 @@ def score_book(book, prediction=None, protocol=None):
     metadata_prediction = prediction.get("metadata", {})
     metadata_value = metadata_prediction.get("value", {}) or {}
     metadata_status = metadata_prediction.get("status", "pending")
-    metadata = {field: score_metadata(field, record, {"value": metadata_value.get(field), "status": metadata_status},
+    failed_fields = set(metadata_value.get("lookup_failed_fields") or [])
+    metadata = {field: score_metadata(field, record, {"value": metadata_value.get(field),
+                                      "status": "lookup_failed" if metadata_status == "completed" and field in failed_fields else metadata_status},
                                       equivalents.get(field))
                 for field, record in reference.get("metadata", {}).items()}
     for field, record in metadata.items():
@@ -429,7 +435,9 @@ def score_book(book, prediction=None, protocol=None):
             "pages": pages, "ocr": _ocr_totals([page["ocr"] for page in pages]),
             "wordless": _wordless([page["ocr"] for page in pages]), "metadata": metadata,
             "metadata_diagnostics": {"status": metadata_status, "located": metadata_value.get("located"),
-                                     "isbn": metadata_value.get("isbn"), "error": metadata_prediction.get("error")},
+                                     "isbn": metadata_value.get("isbn"), "error": metadata_prediction.get("error"),
+                                     "isbn_lookup": metadata_value.get("isbn_lookup"),
+                                     "lookup_failed_fields": sorted(failed_fields)},
             "characters": score_characters(character_matches),
             "themes": {"status": reference.get("themes", {}).get("status", "not_annotated"), "scored": False}}
 
@@ -452,6 +460,7 @@ def aggregate(scores, protocol=None):
         exact = [record for record in eligible if record.get("exact") is not None]
         known = [record for record in eligible if record.get("known_reference_agreement") is not None]
         metadata[field] = {"eligible_books": len(eligible), "strict_denominator": len(exact),
+                           "lookup_failed_exclusions": sum(record.get("exclusion") == "lookup_failed" for record in records),
                            "strict_exact_agreement": _ratio(sum(record["exact"] for record in exact), len(exact)),
                            "known_credit_denominator": len(known),
                            "known_credit_agreement": _ratio(sum(record["known_reference_agreement"] for record in known), len(known)),
@@ -480,6 +489,10 @@ def aggregate(scores, protocol=None):
     verified_book_values = [_ocr_totals([page["ocr"] for page in book["pages"] if page["ocr"]["reference_status"] == "verified"])["f1"] for book in books]
     verified_book_values = [value for value in verified_book_values if value is not None]
     incomplete_stages = sum(page["ocr"]["unrun"] for page in pages) + sum(record["unrun"] for book in books for record in book["metadata"].values()) + sum(book["characters"]["unrun"] for book in books)
+    lookup_failed_books = [book["id"] for book in books
+                           if (book.get("metadata_diagnostics", {}).get("isbn_lookup") or {}).get("status") == "failed"
+                           or any(record.get("prediction_status") == "lookup_failed"
+                                  for record in book.get("metadata", {}).values())]
     return {"label": "pilot reference-agreement", "protocol_version": protocol.get("version", "pilot-metrics-v2"),
             "books": len(books), "pages": len(pages), "incomplete": incomplete_stages > 0,
             "ocr": {"book_macro_f1": _ratio(sum(book_values), len(book_values)), "book_denominator": len(book_values),
@@ -494,6 +507,10 @@ def aggregate(scores, protocol=None):
                                            "book_denominator": len(verified_book_values), "token_micro": _ocr_totals(verified)}},
             "wordless": {**_wordless(ocr), "books": [book["id"] for book in books if book["wordless"]["intended_pages"]]},
             "story": _story_metrics(dict(story_counts)), "metadata": metadata, "characters": characters,
+            "metadata_lookup_failures": {"affected_books": len(lookup_failed_books),
+                                         "book_ids": lookup_failed_books,
+                                         "excluded_fields": sum(record.get("exclusion") == "lookup_failed"
+                                                                for book in books for record in book.get("metadata", {}).values())},
             "probability_sample": bootstrap_books(probability, repeats=protocol.get("bootstrap_repeats", 2000),
                                                     seed=protocol.get("bootstrap_seed", 20261104)) if probability else None,
             "challenge": {"books": [record["id"] for record in sampling_records if record["role"] == "challenge"],

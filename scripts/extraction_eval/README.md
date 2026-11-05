@@ -217,6 +217,12 @@ verification carried into the score reports.
   penalizing potentially correct extra names. Surname-only agreement is not
   accepted. Years match integers exactly and report differences; edition year
   versus first-publication year requires review, not a ±1 allowance.
+  If ISBN enrichment fails, still-empty title/authors/publisher fields receive
+  `lookup_failed` and leave the metadata denominators. Vision-filled fields,
+  illustrators and publication year remain scored. `metadata_lookup_failures`
+  reports affected books and otherwise-eligible excluded fields; each field also
+  reports `lookup_failed_exclusions`. An answered `totalItems == 0` remains a
+  measured absence and receives the usual missing-field score.
 * **Characters:** book-local one-to-one matching using primary names and
   attached aliases, with reviewed equivalences. Strip one leading
   `the/a/an/my/your/his/her/its/our/their` symmetrically, but preserve `Tom's mum`.
@@ -245,8 +251,9 @@ rotation, `vision_json` OCR, photo-first metadata location and character
 extraction. Existing app entry points keep their behavior. The evaluator uses
 the named `eval-v1` parser: it rejects missing/nonboolean `has_text` or story
 flags and malformed text rather than crediting malformed JSON as wordless.
-Metadata sees original ordered images without reference title-page hints; ISBN
-lookup results are frozen locally, and values carry their extraction sources.
+Metadata sees original ordered images without reference title-page hints; successful
+ISBN provider answers (including `totalItems == 0`) are frozen locally, and values
+carry their extraction sources. Failed lookups are never frozen as absence.
 Oversized whole-book metadata requests fail explicitly; automatic chunking would
 be a different pipeline variant.
 
@@ -289,6 +296,23 @@ new run directory. Identical request identities reuse the shared cache across
 runs; parser/stage changes can reinterpret responses without paying again.
 Metric/reference changes require only offline rescoring. A dry-run freezes its
 config too: if you change prices afterward, use a new run directory.
+
+For ISBN-cache recovery, a legacy `lookups/*.json` entry with both `value` and
+`raw_response` null is a failed request, not an empty provider result. Updated
+runs automatically ignore that entry and replace it only after a provider answer;
+resuming a completed metadata stage retries ISBN enrichment without repeating
+vision. A dry-run does not retry or modify the entry. Offline scoring also reads
+these legacy entries to exclude affected fields from existing predictions without
+changing the run. Do not remove those files before rescoring: they preserve the
+evidence that the missing fields reflect a request failure.
+
+When recovering a run created with older source hashes, use a **new `--out`** and
+the **same shared `--ledger`, configuration, snapshot, selection and replicate**.
+The code fingerprint intentionally prevents resuming old code in place; the new
+run starts with a clean ISBN cache and reuses identical paid request responses
+from the shared ledger. Do not edit the frozen run contract or clear the paid
+response cache. This clears the poisoned ISBN results from the recovery run
+while preserving the original run, including any evaluation still in progress.
 
 ## Review, adjudication and comparisons
 

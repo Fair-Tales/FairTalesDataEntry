@@ -120,6 +120,66 @@ def test_metadata_strict_equivalences_and_year_semantics():
     assert score_metadata("published_year", ref(-1, status="missing"), 2000)["exact"] is None
 
 
+def test_metadata_lookup_failure_excludes_only_affected_eligible_fields(tmp_path):
+    book = {"id": "lookup-failed", "pages": [], "reference": {"metadata": {
+        "title": ref("Vision title"), "authors": ref(["Ada Smith"], complete=True),
+        "publisher": ref(None, status="missing"), "published_year": ref(1999),
+        "illustrators": ref(["Ben Jones"], complete=True)}}}
+    prediction = {"metadata": {"status": "completed", "value": {
+        "title": "Vision title", "authors": [], "publisher": None,
+        "isbn_lookup": {"status": "failed", "reason": "http_error", "http_status": 429},
+        "lookup_failed_fields": ["authors", "publisher"]}}}
+    score = score_book(book, prediction)
+    assert score["metadata"]["title"]["exact"] is True
+    authors = score["metadata"]["authors"]
+    assert authors["prediction_status"] == "lookup_failed"
+    assert authors["exclusion"] == "lookup_failed"
+    assert authors["eligible"] is False and authors["exact"] is None
+    assert score["metadata"]["publisher"]["exclusion"] == "missing"
+    assert score["metadata"]["published_year"]["exact"] is False
+    assert score["metadata"]["illustrators"]["exact"] is False
+    summary = write_reports({"books": [book]}, {"books": {book["id"]: prediction}}, tmp_path)
+    assert summary["metadata"]["authors"]["strict_denominator"] == 0
+    assert summary["metadata"]["authors"]["failed_books"] == 0
+    assert summary["metadata"]["authors"]["lookup_failed_exclusions"] == 1
+    assert summary["metadata"]["publisher"]["lookup_failed_exclusions"] == 0
+    assert summary["metadata_lookup_failures"] == {
+        "affected_books": 1, "book_ids": [book["id"]], "excluded_fields": 1}
+    document = (tmp_path / "inspection.html").read_text()
+    assert "metadata_lookup_failures" in document and "excluded_fields" in document
+
+
+def test_metadata_lookup_failure_remains_visible_when_vision_filled_every_field():
+    book = {"id": "filled", "reference": {"metadata": {"title": ref("Vision title")}}}
+    prediction = {"metadata": {"status": "completed", "value": {
+        "title": "Vision title", "isbn_lookup": {"status": "failed"}, "lookup_failed_fields": []}}}
+    summary = aggregate([score_book(book, prediction)])
+    assert summary["metadata"]["title"]["strict_denominator"] == 1
+    assert summary["metadata_lookup_failures"]["affected_books"] == 1
+    assert summary["metadata_lookup_failures"]["excluded_fields"] == 0
+
+
+@pytest.mark.parametrize('raw_response,excluded', [(None, 1), ({"totalItems": 0}, 0)])
+def test_offline_report_classifies_legacy_isbn_cache_without_mutating_run(tmp_path, monkeypatch, raw_response, excluded):
+    from scripts.extraction_eval.store import atomic_json, digest
+
+    monkeypatch.setattr(socket, "socket", lambda *args, **kwargs: pytest.fail("Network access"))
+    run = tmp_path / "old-run"
+    path = run / "lookups" / f'{digest("123")}.json'
+    atomic_json(path, {"isbn": "123", "value": None, "raw_response": raw_response})
+    before_cache = path.read_bytes()
+    book = {"id": "legacy", "reference": {"metadata": {"title": ref("Missing title")}}}
+    predictions = {"_run_dir": str(run), "books": {"legacy": {
+        "metadata": {"status": "completed", "value": {"isbn": "123", "title": None}}}}}
+    before_predictions = deepcopy(predictions)
+    summary = write_reports({"books": [book]}, predictions, tmp_path / "report")
+    assert summary["metadata_lookup_failures"]["excluded_fields"] == excluded
+    assert summary["metadata_lookup_failures"]["affected_books"] == excluded
+    assert summary["metadata"]["title"]["strict_denominator"] == 1 - excluded
+    assert predictions == before_predictions
+    assert path.read_bytes() == before_cache
+
+
 def test_character_alias_as_primary_and_symmetric_article_stripping():
     expected = ref([{"name": "The narrator", "aliases": ["I"]}])
     result = score_characters(match_characters(expected, [{"name": "I", "aliases": ["narrator"]}]))

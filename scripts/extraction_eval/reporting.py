@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 
 from .scoring import aggregate, score_book
+from .runner import metadata_with_lookup_outcome
 
 
 def _atomic_text(path, content):
@@ -109,7 +110,12 @@ def write_reports(manifest, predictions, out, protocol=None, selection=None, cal
     predicted_books = predictions.get("books", {})
     scores = []
     for book in books:
-        score = score_book(book, predicted_books.get(book.get("id")), protocol)
+        prediction = predicted_books.get(book.get("id")) or {}
+        stage = prediction.get("metadata") or {}
+        if stage.get("status") == "completed":
+            prediction = {**prediction, "metadata": {**stage, "value": metadata_with_lookup_outcome(
+                stage.get("value") or {}, predictions.get("_run_dir"))}}
+        score = score_book(book, prediction, protocol)
         sample = sampling.get(book.get("id"), {})
         for key in ("role", "stratum", "inclusion_probability"):
             if key in sample:
