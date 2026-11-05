@@ -1,0 +1,1659 @@
+{
+  "confirmed_hallucinations": 0,
+  "independent_verified_blank_images": 1,
+  "original_empty_reference_pages": 108,
+  "qualification": "101 monitoring pages, not 101 photograph-verified wordless pages",
+  "records": [
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/6e2cdb54bc22870b31f211bbe90b69a6bc8aa304a2c9c009b6eb6671c9afa945.jpg",
+        "method": "opencv",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "a221815636e2884103129ad5b5af7f119cc9b199858bca012ff4a735f31d9b2b",
+      "book_id": "a_squash_and_a_squeeze",
+      "image_sha256": "ac111da905118af4f4a334ea59654717a85aed345bd6e3e752f7bb7f600109e4",
+      "page_id": "a_squash_and_a_squeeze_12",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/eadc85593249247bd2646b8b0c238cb0b31ac4abb5d15dd152a9015d636738ff.jpg",
+        "method": "opencv",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "d87d302561d5cd054d446fe0495f9c6033ae8c0e68409a680e2c03a9716a7b84",
+      "book_id": "a_squash_and_a_squeeze",
+      "image_sha256": "06f9816f4ba7bd36f4ca915bda431a6a28ce9fd166f771c9376e77f41eaa9b17",
+      "page_id": "a_squash_and_a_squeeze_17",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/e6c73a9d1fe8e6056f26490f722ee0e8fd1adbabe5f9970e05e9edd9c9eac976.jpg",
+        "method": "opencv",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "0723172c8a4b5dd42a7b35cf81b4003f6c0fa2aa24fc01e08e72235dbaa4ecca",
+      "book_id": "a_squash_and_a_squeeze",
+      "image_sha256": "d7adba26f2646ed9cf122d103557aee9c3de8c4adec7a30cadb00b04b33c796e",
+      "page_id": "a_squash_and_a_squeeze_20",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "a_squash_and_a_squeeze",
+      "image_sha256": "7ec3225ab76fe1093fa902df35caa51daac2bc0ac8aa606c2e97c16fa8ccfe26",
+      "page_id": "a_squash_and_a_squeeze_24",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/55380fe892cbf665bcfba5f55c87e27966fee5e451cc08260550b81fcf00d9d0.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "26c670b86a8eb4870f58c511c801f333a7607ccee4cc285d0427f7bb039228bd",
+      "book_id": "all_for_one",
+      "image_sha256": "1e2ca6693dc2f06898fc96021996bfa61d6d400e793f5263ba6a90e1efa2d597",
+      "page_id": "all_for_one_21",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "cave_baby",
+      "image_sha256": "2a12a8efeef8f68e7abeb48505f38995fbb87999ebdbcef2f2977dd0574c2156",
+      "page_id": "cave_baby_9",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "cave_baby",
+      "image_sha256": "366f986503685524240e898c88b487486f0661397f9cd2b6faede961b198be43",
+      "page_id": "cave_baby_18",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "cave_baby",
+      "image_sha256": "3af1a2039f8782e7fd7872afb61a258b11364e4070d59eace1a732f26dd60d4b",
+      "page_id": "cave_baby_19",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/9458fa7fdc5938db07a189eccb7429f75a5b6c38af990963ff35e89c3daae03c.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "22773c069cdd03ec18958e923eb0580f4d3d9a9707d4120436e286fe4f6de502",
+      "book_id": "cave_baby",
+      "image_sha256": "2399be40cdc014a22410a1421e72d52311a4577d471a085e8b0ce3b0eba8dc36",
+      "page_id": "cave_baby_21",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/950dfde3addb28b43fb051eb0ea0c30f52e2b8759c4cee7b7d80960c678d8f52.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "c6054bbb63572e5f7f98512679023f262c7acd0a95889318f639f16a9c82755a",
+      "book_id": "cave_baby",
+      "image_sha256": "607cad14b88e05f2654ebc0b6eceae6c8368a4040d810b10188036e79cd1cadf",
+      "page_id": "cave_baby_23",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "cave_baby",
+      "image_sha256": "7b3f8d3031a07c30117dedcdf8d174726c0ca576a7f2351674c8763951a9c9bd",
+      "page_id": "cave_baby_25",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/38a62e54cfdd3d2b3e7b3d928cd9d26376752b44f3ae51ed04ebb83fa2e1374c.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "c5ceb7e1d4850558c27ce0adb867b36b239e28393555d01a7bfc9ed794da4df2",
+      "book_id": "cave_baby",
+      "image_sha256": "83276a4095194f631052a6b9c94b889c19244904cbe306328d69d4cb875a2fdb",
+      "page_id": "cave_baby_27",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "cave_baby",
+      "image_sha256": "9c564e34539c9a087738df2f8b99e7b5b73a52e3f1a0924636166f36edf4d917",
+      "page_id": "cave_baby_29",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/a6f1daef33d14e7b82fee9a97bf0398f484cd6ede11e7f0ada1eb88fd495b6e9.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "85b0ef416356a753800f3d1a096ef7e0465ca9281fe087d425fd6292dac9b8c5",
+      "book_id": "cave_baby",
+      "image_sha256": "00b451514fec23f20aadabdb2364ecc08b12b83736e852b6a14c6f66458a1e6e",
+      "page_id": "cave_baby_31",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/9eeed18ef89de3f0882eb25f164d09a05e4cb555b1da4a303df33ff16b3277e6.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "5ab0048897483bdb7e444d9cfb67712401f118dad9641019dff7193298dbb728",
+      "book_id": "how_the_grinch_stole_christmas",
+      "image_sha256": "281ba1f4ef4fee2197d52bcfeebb5a5477a59f0786b866b2a7799eb304af2a8a",
+      "page_id": "how_the_grinch_stole_christmas_12",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "how_the_grinch_stole_christmas",
+      "image_sha256": "44005ce9d733858785d35c5e20ab8cbc6dfbe8cd6c37fc2384f3216cf454b465",
+      "page_id": "how_the_grinch_stole_christmas_17",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/d51cccbf5a04eb31cb0c195874c5f0f308f94b338615ea85aa9bf9e5c397ce06.jpg",
+        "method": "opencv",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "128833af6e0ea5e104e808fe7f7b5e553e813ca97b52d4298a5d50881a170916",
+      "book_id": "how_the_grinch_stole_christmas",
+      "image_sha256": "6f691ad13260ac72c3f4e41a544e1079c8e2d1bff75cc4052fa0409b58a09315",
+      "page_id": "how_the_grinch_stole_christmas_19",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/8108b5de47fb6967497e98b27a6bc91905b613d155de120a0ee8b314a1d3e9a7.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "5993a36ab4e10d999d9fa55ab2138e515acb28e1715721268650c5b40838176f",
+      "book_id": "how_the_grinch_stole_christmas",
+      "image_sha256": "1881a2ff5fed020486fa4e069dcac35ed160cddde8ffe0aa0811b71000e45450",
+      "page_id": "how_the_grinch_stole_christmas_22",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "how_the_grinch_stole_christmas",
+      "image_sha256": "7ae0f97ad2973de8898936e6572d53f0142703a676c055e92d5ef6298c4dd4cb",
+      "page_id": "how_the_grinch_stole_christmas_29",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/cc84ae8b5fb4b0400763793490d3f63d2b048d8fe624120fc095c4361eb0f874.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "17fb7035b52739ed2e555651d540205ffcad826aa1012cf3d26b6baf125ccf1c",
+      "book_id": "how_the_grinch_stole_christmas",
+      "image_sha256": "6575f28d44d18effe01ff267421abbce85c2183e447b22fefae2f77d801a65dc",
+      "page_id": "how_the_grinch_stole_christmas_32",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/5b82ab61a841633296175c61b4b410a368ec7ff191a4faa3a9452d31416a58d1.jpg",
+        "method": "opencv",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "6a6afc4335278ceeac48b1874d0ec3897818a4374ce66d63f5d04cb0c64329de",
+      "book_id": "how_the_grinch_stole_christmas",
+      "image_sha256": "a0f2a2095a6854c49a60d99d2946d131b555b7e59f200c3a2481aa3773acbe99",
+      "page_id": "how_the_grinch_stole_christmas_34",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "how_the_grinch_stole_christmas",
+      "image_sha256": "036a8daa219a553714500c01ff6aa25e86c41bffd2aa1d6bc0e3b0e0bf4cd5f4",
+      "page_id": "how_the_grinch_stole_christmas_36",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/7d8e303ed923029ab8fc195c4ef919256a5e59001e51764fcc4eaffb03817576.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "9d4113fc9a671e53f892fd1a4cf6619c709b68abe5d3e294dcf50d467917d655",
+      "book_id": "how_the_grinch_stole_christmas",
+      "image_sha256": "9e625b6386e2aa037df07452d7ff2705e0b88c939f80ad22f1e2cc420ce35a47",
+      "page_id": "how_the_grinch_stole_christmas_49",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "how_the_grinch_stole_christmas",
+      "image_sha256": "5e22281c9c64a61cfcfc9764488249cc6717cdb2229f9b5dc47e5b1c2ed847b9",
+      "page_id": "how_the_grinch_stole_christmas_51",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "how_the_grinch_stole_christmas",
+      "image_sha256": "349e82bb00cd7a97141b682c6d71dd4519015e2cc987f7e7414b89ce3a0b54f1",
+      "page_id": "how_the_grinch_stole_christmas_53",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "how_the_grinch_stole_christmas",
+      "image_sha256": "c99ba913051a45405e5d1ff4e61e9f7a9fe17e86eb8807675c159fa5aeb05887",
+      "page_id": "how_the_grinch_stole_christmas_57",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/aeb5ca5efe746472feccf9de611f6f73973fd0f60b990462d0fea77a4a9647d6.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "73fd93ab1d3449c826616fea6bfbdde53c690a1a09803d0955dce4c804468ec1",
+      "book_id": "how_the_grinch_stole_christmas",
+      "image_sha256": "dd442a2eb957db4e7eace3c4949c0404056c9abd82cad1a5e3d355ee78e47df5",
+      "page_id": "how_the_grinch_stole_christmas_59",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "it's_christmas",
+      "image_sha256": "6ec8651b9153342eda640799832a7b4232d0d4eff4b8e30a0ddd507f6725d881",
+      "page_id": "it's_christmas_16",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "norman_the_slug_with_the_silly_shell",
+      "image_sha256": "92f873a78224fcb390ebe84d8d99d77afeda7a7a75af960ccd442aa0d8ef8250",
+      "page_id": "norman_the_slug_with_the_silly_shell_7",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/709fb729ef669014d98fa3218e960a731739be3bc5faad0f5adbccc99b9db73c.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "c821efbce17ae9bf1b43dc8888b3e426e97dfab1086a8a6233cba58493f45a69",
+      "book_id": "norman_the_slug_with_the_silly_shell",
+      "image_sha256": "5248ff7308ad69af13900b8731e22d38b4a6d98dc5438735329e561778c9b04b",
+      "page_id": "norman_the_slug_with_the_silly_shell_10",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "norman_the_slug_with_the_silly_shell",
+      "image_sha256": "30cc4b958784ac4cf8e505a25468ade96155e7bc156bb237fa46b3ae2ae59b23",
+      "page_id": "norman_the_slug_with_the_silly_shell_19",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "norman_the_slug_with_the_silly_shell",
+      "image_sha256": "b94b8b086a1f2f4af24f863c6ccf9b70ff39c68132fc55cffef0aadbddf186b7",
+      "page_id": "norman_the_slug_with_the_silly_shell_21",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "norman_the_slug_with_the_silly_shell",
+      "image_sha256": "bcc55fd3ee622e7c0f34d6ff76bfad20c464cb61fa551468bdf538447487e713",
+      "page_id": "norman_the_slug_with_the_silly_shell_22",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "room_on_the_broom",
+      "image_sha256": "df02941b983639d26e2a45dfeb97b4ce1a2a57e11d03253f5558b7a7eb8d2801",
+      "page_id": "room_on_the_broom_10",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "room_on_the_broom",
+      "image_sha256": "218042259c0ace643372e0159881f6da6ad789b49d8ef5d06e9588bbfd53bbd9",
+      "page_id": "room_on_the_broom_14",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "room_on_the_broom",
+      "image_sha256": "d52a8179e1d66dbaace88030c85e0323300ef05e3dbf46a34361cbdd73bd5066",
+      "page_id": "room_on_the_broom_17",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "room_on_the_broom",
+      "image_sha256": "952fec4c85f87e07518b09e79cf84a99cee9cc5a9da27a47f8eecf9a7f1a1c73",
+      "page_id": "room_on_the_broom_18",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/6ff415de245ee23df1d38941c0e4f08b31069b1666bd86faad714f6741d436cf.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "d76656b453d22f84b892aa9cdc0a1265417b325fb45a1ddca4797be3b2ba437e",
+      "book_id": "room_on_the_broom",
+      "image_sha256": "941b324e977cf1ac6f0c11898134393d8c45a3d7ee674195d008a23c91958c38",
+      "page_id": "room_on_the_broom_20",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "room_on_the_broom",
+      "image_sha256": "e297a2c6188e2d481c2fb7d84b36759c9b6d11893e68f8a524ee74e12702aa4b",
+      "page_id": "room_on_the_broom_23",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "room_on_the_broom",
+      "image_sha256": "ed5c8ef4e76145401bbf88ef6bdaade7c3d580c514386266a914ef70bc23db61",
+      "page_id": "room_on_the_broom_25",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "room_on_the_broom",
+      "image_sha256": "c3421c02c350079b1744375798dedef655094583cb2dbcad7980ee1fdc5f46bf",
+      "page_id": "room_on_the_broom_29",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "room_on_the_broom",
+      "image_sha256": "f8a760b2a71cd2a529908ae786f25a8d39a6e16d3c8e17999a216f94cd0eb1dd",
+      "page_id": "room_on_the_broom_30",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "room_on_the_broom",
+      "image_sha256": "56ba01cf9455fc7fc6be4cf51037e7ba52f127597a786f9c4ce6e752c3f89f87",
+      "page_id": "room_on_the_broom_31",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": false,
+        "method": null,
+        "page_type": "blank",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "998f044405e98a71ce4cd1d09f6f985065b6449c2f4d9d2754c8f9b9b1e0c4b0",
+      "book_id": "santa_is_coming_to_devon",
+      "image_sha256": "13897c8812fac4056946ef7e730b8e19e10765d5906dae5ade02a378377ccf93",
+      "page_id": "santa_is_coming_to_devon_16",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/7ffe21ac33b572b2e808f2bc8a1c0b4b4d9ded6739b60f951db0e75c4a8ef38d.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": true,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "675f0314b59cde9ceb1462e9f1737acf7a28e201c294e7ec1cc3d42f104e27aa",
+      "book_id": "santa_is_coming_to_devon",
+      "image_sha256": "e3bffceb76ab05cdc813f15b01a31898466b29992fc3c76bb79e84a261cedc54",
+      "page_id": "santa_is_coming_to_devon_17",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/7fa2cc387635d2d6c70a56a4ac7261e628b9f0cc043783d07524ef2d8004107f.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "37683d442d4c4a31b0448bf45a050ad188e717cea4f85774452894c1df45c414",
+      "book_id": "santa_is_coming_to_devon",
+      "image_sha256": "b04a8c94a92f3612d2077c5c1b3e26fd38613ed3fa8fdf5175065795f5010d62",
+      "page_id": "santa_is_coming_to_devon_18",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "santa_is_coming_to_devon",
+      "image_sha256": "035d058e18853ff151192e8a005b6dc2746ac809ae726e881827243f21bf79be",
+      "page_id": "santa_is_coming_to_devon_27",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": false,
+        "method": null,
+        "page_type": "blank",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "998f044405e98a71ce4cd1d09f6f985065b6449c2f4d9d2754c8f9b9b1e0c4b0",
+      "book_id": "santa_is_coming_to_devon",
+      "image_sha256": "501c266619cd260f8b42d58ae6b2c26afcaedde854dadde34bfde1f5d1d6ee85",
+      "page_id": "santa_is_coming_to_devon_32",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": false,
+        "method": null,
+        "page_type": "blank",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "998f044405e98a71ce4cd1d09f6f985065b6449c2f4d9d2754c8f9b9b1e0c4b0",
+      "book_id": "sharing_a_shell",
+      "image_sha256": "45fdf894180b40d6e34646c4e5d17343f6f11663aaeae69f11f630e0449b8d4c",
+      "page_id": "sharing_a_shell_17",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/3fbc2b5aec8e20a795e3dba658af18c8684f211d923e556136fc822b3c79d264.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "c8c2bd842eb9e0d2ba64537aadf818fe4c9caa87c816851487a2c3d1a0974ce0",
+      "book_id": "sharing_a_shell",
+      "image_sha256": "25d1f60c14cde1db16925800427e6838f1677c17745ff0a27733fba8a579678c",
+      "page_id": "sharing_a_shell_20",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "sharing_a_shell",
+      "image_sha256": "aec9b8b458edc6e79a70737a47765f507efc1ff42e847c4aa9d09d45447a5be2",
+      "page_id": "sharing_a_shell_27",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": false,
+        "method": null,
+        "page_type": "blank",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "998f044405e98a71ce4cd1d09f6f985065b6449c2f4d9d2754c8f9b9b1e0c4b0",
+      "book_id": "the_book_with_no_pictures",
+      "image_sha256": "2799b9e051da36c4de2cd83c47f506b2744ac5a6d8b9ca3cecc861c5e1d6ccd9",
+      "page_id": "the_book_with_no_pictures_6",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": true
+    },
+    {
+      "baseline_response": {
+        "contains_story": false,
+        "method": null,
+        "page_type": "blank",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "998f044405e98a71ce4cd1d09f6f985065b6449c2f4d9d2754c8f9b9b1e0c4b0",
+      "book_id": "the_book_with_no_pictures",
+      "image_sha256": "2799b9e051da36c4de2cd83c47f506b2744ac5a6d8b9ca3cecc861c5e1d6ccd9",
+      "page_id": "the_book_with_no_pictures_8",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": false,
+        "method": null,
+        "page_type": "blank",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "998f044405e98a71ce4cd1d09f6f985065b6449c2f4d9d2754c8f9b9b1e0c4b0",
+      "book_id": "the_book_with_no_pictures",
+      "image_sha256": "599ab89b54a798d0f9d8400ff26dbe01353a68ce7ea7edae980196b4f2a60e3f",
+      "page_id": "the_book_with_no_pictures_10",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": false,
+        "method": null,
+        "page_type": "blank",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "998f044405e98a71ce4cd1d09f6f985065b6449c2f4d9d2754c8f9b9b1e0c4b0",
+      "book_id": "the_book_with_no_pictures",
+      "image_sha256": "7d0fccfc8ae18713e4ffe90aa38292ddaedf31a3f27b284e00d4eb928078334d",
+      "page_id": "the_book_with_no_pictures_12",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": false,
+        "method": null,
+        "page_type": "blank",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "998f044405e98a71ce4cd1d09f6f985065b6449c2f4d9d2754c8f9b9b1e0c4b0",
+      "book_id": "the_book_with_no_pictures",
+      "image_sha256": "2799b9e051da36c4de2cd83c47f506b2744ac5a6d8b9ca3cecc861c5e1d6ccd9",
+      "page_id": "the_book_with_no_pictures_14",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": false,
+        "method": null,
+        "page_type": "blank",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "998f044405e98a71ce4cd1d09f6f985065b6449c2f4d9d2754c8f9b9b1e0c4b0",
+      "book_id": "the_book_with_no_pictures",
+      "image_sha256": "2799b9e051da36c4de2cd83c47f506b2744ac5a6d8b9ca3cecc861c5e1d6ccd9",
+      "page_id": "the_book_with_no_pictures_24",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": true
+    },
+    {
+      "baseline_response": {
+        "contains_story": false,
+        "method": null,
+        "page_type": "blank",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "998f044405e98a71ce4cd1d09f6f985065b6449c2f4d9d2754c8f9b9b1e0c4b0",
+      "book_id": "the_book_with_no_pictures",
+      "image_sha256": "2799b9e051da36c4de2cd83c47f506b2744ac5a6d8b9ca3cecc861c5e1d6ccd9",
+      "page_id": "the_book_with_no_pictures_28",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": false,
+        "method": null,
+        "page_type": "blank",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "998f044405e98a71ce4cd1d09f6f985065b6449c2f4d9d2754c8f9b9b1e0c4b0",
+      "book_id": "the_book_with_no_pictures",
+      "image_sha256": "2799b9e051da36c4de2cd83c47f506b2744ac5a6d8b9ca3cecc861c5e1d6ccd9",
+      "page_id": "the_book_with_no_pictures_30",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": false,
+        "method": null,
+        "page_type": "blank",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "998f044405e98a71ce4cd1d09f6f985065b6449c2f4d9d2754c8f9b9b1e0c4b0",
+      "book_id": "the_book_with_no_pictures",
+      "image_sha256": "2799b9e051da36c4de2cd83c47f506b2744ac5a6d8b9ca3cecc861c5e1d6ccd9",
+      "page_id": "the_book_with_no_pictures_36",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": false,
+        "method": null,
+        "page_type": "blank",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "998f044405e98a71ce4cd1d09f6f985065b6449c2f4d9d2754c8f9b9b1e0c4b0",
+      "book_id": "the_book_with_no_pictures",
+      "image_sha256": "2799b9e051da36c4de2cd83c47f506b2744ac5a6d8b9ca3cecc861c5e1d6ccd9",
+      "page_id": "the_book_with_no_pictures_38",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": false,
+        "method": null,
+        "page_type": "blank",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "998f044405e98a71ce4cd1d09f6f985065b6449c2f4d9d2754c8f9b9b1e0c4b0",
+      "book_id": "the_book_with_no_pictures",
+      "image_sha256": "234df2ea172398fabad3f68b80ca5877c13c71261fc8be39eed9b528e52107c2",
+      "page_id": "the_book_with_no_pictures_42",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": false,
+        "method": null,
+        "page_type": "blank",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "998f044405e98a71ce4cd1d09f6f985065b6449c2f4d9d2754c8f9b9b1e0c4b0",
+      "book_id": "the_book_with_no_pictures",
+      "image_sha256": "2799b9e051da36c4de2cd83c47f506b2744ac5a6d8b9ca3cecc861c5e1d6ccd9",
+      "page_id": "the_book_with_no_pictures_44",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": false,
+        "method": null,
+        "page_type": "blank",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "998f044405e98a71ce4cd1d09f6f985065b6449c2f4d9d2754c8f9b9b1e0c4b0",
+      "book_id": "the_book_with_no_pictures",
+      "image_sha256": "2799b9e051da36c4de2cd83c47f506b2744ac5a6d8b9ca3cecc861c5e1d6ccd9",
+      "page_id": "the_book_with_no_pictures_48",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "the_enormous_crocodile",
+      "image_sha256": "e0a55faa296997e2b7b17f822ec4699ae55ad0ebfe4eaef2ed898969def3fb96",
+      "page_id": "the_enormous_crocodile_16",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "the_enormous_crocodile",
+      "image_sha256": "8de9008d7fd59c58d31d87d9fbebc9242ff94533519ab551b6495e36158f39cf",
+      "page_id": "the_enormous_crocodile_21",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "the_enormous_crocodile",
+      "image_sha256": "9e9c0310417f9d5dc7932d7a7addd21a94c7ec327c8d756bddfa76b7130c2c8d",
+      "page_id": "the_enormous_crocodile_23",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "the_enormous_crocodile",
+      "image_sha256": "5662c9a34d6ea7071c8d49bed345615b269ab4453df3f9d0fcf8606ff95f2f52",
+      "page_id": "the_enormous_crocodile_25",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "the_little_bully",
+      "image_sha256": "5bb10af7eb941489763a16c5116504a5b9af34006ef8517872792b5ac91c7dc3",
+      "page_id": "the_little_bully_10",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": false,
+        "method": null,
+        "page_type": "blank",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "998f044405e98a71ce4cd1d09f6f985065b6449c2f4d9d2754c8f9b9b1e0c4b0",
+      "book_id": "the_little_bully",
+      "image_sha256": "93d60226933385f4dddc1a32ab837956bde8533bd9ff9c8d5e3ed66a039d971a",
+      "page_id": "the_little_bully_33",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "the_little_bully",
+      "image_sha256": "afc1737cddaaee0589f1bcc1a854d086a6df33ada3ad48720448c70225339275",
+      "page_id": "the_little_bully_35",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "the_storm_whale",
+      "image_sha256": "555ec06c8392d93370178c199cde80426f8e2ac95a68a938b0b59cbd616e7631",
+      "page_id": "the_storm_whale_10",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "the_storm_whale",
+      "image_sha256": "6f3909b01ed9c6face6aaca7af789b1a469e56e80a4947612549a21bb314899a",
+      "page_id": "the_storm_whale_25",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "the_storm_whale",
+      "image_sha256": "0c5e6e79131ed689f67ee8593f7ea4ab8008e55e93119636643d19456fa80afc",
+      "page_id": "the_storm_whale_26",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "the_storm_whale",
+      "image_sha256": "d0ba6c13989aea780c75fe39e768c28e5bc829801a87f7ad8615eea6309e045a",
+      "page_id": "the_storm_whale_28",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/960f482ca5cc921f35d148327cfce14a69344b0d380363ec419884c0fbfa8639.jpg",
+        "method": "opencv",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "34c3aa5a72d97989b7125e9f8796a7318b7583ae6ccc6e5ae9791fac0e58cdee",
+      "book_id": "the_three_little_pigs",
+      "image_sha256": "78adeeba776f9e37b32cc193d3422350585cf6d9227b80ae6e0e2e85f70dff9d",
+      "page_id": "the_three_little_pigs_9",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/2cba614e586937e73e6f255cfb66e42979cf806f11e5aa94a76ff0c892685ab2.jpg",
+        "method": "opencv",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "df78507a43f0157567c1ddf09e1219feca9c8558f631ec88cda9c839d3cac858",
+      "book_id": "the_three_little_pigs",
+      "image_sha256": "d99702751b4aa32e8d397e4d4d27a24e31918f9881677b28c4d3f7fc30441f55",
+      "page_id": "the_three_little_pigs_21",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "the_ugly_duckling",
+      "image_sha256": "3916520440219a08668d66859bc7202153e2291523835277bec44ad91f76276c",
+      "page_id": "the_ugly_duckling_14",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/73022ceadcc8337e3bc7f813052b328a57370ae313be6a7da74f8a1e3614348f.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "8a7e16e63a602a20341f2c8c8c4ba929085a2304c820dda69b4dd4d637a6beb6",
+      "book_id": "the_ugly_duckling",
+      "image_sha256": "d1ebe6736213d9570118c23b3129cec79f83371a4034bf932d431893ccf54d53",
+      "page_id": "the_ugly_duckling_18",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/afcefc8f6adb6324200ac3f8d00d13e4bdc2be04438c6843c7229f1c093e160e.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "ce18420765a52d43299ae553cba28d3483968c620a8f3f89dd4df056ec9968e7",
+      "book_id": "the_ugly_duckling",
+      "image_sha256": "96d073944cd681d908e1894bbb580769837c947d6a3ea71d361bbd3b79f25cf3",
+      "page_id": "the_ugly_duckling_21",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "the_ugly_duckling",
+      "image_sha256": "495d38a050a867b76887d69c3ee035793423b75dc07f39016a5cc694e241e791",
+      "page_id": "the_ugly_duckling_23",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/36c81757c9a58266b2abe43646b5252fc361736589feb764fa7b322bd4145c45.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "eba4ba6739e89ab0275075ae4217bf48ae53854dc251dbcbab493c4a95977713",
+      "book_id": "the_ugly_duckling",
+      "image_sha256": "d7f02a2348e27bdedb3bf7b901848a52924d87cdd4fb3d0ff43511290bc28808",
+      "page_id": "the_ugly_duckling_25",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "the_ugly_duckling",
+      "image_sha256": "e30794053f6c08fc3249a2d57b693418d26a0d2ea7b61f5c3a842834d2ab4a4c",
+      "page_id": "the_ugly_duckling_27",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/9f535089a65245c8b7024d159d9cc473badd28d30ad999fb4b0c4a0d9398acaa.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "d1c7bcb3c3de067df53af816d4ed0a51e89a70290b1f67e567467ea280d8f3ac",
+      "book_id": "the_ugly_duckling",
+      "image_sha256": "a7cf259c860a9e908ad79c3575119a04eabe067c9bd4819fc3a37eeb0a55bb0f",
+      "page_id": "the_ugly_duckling_30",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "we're_going_on_a_bear_hunt",
+      "image_sha256": "2e71099270d8eebf707f99d35cc300c8a6f717acab76ecec3a7d4d8fd4cdfc4a",
+      "page_id": "we're_going_on_a_bear_hunt_9",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "we're_going_on_a_bear_hunt",
+      "image_sha256": "4eb85401cd0666967ef6b4c2c19c60fecc9d477cc1f23b760d39ab48c501f1d0",
+      "page_id": "we're_going_on_a_bear_hunt_13",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "we're_going_on_a_bear_hunt",
+      "image_sha256": "34bbaf3e3c65fe57de78d652586226656680d23bd2ec387813aeb2c9d851c887",
+      "page_id": "we're_going_on_a_bear_hunt_17",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "we're_going_on_a_bear_hunt",
+      "image_sha256": "9e1df23035cb839be252c1f5e833eb501138885921c8e8947fe791ac03d4bfc8",
+      "page_id": "we're_going_on_a_bear_hunt_21",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "we're_going_on_a_bear_hunt",
+      "image_sha256": "28f81c65a9fb5e93fdeff0243cce354e4ade01c2e1688813545b5c9f2744d451",
+      "page_id": "we're_going_on_a_bear_hunt_25",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "we're_going_on_a_bear_hunt",
+      "image_sha256": "7f5245e9e8803a622036d8386f025d62a20dc1083870c1671391c8feef3ef3ab",
+      "page_id": "we're_going_on_a_bear_hunt_28",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "we're_going_on_a_bear_hunt",
+      "image_sha256": "55c80578c8b3e6a8ee4c6663a369c0def96ac3abaa1a0bd5d5faac641b36058d",
+      "page_id": "we're_going_on_a_bear_hunt_31",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/66b133dab9e04c6a8237645dcb469484717c9cd0e81548ab6e0ad84c5847b0f9.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": true,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "3d15e7cae369fbf79defabe3438a3b25940381c446780b511634a2c642a8848a",
+      "book_id": "wiggling_worms_at_work",
+      "image_sha256": "5d3875991d76c6679c3825bebe739d8ccae164cc2481f77436b7ac6a059c55cc",
+      "page_id": "wiggling_worms_at_work_11",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/a091ee17f1f433e49fb5fb45a69d8660ae0c40a0a724676f8ba140674c928514.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": true,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42f22f28934167bb0a7254279535e342a2b6188c2151e78f86357b0210539b43",
+      "book_id": "wiggling_worms_at_work",
+      "image_sha256": "940fa7054e18a782b30a79a103d54f8861e5ee60b73c4325273c73207446d3e4",
+      "page_id": "wiggling_worms_at_work_13",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "wiggling_worms_at_work",
+      "image_sha256": "304d5ad7c14529d26646b10484a84f3b9ded1aa4ba663bc8747d809a459ca425",
+      "page_id": "wiggling_worms_at_work_15",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": false,
+        "method": null,
+        "page_type": "blank",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "998f044405e98a71ce4cd1d09f6f985065b6449c2f4d9d2754c8f9b9b1e0c4b0",
+      "book_id": "wiggling_worms_at_work",
+      "image_sha256": "f043bd056d7cb017a815e80082b22eac4e8efa38ec5111df4c3c7d0c10a7cc32",
+      "page_id": "wiggling_worms_at_work_17",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/b9d0139279bcd4de287584f6a02e5bdebe4d82c8882898f4a68978d757ac97cd.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": true,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "262681515064e2cd91c3f2967a14d14c184e99daa305660c25cd7f25058b4745",
+      "book_id": "wiggling_worms_at_work",
+      "image_sha256": "9e5846501a37de04a639df80b05d60ead6ac3ef5e34132f054c9ccc66d4ab378",
+      "page_id": "wiggling_worms_at_work_18",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/8c974b7a185603ba6aebea434c4106493112953b130ce813fa3f2480be01d9a3.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": true,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "3aa0496ed6b6e6e96c15f4b986fc547340fbdc88ee07b05ed40a05adb7bfe4dd",
+      "book_id": "wiggling_worms_at_work",
+      "image_sha256": "fbe700f6a434fdd92812ab6c8a1d6bf795d0d0d0e356372fdc18aa5dbee52a0f",
+      "page_id": "wiggling_worms_at_work_20",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "story",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "42442e1b6c0c0c177b8dbaf594544081ee1d25332960bb960d927cca14d95f2a",
+      "book_id": "wiggling_worms_at_work",
+      "image_sha256": "1c6e8e4f3f2f952499e5e6ec604f0fcd3d0b69ee7a0728b21c53a5e97354a945",
+      "page_id": "wiggling_worms_at_work_23",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/27ba6adda4fe602ada99eeb8fab1b7dc548fabd80f51ef8e372511da3dcb64f4.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": true,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "3b0cd6706dc8b0930806a7e3b67ce75aa5ffcad89ef5292bc0330aef4b9f8891",
+      "book_id": "wiggling_worms_at_work",
+      "image_sha256": "fe67d87808d1169049f6f34effa96f3964c5dc16a4551c1f1ee78725b2475a33",
+      "page_id": "wiggling_worms_at_work_24",
+      "reference_hash": "78e06bd77a99e88092703851fbf0eddb5f93eb1eb1b447287a48decbd45c9c2f",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "method": null,
+        "page_type": "illustration",
+        "rotation_uncertain": false,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "9c26c8d9f6c4d7f368c3b3a6ea90b257f51e21821a676252a38abdbaf09f15b3",
+      "book_id": "wiggling_worms_at_work",
+      "image_sha256": "c86c2db886f09eb503b4e1d3ee9dcca8a49ec904094bbf4738fa83235cec32c3",
+      "page_id": "wiggling_worms_at_work_27",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    },
+    {
+      "baseline_response": {
+        "contains_story": true,
+        "corrected_path": "/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/images/bc7ab43f2464fe6d04f5d97df7aae73a6903250dfaed4a87c71f9de0cc77667d.jpg",
+        "method": "rotation",
+        "page_type": "story",
+        "rotation_uncertain": true,
+        "status": "completed",
+        "text": ""
+      },
+      "baseline_response_hash": "72efc1cc9a16c80e95fb93199bf630a690e81763795bbb454e0756cb4ce2d28a",
+      "book_id": "wiggling_worms_at_work",
+      "image_sha256": "0a385b05ff65d2c858afe2fec94d9f079319b5630f04f59203965c908857f31d",
+      "page_id": "wiggling_worms_at_work_31",
+      "reference_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "verified_blank": false
+    }
+  ],
+  "snapshot_id": "b0993f0b5142b15676275a52d10d64a5a1635437fb0551ae82bb9493b18e1fe4",
+  "verified_recovery_pages": 7,
+  "version": "empty-reference-monitoring-v1"
+}

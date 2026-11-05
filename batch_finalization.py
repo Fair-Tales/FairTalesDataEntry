@@ -32,6 +32,11 @@ def page_text_revision(pages):
         [number, page.text or '', bool(page.contains_story)]
         for number, page in sorted(pages.items())
     ]
+    from conventions import region_revision_payload
+    for row, (_, page) in zip(rows, sorted(pages.items())):
+        regions = region_revision_payload(getattr(page, 'extraction_evidence', None))
+        if regions is not None:
+            row.append(regions)
     return _text_rows_revision(rows)
 
 
@@ -40,6 +45,7 @@ def _text_rows_revision(rows):
 
 
 def _result_text_revision(results):
+    from conventions import region_revision_payload
     rows = []
     for number, fields in sorted(results.items()):
         result = _fields_to_result(fields)
@@ -47,6 +53,9 @@ def _result_text_revision(results):
             raise BatchFinalizationError('Page extraction is not terminal')
         outcome, payload, *_correction = result
         rows.append([number, payload[0] or '', bool(payload[1])] if outcome == 'ok' else [number, '', False])
+        regions = region_revision_payload(fields.get('extraction_evidence')) if outcome == 'ok' else None
+        if regions is not None:
+            rows[-1].append(regions)
     return _text_rows_revision(rows)
 
 
@@ -116,6 +125,8 @@ def _materialize_page(book, db, job_id, page_number, result_fields, entered_by):
     apply_page_correction(page, corrected=corrected, rotation_uncertain=uncertain)
     if outcome == 'ok':
         page.text, page.contains_story, _page_type = payload
+        if getattr(payload, 'details', None):
+            page.extraction_evidence = payload.details
     page.entered_by = entered_by
     page.datetime_created = datetime.now(timezone.utc)
     page.is_registered = True
@@ -131,7 +142,8 @@ def _materialize_page(book, db, job_id, page_number, result_fields, entered_by):
         existing = target_ref.get(transaction=transaction).to_dict()
         if not current_job.get('extraction_complete'):
             raise BatchFinalizationError('Extraction changed during finalization')
-        if _fields_to_result(current_result) != result:
+        if (_fields_to_result(current_result) != result
+                or current_result.get('extraction_evidence') != result_fields.get('extraction_evidence')):
             raise BatchFinalizationError('Page result changed during finalization')
         previous = current_result.get('materialized_page')
         if existing is None:
@@ -208,6 +220,8 @@ def finalize_batch_job(book, db, fs, job_id):
     book.photos_url = final_prefix
     book.page_count = count
     book.photos_uploaded = True
+    if job.get('metadata_reconciliation') and not getattr(book, 'metadata_reconciliation', None):
+        book.metadata_reconciliation = copy.deepcopy(job['metadata_reconciliation'])
     completion = {
         'finalization_status': 'complete',
         'finalization_result': result,
@@ -237,6 +251,7 @@ def finalize_batch_job(book, db, fs, job_id):
 
 def load_book_character_result(book, db):
     """Find the durable handoff even when a normal Book load drops new fields."""
+    from character_evidence import restore_character_suggestions
     book_data = book.get_ref().get().to_dict() or {}
     job_id = book_data.get('pipeline_job_id')
     if not job_id:
@@ -252,7 +267,9 @@ def load_book_character_result(book, db):
         'status': job.get('character_status', 'pending'),
         'outcome': job.get('character_outcome'),
         'coverage': job.get('character_coverage'),
-        'suggestions': copy.deepcopy(job.get('character_suggestions') or []),
+        'suggestions': restore_character_suggestions(job.get('character_suggestions'),
+                                                     job.get('character_raw_response')),
+        'raw_response': copy.deepcopy(job.get('character_raw_response')),
         'text_revision': job.get('materialized_text_revision'),
         'reviewed': bool(revision and job.get('character_reviewed_revision') == revision),
     }

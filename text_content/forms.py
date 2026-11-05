@@ -54,9 +54,9 @@ class BookForm:
 
     # --- to_form() widget labels (data_structures/book.py) ---
     title_label = "Title"
-    published_label = "Date first published"
+    published_label = "Earlier year entry (event not established)"
     author_select_label = "Select from existing authors"
-    publisher_select_label = "Select from existing publishers"
+    publisher_select_label = "Earlier publisher entry (event not established)"
     illustrator_select_label = "Select from existing illustrators"
     # Worded to set the expectation of a NEXT step (#186): a user previously read
     # "(create a new author now)" as an invitation to type the name into the

@@ -130,6 +130,13 @@ def _apply_extracted_metadata(metadata):
         # Safe: book is unregistered, so the write-through Field is a no-op here.
         book.title = title
 
+    # Keep the complete evidence and both scoped publication targets; the
+    # single-reference legacy form is only a compatibility view.
+    from bibliography import PERSISTED_FIELDS
+    for field in PERSISTED_FIELDS:
+        if field in metadata and getattr(book, field, None) in (None, '', [], {}):
+            setattr(book, field, metadata[field])
+
     # Flag each field the AI pre-filled so the Add-Book form can show a concise
     # "Found by AI from your photos" caption next to it (#155). The year is the
     # book's first-published year read from the copyright page (#150).

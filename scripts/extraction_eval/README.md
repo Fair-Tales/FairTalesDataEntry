@@ -391,3 +391,52 @@ they fail in the serverless environment and are not weakened or skipped here.
 In the implementation sandbox Chromium itself could not launch (`Operation not
 permitted`), so the actual full-suite result was 652 passed and 27 E2E setup
 errors, before any connection to Streamlit.
+
+### Field-aware pipeline comparison (v3, offline)
+
+`score` now defaults to `protocol_v3.json`; `protocol.json` and the frozen baseline
+configuration remain historical artifacts. `--compare-run` emits `raw_to_raw`,
+`corrected_to_corrected` (when an overlay is supplied), and a separately labelled
+`fixed_baseline_measurement_repair`. Always use a fresh `--out` directory when
+scoring a frozen run. Both systems receive the same reference overlay and
+bibliography adapter. The registry includes recorded-alias/name-variant/character
+recall, M1–M4 diagnostics, separate evidenced merge/split rates, OCR, story,
+credits, scoped publication fields, regression guards and operational coverage.
+Reference alias precision/F1 are never gates. Missing evidence stays explicitly
+undefined, including attribution/rotation fixtures that have not been supplied.
+
+Each endpoint carries per-book counts and sampling metadata. Ratios are recomputed
+inside 10,000 paired book/group draws (seed 20261105). Probability samples also
+report a linearized ratio interval with finite-population correction; non-census
+singleton strata cannot estimate that variance. Descriptive intervals concern the
+selected development books only. Point gates never convert undefined evidence to
+passes, and no endpoint compensates for another. M4 fixes the baseline occurrence
+universe and refuses a fixed-input claim after character inputs change.
+
+The versioned C4 scorer requires scoped, evidenced publication targets. Legacy
+publisher/year values are preserved but supply no v2 gold denominator. Literal
+imprint agreement, scoped reviewed equivalence, publishing-house agreement,
+year/scope/territory and joint events remain separate. The original metadata
+lookup-failure exclusions remain historical diagnostics; comparison uses additive
+operational known-fact scores that retain failed lookups in denominators.
+
+The checked-in `evidence/dev20-v1/adjudications.json` contains only the seven
+supplied text-recovery verdicts (80 tokens) and Chris's blank p6 verdict plus the
+explicit p24 image-hash transfer. The Santa correction retains the full cached
+28-token text including `Everybody, PULL!`; the source table's shorter excerpt is
+recorded as a discrepancy. `empty_reference_cohort.json` freezes 101 monitoring
+pages, with two verified blank page records from one independent image. Other
+hash-identical records are not silently adjudicated. A new overlay validates the
+snapshot, original field/provenance hash, image hash, value type and convention;
+legacy unchecked overlays cannot be used for candidate comparison.
+
+`exposure.py` freezes all 34 exposed IDs, including both Gruffalo books and the
+incidental `a_letter_to_santa` exposure. Group-linked books remain quarantined.
+`select_holdout_books` constructs the 27 alias-positive / 13 alias-zero sampling
+plan with seed 20261105, recomputed eligibility counts, weights, reference hashes
+and exposure-after-unblinding records. It performs no service access or inference.
+
+Dev20 explicitly recorded alias recall is **6/10 under equivalence normalisation,
+across five books**, while strict raw-surface credit is **4/10**. Ten aliases make
+this a smoke test, not evidence of improvement; the legacy 88/106 name-variant
+measure includes canonical names and has a different meaning.

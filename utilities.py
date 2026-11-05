@@ -322,13 +322,20 @@ def get_s3_filesystem():
     )
 
 
-def get_anthropic_client():
+def get_anthropic_client(*, api_key=None, max_retries=None):
     """Return an ``anthropic.Anthropic`` client, or ``None`` when no API key is
     configured (#129).
 
     Centralises the ``'ANTHROPIC_API_KEY' in st.secrets`` guard: callers do
     ``client = get_anthropic_client(); if client is None: <show no-API-key UI>``.
     """
+    # Standalone metered runners supply a validated, explicitly bound key. This
+    # branch never reads Streamlit secrets or another runtime's account.
+    if api_key is not None:
+        if not isinstance(api_key, str) or not api_key.strip():
+            raise ValueError('An explicit Anthropic key must be nonempty')
+        options = {} if max_retries is None else {'max_retries': max_retries}
+        return anthropic.Anthropic(api_key=api_key, **options)
     runtime = current_runtime()
     if runtime is not None:
         return runtime.client
@@ -701,8 +708,18 @@ def build_vision_content(images, prompt, *, downscale=True, max_edge=1568):
     return content
 
 
+class VisionReply(str):
+    """String-compatible reply retaining provider completion status."""
+
+    def __new__(cls, text, failure_kind=None):
+        result = super().__new__(cls, text)
+        result.failure_kind = failure_kind
+        return result
+
+
 def vision_text(client, images, prompt, *, model="claude-sonnet-4-6",
-                max_tokens=1024, downscale=True, max_edge=1568, label=""):
+                max_tokens=1024, downscale=True, max_edge=1568, label="",
+                request_validator=None):
     """Send ``images`` + ``prompt`` to a Claude vision model and return the raw
     reply text (stripped), or ``None`` when the response carried no text block.
 
@@ -717,16 +734,15 @@ def vision_text(client, images, prompt, *, model="claude-sonnet-4-6",
     and a ``max_tokens`` truncation is logged distinctly so a truncated reply is
     diagnosable rather than surfacing only as a downstream JSON parse failure.
     """
-    response = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        messages=[{
+    request = dict(model=model, max_tokens=max_tokens, messages=[{
             "role": "user",
             "content": build_vision_content(
                 images, prompt, downscale=downscale, max_edge=max_edge
             ),
-        }],
-    )
+        }])
+    if request_validator is not None:
+        request_validator(request)
+    response = client.messages.create(**request)
     _log_usage(response, model, label)
     if getattr(response, "stop_reason", None) == "max_tokens":
         logger.warning(
@@ -735,11 +751,14 @@ def vision_text(client, images, prompt, *, model="claude-sonnet-4-6",
             max_tokens, model, label or "-",
         )
     text = first_text_block(response)
-    return text.strip() if text is not None else None
+    return (VisionReply(text.strip(), 'truncated_response'
+                        if getattr(response, 'stop_reason', None) == 'max_tokens' else None)
+            if text is not None else None)
 
 
 def vision_json(client, images, prompt, *, model="claude-sonnet-4-6",
-                max_tokens=1024, downscale=True, max_edge=1568, label=""):
+                max_tokens=1024, downscale=True, max_edge=1568, label="",
+                request_validator=None, reject_partial=False):
     """Send ``images`` + ``prompt`` to a Claude vision model and parse the JSON
     reply, returning ``(data_or_None, raw_text)`` (#129).
 
@@ -752,15 +771,21 @@ def vision_json(client, images, prompt, *, model="claude-sonnet-4-6",
     ``max_edge`` threads the downscale resolution through to ``vision_text`` so
     DATA-EXTRACTION callers can OCR at the higher ``EXTRACTION_MAX_EDGE`` (#135).
     """
+    options = {} if request_validator is None else {'request_validator': request_validator}
     raw = vision_text(
         client, images, prompt, model=model, max_tokens=max_tokens,
-        downscale=downscale, max_edge=max_edge, label=label,
+        downscale=downscale, max_edge=max_edge, label=label, **options,
     )
     if raw is None:
         return None, ""
+    if reject_partial and getattr(raw, 'failure_kind', None):
+        return None, raw
     try:
         return json.loads(strip_json_fence(raw)), raw
     except (json.JSONDecodeError, ValueError) as exc:
+        if reject_partial:
+            logger.warning('vision_json: incomplete or invalid JSON rejected (flow=%s): %s', label, exc)
+            return None, VisionReply(raw, 'invalid_json_response')
         # Malformed/truncated reply: try to recover the usable prefix before
         # giving up on the whole page (#183). A salvage is logged, not silent.
         salvaged = salvage_json(raw)
@@ -1655,6 +1680,8 @@ def _claude_json(client, prompt, max_tokens=1024, label="character_detection",
     item 1) so a leading non-text block can't break parsing, token usage is
     logged (audit item 7), and a ``max_tokens`` truncation is logged distinctly.
     """
+    from character_evidence import IncompleteCharacterResponse
+    from text_content.pipeline_prompts import CHARACTER_PARTIAL, CHARACTER_TRUNCATED
     model = model or EXTRACTION_MODEL
     response = client.messages.create(
         model=model,
@@ -1671,21 +1698,28 @@ def _claude_json(client, prompt, max_tokens=1024, label="character_detection",
     text = first_text_block(response)
     if text is None:
         raise json.JSONDecodeError("no text block in model reply", "", 0)
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        raise IncompleteCharacterResponse(
+            CHARACTER_TRUNCATED,
+            raw_response=salvage_json(text), raw_text=text,
+            failure_kind="truncated_response")
     try:
         return json.loads(strip_json_fence(text))
     except json.JSONDecodeError as exc:
-        # Malformed/truncated reply (#183 — the pilot's real "Expecting ','
-        # delimiter" failure): recover the usable prefix rather than throwing
-        # the whole run away. Logged, never silent; if nothing can be salvaged
-        # the original error propagates for the caller to surface as before.
+        # Keep the salvage for inspection, but never mark a partial cast complete.
         salvaged = salvage_json(text)
         if salvaged is not None:
             logger.warning(
                 "_claude_json: reply was not clean JSON (%s); salvaged a usable "
                 "object from it (model=%s, flow=%s)", exc, model, label,
             )
-            return salvaged
-        raise
+            raise IncompleteCharacterResponse(
+                CHARACTER_PARTIAL,
+                raw_response=salvaged, raw_text=text,
+                failure_kind="salvaged_partial_response") from exc
+        raise IncompleteCharacterResponse(
+            CHARACTER_PARTIAL, raw_response=None, raw_text=text,
+            failure_kind="invalid_json_response") from exc
 
 
 #: Reply-token ceiling for the single whole-book character-detection call. A
@@ -1696,8 +1730,9 @@ def _claude_json(client, prompt, max_tokens=1024, label="character_detection",
 CHARACTER_DETECTION_MAX_TOKENS = 8192
 
 
-def detect_book_characters(pages, client, progress_callback=None, model=None):
-    """Two-pass character + alias detection across a book's story pages (#52).
+def detect_book_characters(pages, client, progress_callback=None, model=None,
+                           prompt_variant="rules-plus-icl"):
+    """One whole-book call with lossless, evidence-bearing character suggestions.
 
     Args:
         pages: iterable of (page_number, page_text) for story pages with text.
@@ -1707,22 +1742,22 @@ def detect_book_characters(pages, client, progress_callback=None, model=None):
             ``character_detection_model``; the background pipeline (#179) passes
             it explicitly because ``get_ai_settings`` (a Streamlit cache) must
             not be called from the worker thread.
+        prompt_variant: frozen rules-only or rules-plus-icl request variant.
 
     Returns a list of character suggestion dicts, each with keys:
         name (str), gender (one of CharacterForm.gender_options),
         human (bool), plural (bool), protagonist (bool), aliases (list[str]).
 
-    A whole picture book's story text is only ~1-2K tokens, so this now sends
-    ALL of the page texts in ONE Claude call that both extracts the character
-    references and consolidates them across pages (so e.g. "the boy", "Tom" and
-    "Tommy" collapse into a single character with the others as aliases),
-    replacing the previous N-per-page + 1-consolidation call pattern (audit item
-    5). The reviewed output shape is unchanged. Nothing is written to the
-    database — the caller presents the result for the user to review, correct and
-    confirm.
+    The list-compatible result retains the full response, including unresolved
+    mentions when no entities can be projected. Invalid evidence is flagged,
+    never deleted. The character prompt requires textual evidence for identity;
+    no spelling similarity alone establishes a merge. Nothing is persisted here.
     """
-    from text_content import AIPrompts
     from alias_schema import recorded_aliases, RecordedSuggestions
+    from character_evidence import (validate_character_evidence,
+                                    validate_character_response_structure)
+    from conventions import convention_metadata
+    from text_content.pipeline_prompts import prompt_for, prompt_request_manifest
 
     pages = list(pages)
     # Single call over the whole book — report a coarse 0 -> 1 so existing
@@ -1735,13 +1770,20 @@ def detect_book_characters(pages, client, progress_callback=None, model=None):
          for page_number, page_text in pages],
         ensure_ascii=False,
     )
+    prompt = prompt_for("character_detection", prompt_variant).format(pages_json=pages_json)
     result = _claude_json(
         client,
-        AIPrompts.character_detection.format(pages_json=pages_json),
+        prompt,
         max_tokens=CHARACTER_DETECTION_MAX_TOKENS,
         model=model or get_ai_settings()['character_detection_model'],
     )
-    raw_characters = result.get("characters", []) if isinstance(result, dict) else []
+    validate_character_response_structure(result)
+    result = validate_character_evidence(result, pages)
+    result.update(convention_metadata())
+    result["prompt_manifest"] = prompt_request_manifest(
+        "character_detection", prompt_variant, prompt)
+    raw_characters = result.get("characters", [])
+    raw_characters = raw_characters if isinstance(raw_characters, list) else []
 
     valid_genders = ["Female", "Male", "Non-specific", "Transgender"]
     suggestions = []
@@ -1759,6 +1801,7 @@ def detect_book_characters(pages, client, progress_callback=None, model=None):
             **character,
             "raw_alias_entries": character.get("aliases", []),
             "unresolved_mentions": result.get("unresolved_mentions", []),
+            **convention_metadata(),
             "name": name,
             "gender": gender,
             "human": bool(character.get("human", True)),
@@ -1873,6 +1916,16 @@ def usable_precomputed_suggestions(precomputed, book_id):
     if precomputed.get('book_id') != book_id:
         return None
     suggestions = precomputed.get('suggestions')
+    if not isinstance(suggestions, list):
+        return None
+    # An explicitly successful new response can contain no named entities and
+    # still retain unresolved evidence. It must not trigger another paid call.
+    from alias_schema import RecordedSuggestions
+    raw_response = getattr(suggestions, 'raw_response', None)
+    if raw_response is None:
+        raw_response = precomputed.get('raw_response')
+    if isinstance(raw_response, dict) and isinstance(raw_response.get('characters'), list):
+        return RecordedSuggestions(suggestions, raw_response=raw_response)
     if not suggestions:
         return None
     return suggestions
@@ -2059,6 +2112,8 @@ def lookup_isbn(isbn, *, response_sink=None, outcome_sink=None):
                 'authors': info.get('authors', []),
                 'publisher': info.get('publisher', ''),
                 'published_date': info.get('publishedDate', ''),
+                'edition_identifiers': info.get('industryIdentifiers', []),
+                'provider_volume_id': items[0].get('id'),
             })
         if not retryable or attempts >= ISBN_LOOKUP_MAX_ATTEMPTS:
             break
@@ -2071,71 +2126,13 @@ def lookup_isbn(isbn, *, response_sink=None, outcome_sink=None):
 
 
 def extract_book_metadata(image_bytes, client):
-    """Extract bibliographic metadata from a title-page image using Claude vision.
+    """Compatibility entry point returning the joint, versioned projection.
 
-    Sends the image to Claude using the same model/integration as
-    ``extract_page_info`` and ``lookup_person_details`` and parses the JSON reply.
-    Returns a dict with keys:
-      - 'title'          (str)
-      - 'authors'        (list[str])
-      - 'illustrators'   (list[str])
-      - 'publisher'      (str or None)
-      - 'published_year' (int or None)
-      - 'raw'            (the raw model response text, kept for audit/debugging)
-
-    The raw response is always included whenever a reply is received, so the caller
-    can store it even when individual fields cannot be parsed. Anthropic API errors
-    are deliberately allowed to propagate so the caller can surface them to the user
-    (per ``book_edit_home.py``'s pattern); only response-parsing problems are handled
-    here, by returning empty fields alongside the raw text.
+    A one-page call still extracts every visible role/event. Full-book callers
+    use extract_photo_first_metadata so cover/title/copyright corroborate one
+    another in a single request.
     """
-    from text_content import AIPrompts
-
-    ai_settings = get_ai_settings()
-    result, raw_text = vision_json(
-        client, [image_bytes], AIPrompts.book_metadata_extraction, max_tokens=1024,
-        model=ai_settings['metadata_model'], max_edge=ai_settings['extraction_max_edge'],
-    )
-    empty = {
-        'title': "",
-        'authors': [],
-        'illustrators': [],
-        'publisher': None,
-        'published_year': None,
-        'raw': raw_text,
-    }
-    if not isinstance(result, dict):
-        return empty
-
-    def _as_name_list(value):
-        if isinstance(value, str):
-            return [value.strip()] if value.strip() else []
-        if isinstance(value, list):
-            return [str(v).strip() for v in value if str(v).strip()]
-        return []
-
-    publisher = result.get('publisher')
-    if not (isinstance(publisher, str) and publisher.strip()):
-        publisher = None
-    else:
-        publisher = publisher.strip()
-
-    year = result.get('published_year')
-    try:
-        year = int(year) if year is not None else None
-    except (TypeError, ValueError):
-        year = None
-    if year is not None and not (1900 <= year <= datetime.now(timezone.utc).year):
-        year = None
-
-    return {
-        'title': (result.get('title') or "").strip(),
-        'authors': _as_name_list(result.get('authors')),
-        'illustrators': _as_name_list(result.get('illustrators')),
-        'publisher': publisher,
-        'published_year': year,
-        'raw': raw_text,
-    }
+    return extract_joint_metadata([(1, image_bytes)], client)
 
 
 def extract_books_from_photos(images, client):
@@ -2188,107 +2185,33 @@ def locate_key_pages(pages, client):
     to the model), or None when a page could not be identified or the reply could
     not be parsed. Anthropic API errors propagate to the caller.
     """
-    from text_content import AIPrompts
-    from image_processing import downscale_for_vision
+    from text_content.pipeline_prompts import prompt_for
+    from text_content.publication import PublicationText as T
 
     ai_settings = get_ai_settings()
-    locate_model = ai_settings['locate_model']
-    locate_max_edge = ai_settings['locate_max_edge']
-
     pages = list(pages)
-    content = []
-    for index, (_name, image_bytes) in enumerate(pages):
-        content.append({"type": "text", "text": f"Page {index + 1}:"})
-        content.append({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": "image/jpeg",
-                # Page-type classification does not need OCR resolution — send a
-                # smaller image so a whole-book multi-image request stays cheap
-                # (#135 cost right-sizing).
-                "data": base64.standard_b64encode(
-                    downscale_for_vision(image_bytes, max_edge=locate_max_edge)
-                ).decode('utf-8'),
-            },
-        })
-    content.append({"type": "text", "text": AIPrompts.locate_key_pages})
-
-    response = client.messages.create(
-        model=locate_model,
-        max_tokens=128,
-        messages=[{"role": "user", "content": content}],
+    labels = [{"position": position, "page_number": _metadata_page_number(name, position)}
+              for position, (name, _) in enumerate(pages, 1)]
+    prompt = prompt_for('locate_key_pages', ai_settings.get('prompt_variant', 'rules-plus-icl'))
+    prompt += "\n" + T.image_labels.format(pages=json.dumps(labels, ensure_ascii=False))
+    result, _raw = vision_json(
+        client, [image for _, image in pages], prompt,
+        model=ai_settings['locate_model'], max_tokens=128,
+        max_edge=ai_settings['locate_max_edge'], label='locate_key_pages', reject_partial=True,
     )
-    _log_usage(response, locate_model, "locate_key_pages")
-
-    none_result = {'title_page': None, 'copyright_page': None}
-    raw = first_text_block(response)
-    if raw is None:
-        return none_result
-    raw = raw.strip()
-    try:
-        result = json.loads(strip_json_fence(raw))
-    except (json.JSONDecodeError, ValueError):
-        return none_result
+    if not isinstance(result, dict):
+        return {'title_page': None, 'copyright_page': None}
 
     def _as_page(value):
-        try:
-            page = int(value)
-        except (TypeError, ValueError):
-            return None
-        return page if 1 <= page <= len(pages) else None
+        return value if type(value) is int and 1 <= value <= len(pages) else None
 
-    return {
-        'title_page': _as_page(result.get('title_page')),
-        'copyright_page': _as_page(result.get('copyright_page')),
-    }
+    return {'title_page': _as_page(result.get('title_page')),
+            'copyright_page': _as_page(result.get('copyright_page'))}
 
 
 def extract_copyright_metadata(image_bytes, client):
-    """Extract publisher, first-published year and ISBN from a copyright-page image.
-
-    Pass 2 (copyright page) of the photo-first two-pass flow (#109): Claude Sonnet
-    reads the single located copyright / imprint page for the details that the
-    title page usually omits. Returns a dict with keys:
-      - 'publisher'      (str or None)
-      - 'published_year' (int or None)
-      - 'isbn'           (str or None — normalised digits via extract_isbn)
-      - 'raw'            (the raw model response text, kept for audit/debugging)
-
-    Mirrors ``extract_book_metadata``: the raw text is always retained, parsing
-    problems yield empty fields, and Anthropic API errors propagate to the caller.
-    """
-    from text_content import AIPrompts
-
-    ai_settings = get_ai_settings()
-    result, raw_text = vision_json(
-        client, [image_bytes], AIPrompts.copyright_page_extraction, max_tokens=512,
-        model=ai_settings['metadata_model'], max_edge=ai_settings['extraction_max_edge'],
-    )
-    empty = {'publisher': None, 'published_year': None, 'isbn': None, 'raw': raw_text}
-    if not isinstance(result, dict):
-        return empty
-
-    publisher = result.get('publisher')
-    if not (isinstance(publisher, str) and publisher.strip()):
-        publisher = None
-    else:
-        publisher = publisher.strip()
-
-    year = result.get('first_published_year')
-    try:
-        year = int(year) if year is not None else None
-    except (TypeError, ValueError):
-        year = None
-    if year is not None and not (1900 <= year <= datetime.now(timezone.utc).year):
-        year = None
-
-    # Reuse the upload pipeline's ISBN parser so hyphenation and stray characters
-    # are normalised identically (and ISBN-10/13 both validated).
-    raw_isbn = result.get('isbn')
-    isbn = extract_isbn(str(raw_isbn)) if raw_isbn else None
-
-    return {'publisher': publisher, 'published_year': year, 'isbn': isbn, 'raw': raw_text}
+    """Compatibility entry point for joint event-aware copyright extraction."""
+    return extract_joint_metadata([(1, image_bytes)], client)
 
 
 def apply_isbn_metadata(metadata, *, isbn_lookup=None):
@@ -2298,7 +2221,13 @@ def apply_isbn_metadata(metadata, *, isbn_lookup=None):
     without repeating vision extraction. Legacy one-argument injected lookups
     remain supported, but an unexplained None cannot establish provider absence.
     """
+    from bibliography import METADATA_SCHEMA_VERSION, valid_isbn
+    versioned = metadata.get('metadata_schema_version') == METADATA_SCHEMA_VERSION
     isbn = metadata.get('isbn')
+    if versioned and isbn and valid_isbn(isbn) is None:
+        metadata['isbn_lookup'] = {'status': 'invalid_isbn', 'attempts': 0}
+        metadata['lookup_failed_fields'] = []
+        return metadata
     outcome = {'status': 'not_attempted', 'attempts': 0}
     isbn_metadata = None
     if isbn:
@@ -2323,14 +2252,33 @@ def apply_isbn_metadata(metadata, *, isbn_lookup=None):
                              'reason': 'outcome_unavailable'})
 
     sources = metadata.setdefault('sources', {})
+    lookup_identity_verified = True
+    if versioned and isbn_metadata:
+        identifiers = isbn_metadata.get('edition_identifiers') or []
+        lookup_identity_verified = any(
+            isinstance(item, dict) and valid_isbn(item.get('identifier')) == valid_isbn(isbn)
+            for item in identifiers)
+        metadata['isbn_edition_identity_status'] = ('matched' if lookup_identity_verified else 'unresolved')
     # Google Books fills only these fields; illustrators/year remain vision-only.
-    if isbn_metadata:
+    if isbn_metadata and lookup_identity_verified:
         for field in ('title', 'authors', 'publisher'):
+            if versioned and field == 'publisher':
+                # Lookup has no event/edition identity. Keep the candidate, never
+                # silently insert it into an evidenced publication projection.
+                continue
+            if versioned and any(conflict.get('field') == field for conflict in metadata.get('metadata_conflicts', [])):
+                continue
             if not metadata.get(field) and isbn_metadata.get(field):
                 value = isbn_metadata[field]
                 metadata[field] = list(value) if field == 'authors' else value
                 sources[field] = {'source': 'isbn_lookup', 'isbn': isbn}
     metadata['isbn_metadata'] = isbn_metadata
+    if versioned and isbn_metadata:
+        metadata['isbn_enrichment_candidates'] = {
+            'isbn': isbn, 'edition_identifiers': isbn_metadata.get('edition_identifiers', []),
+            'returned': isbn_metadata, 'provenance': 'frozen_lookup',
+            'publication_identity': 'unresolved',
+        }
     metadata['isbn_lookup'] = outcome
     metadata['lookup_failed_fields'] = (
         [field for field in ('title', 'authors', 'publisher') if not metadata.get(field)]
@@ -2339,96 +2287,173 @@ def apply_isbn_metadata(metadata, *, isbn_lookup=None):
     return metadata
 
 
+def _metadata_page_number(name, position):
+    if type(name) is int:
+        return name
+    numbers = re.findall(r"\d+", str(name).rsplit('/', 1)[-1].rsplit('.', 1)[0])
+    return int(numbers[-1]) if numbers else position
+
+
+def _valid_joint_metadata_payload(value):
+    if not isinstance(value, dict):
+        return False
+    title = value.get('title')
+    if (not isinstance(title, dict) or 'value' not in title
+            or not (title.get('value') is None or isinstance(title.get('value'), str))
+            or not isinstance(title.get('evidence'), list)):
+        return False
+    for field in ('credits', 'publisher_statements', 'isbns', 'conflicts'):
+        if not isinstance(value.get(field), list) or not all(isinstance(item, dict) for item in value[field]):
+            return False
+    evidence = [*title['evidence'], *value['credits'], *value['publisher_statements'], *value['isbns']]
+    if any(not isinstance(item, dict) or type(item.get('page_number')) is not int
+           or not isinstance(item.get('quote'), str) or not item.get('quote') for item in evidence):
+        return False
+    return (all(isinstance(item.get('name'), str) and item.get('role') in {
+                'author', 'illustrator', 'reteller', 'translator', 'original_author',
+                'editor', 'designer', 'unspecified'} for item in value['credits'])
+            and all(item.get('scope') in {'original', 'territorial_first', 'edition', 'reprint', 'copyright', 'unknown'}
+                    and (item.get('year') is None or type(item.get('year')) is int)
+                    for item in value['publisher_statements']))
+
+
+def extract_joint_metadata(pages, client, *, previous=None):
+    """One joint vision call; page identities and evidence hashes are retained."""
+    import hashlib
+    from bibliography import reconcile_metadata
+    from text_content.pipeline_prompts import prompt_for, prompt_request_manifest
+    from text_content.publication import PublicationText as T
+
+    pages = list(pages)
+    labels = [{"position": position, "page_number": number}
+              for position, (number, _) in enumerate(pages, 1)]
+    ai_settings = get_ai_settings()
+    variant = ai_settings.get('prompt_variant', 'rules-plus-icl')
+    prompt = prompt_for('joint_metadata_extraction', variant) + "\n" + T.image_labels.format(
+        pages=json.dumps(labels, ensure_ascii=False))
+    if previous is not None:
+        prompt += T.fallback_context.format(evidence=json.dumps({
+            key: previous.get(key) for key in
+            ('title_candidates', 'credits', 'publication_events', 'metadata_conflicts')
+        }, ensure_ascii=False))
+    result, raw = vision_json(
+        client, [data for _, data in pages], prompt, max_tokens=4096,
+        model=ai_settings['metadata_model'], max_edge=ai_settings['extraction_max_edge'],
+        label='joint_metadata', reject_partial=True,
+    )
+    valid = _valid_joint_metadata_payload(result)
+    payload = result if valid else {}
+    by_number = {number: hashlib.sha256(data).hexdigest() for number, data in pages}
+    title = payload.get('title')
+    evidence = (title.get('evidence', []) if isinstance(title, dict) else [])
+    records = [*evidence, *(payload.get('credits') or []),
+               *(payload.get('publisher_statements') or []), *(payload.get('isbns') or [])]
+    if valid and any(record.get('page_number') not in by_number for record in records):
+        valid, payload, records = False, {}, []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        number = record.get('page_number')
+        record['source_page_id'] = number
+        record['image_hash'] = by_number.get(number)
+        record['provenance'] = 'photo' if number in by_number else 'unresolved_source'
+    metadata = reconcile_metadata([payload])
+    metadata['raw'] = raw
+    metadata['metadata_extraction_status'] = 'completed' if valid else 'invalid_response'
+    if not valid:
+        metadata['metadata_invalid_payload'] = result
+    metadata['metadata_page_numbers'] = list(by_number)
+    metadata['metadata_prompt_manifest'] = prompt_request_manifest('joint_metadata_extraction', variant, prompt)
+    return metadata
+
+
 def extract_photo_first_metadata(pages, client, title_page_hint=None,
                                  progress_callback=None, *, isbn_lookup=None):
-    """Two-pass, cost-aware metadata extraction for the photo-first flow
-    (#109; completes #63 and makes the #103 form pre-fill reachable).
+    """Locate, then jointly read cover/title/copyright even when roles coincide.
 
-    Pass 1 (locate): one cheap Claude Haiku call over ALL page images finds the
-    title-page and copyright/imprint-page positions (``locate_key_pages``).
-    Pass 2 (extract): Claude Sonnet reads ONLY those one or two pages — the title
-    page via ``extract_book_metadata`` and the copyright page via
-    ``extract_copyright_metadata`` — and any ISBN found is fed into the Google
-    Books lookup (``lookup_isbn``) to back-fill title, authors and publisher
-    only where vision was silent.
-
-    Cost profile: one Haiku call-set + up to two Sonnet calls per book.
-
-    Args:
-        pages: ordered list of (name, image_bytes) tuples.
-        client: an anthropic.Anthropic client.
-        title_page_hint: optional 1-based position the user designated as the
-            title page; used in preference to the located title page.
-        progress_callback: optional callable(done, total) for UI progress.
-
-    Returns the merged title-page metadata dict (``title``, ``authors``,
-    ``illustrators``, ``publisher``, ``published_year``, ``raw``) — with
-    publisher / year / authors back-filled from the copyright page and Google
-    Books where the title page was silent — plus:
-      - 'isbn'          (str or None)
-      - 'isbn_metadata' (Google Books dict or None) for the Add-Book form pre-fill
-      - 'isbn_lookup'   (lookup outcome, distinguishing failure from absence)
-      - 'lookup_failed_fields' (missing fields whose ISBN back-fill failed)
-      - 'located'       (the locate-pass result dict)
-
-    Anthropic API errors propagate to the caller (mirrors ``extract_book_metadata``).
+    Final conflict reconciliation is deferred until page OCR, through
+    ``finalize_photo_metadata``. Legacy single-page helpers remain available to
+    old callers, but are no longer the active metadata pipeline.
     """
+    from text_content.publication import PublicationText as T
+
     pages = list(pages)
-    total_steps = 3
-    done = 0
-
-    def _step():
-        nonlocal done
-        done += 1
-        if progress_callback is not None:
-            progress_callback(min(done, total_steps), total_steps)
-
-    # Pass 1 — locate the two pages of interest.
+    if not pages:
+        raise ValueError(T.no_pages)
     located = locate_key_pages(pages, client)
-    _step()
-
-    title_pos = title_page_hint or located.get('title_page')
-    copyright_pos = located.get('copyright_page')
-
-    def _bytes_at(position):
-        if isinstance(position, int) and 1 <= position <= len(pages):
-            return pages[position - 1][1]
-        return None
-
-    # Pass 2a — title page (fall back to the first photo if nothing was located).
-    title_bytes = _bytes_at(title_pos)
-    if title_bytes is None and pages:
-        title_bytes = pages[0][1]
-    metadata = extract_book_metadata(title_bytes, client)
-    effective_title_pos = title_pos if _bytes_at(title_pos) is not None else 1
-    sources = {
-        field: {'source': 'title_page', 'page_position': effective_title_pos}
-        for field in ('title', 'authors', 'illustrators', 'publisher', 'published_year')
-        if metadata.get(field) not in (None, '', [])
-    }
-    _step()
-
-    # Pass 2b — copyright page, only when a distinct one was located.
-    copyright_meta = {'publisher': None, 'published_year': None, 'isbn': None, 'raw': None}
-    copyright_bytes = _bytes_at(copyright_pos)
-    if copyright_bytes is not None and copyright_pos != title_pos:
-        copyright_meta = extract_copyright_metadata(copyright_bytes, client)
-    _step()
-
-    # Back-fill publisher / year from the copyright page where the title page was
-    # silent (these usually live on the copyright page, not the title page).
-    if not metadata.get('publisher') and copyright_meta.get('publisher'):
-        metadata['publisher'] = copyright_meta['publisher']
-        sources['publisher'] = {'source': 'copyright_page', 'page_position': copyright_pos}
-    if metadata.get('published_year') is None and copyright_meta.get('published_year') is not None:
-        metadata['published_year'] = copyright_meta['published_year']
-        sources['published_year'] = {'source': 'copyright_page', 'page_position': copyright_pos}
-
-    # Use the copyright-page ISBN to fill any remaining metadata gaps.
-    metadata['isbn'] = copyright_meta.get('isbn')
+    if progress_callback:
+        progress_callback(1, 3)
+    positions = [title_page_hint or located.get('title_page'), located.get('copyright_page'), 1]
+    selected = []
+    used = set()
+    for position in positions:
+        if type(position) is int and 1 <= position <= len(pages) and position not in used:
+            used.add(position)
+            name, image_bytes = pages[position - 1]
+            selected.append((_metadata_page_number(name, position), image_bytes))
+    metadata = extract_joint_metadata(selected, client)
     metadata['located'] = located
-    metadata['sources'] = sources
-    return apply_isbn_metadata(metadata, isbn_lookup=isbn_lookup)
+    metadata['metadata_finalization'] = {'status': 'pending_ocr', 'additional_vision_calls': 0}
+    if progress_callback:
+        progress_callback(2, 3)
+    result = apply_isbn_metadata(metadata, isbn_lookup=isbn_lookup)
+    if progress_callback:
+        progress_callback(3, 3)
+    return result
+
+
+def finalize_photo_metadata(metadata, page_results, client, *, images_by_number=None):
+    """Bounded late reconciliation: reuse OCR, then at most two pages/one call.
+
+    Only predicted text selects candidate pages. API/billing failures propagate.
+    No reference label or lookup is consulted by this function.
+    """
+    from bibliography import fallback_page_candidates, ocr_evidence_payload, reconcile_metadata
+
+    metadata = dict(metadata)
+    if metadata.get('metadata_finalization', {}).get('status') == 'completed':
+        return metadata
+    candidates = fallback_page_candidates(page_results,
+        exclude=metadata.get('metadata_page_numbers') or [])
+    payloads = list(metadata.get('metadata_evidence_payloads') or [])
+    payloads.extend(ocr_evidence_payload(candidates, metadata))
+    reconciled = reconcile_metadata(payloads, legacy=metadata.get('legacy_publication'))
+    calls = 0
+    needs_reread = (not reconciled.get('title') or not reconciled.get('authors')
+                    or not reconciled.get('illustrators')
+                    or any(item.get('field') in {'title', 'credits'}
+                           for item in reconciled.get('metadata_conflicts', [])))
+    images_by_number = images_by_number or {}
+    selected = [(page['page_number'], images_by_number[page['page_number']])
+                for page in candidates if page.get('page_number') in images_by_number]
+    if needs_reread and selected:
+        additional = extract_joint_metadata(selected, client, previous=reconciled)
+        metadata['metadata_fallback_response'] = {
+            'raw': additional.get('raw'),
+            'status': additional.get('metadata_extraction_status', 'completed'),
+            'invalid_payload': additional.get('metadata_invalid_payload'),
+            'prompt_manifest': additional.get('metadata_prompt_manifest'),
+        }
+        payloads.extend(additional.get('metadata_evidence_payloads') or [])
+        reconciled = reconcile_metadata(payloads, legacy=metadata.get('legacy_publication'))
+        calls = 1
+    # Replay already-frozen, identity-checked enrichment without another IO.
+    for field in ('title', 'authors'):
+        previous_source = metadata.get('sources', {}).get(field, {})
+        if (not reconciled.get(field) and metadata.get(field)
+                and previous_source.get('source') == 'isbn_lookup'
+                and metadata.get('isbn_edition_identity_status') == 'matched'
+                and not any(item.get('field') == field for item in reconciled.get('metadata_conflicts', []))):
+            reconciled[field] = metadata[field]
+            reconciled.setdefault('sources', {})[field] = previous_source
+    metadata.update(reconciled)
+    metadata['metadata_finalization'] = {
+        'status': ('failed' if metadata.get('metadata_fallback_response', {}).get('status') == 'invalid_response'
+                   else 'completed'), 'candidate_pages': [page['page_number'] for page in candidates],
+        'additional_vision_calls': calls,
+        'unresolved_fields': [field for field in ('title', 'authors', 'illustrators') if not metadata.get(field)],
+    }
+    return metadata
 
 
 def locate_cover_pages(pages, client):

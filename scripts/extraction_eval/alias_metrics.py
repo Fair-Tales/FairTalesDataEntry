@@ -85,12 +85,26 @@ def _entities(stage):
     return entities
 
 
+def character_input_pages(book, prediction):
+    """Replay exact saved input where available; otherwise project retained regions."""
+    from conventions import project_analysis_text
+    stage = prediction.get("characters") or {}
+    recorded = stage.get("input_pages") if isinstance(stage, dict) else None
+    if isinstance(recorded, list):
+        numbers = {page.get("page_number"): page.get("id") for page in book.get("pages", [])}
+        return [(str(page.get("page_id", page.get("id", numbers.get(page.get("page_number"), page.get("page_number", ""))))), page["text"])
+                for page in recorded if isinstance(page, dict) and isinstance(page.get("text"), str)]
+    return [(str(page_id), text)
+            for page_id, page in (prediction.get("pages") or {}).items()
+            if isinstance(page, dict) and page.get("status") == "completed" and page.get("contains_story") is True
+            and (text := project_analysis_text(page)["analysis_text"])]
+
+
 def _pages(book, prediction):
     predicted = prediction.get("pages") or {}
     archival = [(str(page_id), page.get("text") or "") for page_id, page in predicted.items()
                 if isinstance(page, dict) and page.get("status") == "completed"]
-    character_input = [(page_id, text) for page_id, text in archival
-                       if (predicted.get(page_id) or {}).get("contains_story") is True]
+    character_input = character_input_pages(book, prediction)
     reference = []
     for page in book.get("pages", []):
         record = (page.get("reference") or {}).get("text") or {}
@@ -302,6 +316,7 @@ def score_alias_foundation(book, prediction):
     audits = {version: _structural_audit(entities, version, diagnostic.get("occurrences", []))
               for version in (HISTORICAL_DELETION_VERSION, HISTORICAL_SEPARATOR_VERSION, ARTICLE_DIAGNOSTIC_VERSION)}
     return {"version": FOUNDATION_VERSION, "convention_version": CONVENTION_VERSION,
+            "character_input_projection_version": "saved-input-or-main-regions-v1",
             "conventions": AliasMetrics.conventions, "label": AliasMetrics.report_label,
             "output_coverage": {"character_status": stage.get("status", "pending") if isinstance(stage, dict) else "completed",
                                 "emitted_characters": len(entities), "emitted_aliases": len(aliases),

@@ -18,8 +18,9 @@ class AliasMetrics:
         "can ground a wrong alias. Empty alias output has undefined grounding."
     )
     input_support_qualification = (
-        "Character input is reconstructed from completed pages whose predicted "
-        "contains_story flag is true, matching the saved production input policy."
+        "Character input uses exact saved input pages where available; otherwise "
+        "versioned main-content regions from completed predicted story pages. "
+        "Legacy untagged pages retain archival text."
     )
     editorial_qualification = (
         "Editorial classes alone earn no allowance. Typed construction, exact "

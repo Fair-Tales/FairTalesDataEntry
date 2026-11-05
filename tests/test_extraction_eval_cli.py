@@ -47,6 +47,11 @@ def offline_inputs(tmp_path, monkeypatch):
     frozen_settings = read_json(cli.PACKAGE / "baseline.json").get("settings", {})
     config["settings"] = {key: "fixture" if key.endswith("_model") else value
                           for key, value in frozen_settings.items()}
+    config['billing'] = {'funding': 'subscription_credits', 'confirmed': True,
+                         'organisation': 'fixture', 'project': 'fixture',
+                         'confirmed_by': 'fixture', 'confirmed_at': '2026-11-05',
+                         'secret_name': 'EVAL_ANTHROPIC_API_KEY',
+                         'key_sha256': hashlib.sha256(b'fake-never-used').hexdigest()}
     config_path = tmp_path / "config.json"
     atomic_json(config_path, config)
     monkeypatch.setattr(socket, "create_connection", forbidden)
@@ -147,7 +152,7 @@ def test_paid_fake_exact_books_confirmation_cost_resume_and_offline_score(offlin
         confirmed.append(prompt)
         return "AFFIRMATIVE"
 
-    def create_provider(path):
+    def create_provider(path, config):
         assert confirmed
         return provider
 

@@ -34,6 +34,21 @@ from helpers import (
 DEFAULT_BASE_URL = "http://localhost:8501"
 
 
+def pytest_collection_modifyitems(items):
+    """Service-backed browser journeys require explicit opt-in, before fixtures.
+
+    The ordinary test command is offline even when Playwright is installed.
+    Skipping at collection avoids launching Chromium before credential checks.
+    The root socket-blocking fixture remains unchanged.
+    """
+    if os.environ.get('FAIRTALES_RUN_E2E') == '1':
+        return
+    marker = pytest.mark.skip(reason='Live app tests require FAIRTALES_RUN_E2E=1')
+    for item in items:
+        if '/tests/e2e/' in str(item.path):
+            item.add_marker(marker)
+
+
 @pytest.fixture(scope="session")
 def base_url() -> str:
     """Base URL of the already-running Streamlit app (env ``APP_BASE_URL``)."""

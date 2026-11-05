@@ -119,7 +119,7 @@ def write_reports(manifest, predictions, out, protocol=None, selection=None, cal
                 stage.get("value") or {}, predictions.get("_run_dir"))}}
         score = score_book(book, prediction, protocol)
         sample = sampling.get(book.get("id"), {})
-        for key in ("role", "stratum", "inclusion_probability"):
+        for key in ("role", "stratum", "inclusion_probability", "holdout_group"):
             if key in sample:
                 score[key] = sample[key]
         scores.append(score)
@@ -132,13 +132,15 @@ def write_reports(manifest, predictions, out, protocol=None, selection=None, cal
                     "settled_cost_usd": sum(call.get("cost_usd") or 0 for call in calls),
                     "outstanding_reservations_usd": sum(call.get("reserved_usd") or 0 for call in calls
                                                         if call.get("state") not in {"completed", "settled", "failed"})})
-    summary["book_scores"] = [{"id": score["id"], "reference_hash": score["reference_hash"],
-                               "ocr_f1": score["ocr"]["f1"], "role": score.get("role", "descriptive"),
-                               "alias_recall": score["characters"]["alias_recall"],
-                               "alias_grounding": {key: score["alias_foundation"]["M1"].get(key) for key in
-                                                   ("aliases", "exact", "determiner_stripped", "grounded", "lexical_grounding")},
-                               "stratum": score.get("stratum", "all"),
-                               "inclusion_probability": score.get("inclusion_probability", 1.0)} for score in scores]
+    from .comparison import book_comparison_record, comparison_protocol
+    identity = comparison_protocol(protocol, manifest)
+    summary["comparison_protocol"] = identity
+    summary["book_scores"] = [book_comparison_record(score, protocol_identity=identity) for score in scores]
+    cohort_path = Path(__file__).parent / "evidence" / "dev20-v1" / "empty_reference_cohort.json"
+    cohort = json.loads(cohort_path.read_text(encoding="utf-8")) if cohort_path.exists() else None
+    if cohort and cohort.get("snapshot_id") == manifest.get("snapshot_id"):
+        from .monitoring import monitor_empty_reference
+        summary["empty_reference_monitoring"] = monitor_empty_reference(manifest, predictions, cohort, selected_ids=ids)
     _atomic_text(output / "summary.json", json.dumps(summary, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
     _atomic_text(output / "book_scores.json", json.dumps(scores, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
     _atomic_text(output / "protocol.json", json.dumps(protocol, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
@@ -154,6 +156,7 @@ def write_reports(manifest, predictions, out, protocol=None, selection=None, cal
                           "pages": len(score["pages"]), "ocr_f1": score["ocr"]["f1"], "ocr": score["ocr"],
                           "wordless": score["wordless"], "metadata": score["metadata"], "characters": score["characters"],
                           "alias_foundation": score["alias_foundation"],
+                          "optional_stages": score.get("optional_stages"), "story_context_fallback": score.get("story_context_fallback"),
                           "reference_hash": score["reference_hash"], "cost_usd": book_cost})
         parts = [f'<section><h2>{html.escape(str(book.get("title", book_id)))}</h2>',
                  f'<p>Book: {html.escape(str(book_id))}; settled cost: ${book_cost:.4f}</p>',
@@ -166,6 +169,7 @@ def write_reports(manifest, predictions, out, protocol=None, selection=None, cal
                               "reference_status": page_score["ocr"]["reference_status"],
                               "prediction_status": page_score["ocr"]["prediction_status"],
                               "subgroup": page_score["ocr"]["subgroup"], "f1": page_score["ocr"]["f1"],
+                              "classification_source": page_score.get("classification_source"),
                               "cer": page_score["ocr"]["cer"], "wer": page_score["ocr"]["wer"],
                               "reference_text": expected, "predicted_text": actual_text,
                               "ocr": page_score["ocr"], "story": page_score["story"], "error": actual.get("error")})
@@ -183,8 +187,8 @@ def write_reports(manifest, predictions, out, protocol=None, selection=None, cal
                           f'<pre>{html.escape(str(actual.get("error") or ""))}</pre></article>'])
         parts.append("</section>")
         sections.append("\n".join(parts))
-    _csv(output / "books.csv", book_rows, ["book_id", "title", "role", "pages", "ocr_f1", "ocr", "wordless", "metadata", "characters", "reference_hash", "cost_usd", "alias_foundation"])
-    _csv(output / "pages.csv", page_rows, ["book_id", "page_id", "page_number", "reference_status", "prediction_status", "subgroup", "f1", "cer", "wer", "reference_text", "predicted_text", "ocr", "story", "error"])
+    _csv(output / "books.csv", book_rows, ["book_id", "title", "role", "pages", "ocr_f1", "ocr", "wordless", "metadata", "characters", "reference_hash", "cost_usd", "alias_foundation", "optional_stages", "story_context_fallback"])
+    _csv(output / "pages.csv", page_rows, ["book_id", "page_id", "page_number", "reference_status", "prediction_status", "subgroup", "classification_source", "f1", "cer", "wer", "reference_text", "predicted_text", "ocr", "story", "error"])
     call_fields = sorted({key for call in calls for key in call}) or ["key", "run_id", "state", "reserved_usd", "cost_usd", "label", "error"]
     _csv(output / "calls.csv", calls, call_fields)
     document = ('<!doctype html><html lang="en"><head><meta charset="utf-8">'

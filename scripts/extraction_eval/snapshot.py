@@ -378,6 +378,14 @@ def _metadata(data, docs):
             record["value"] = [value] if record.get("status") == "observed" else []
             record["complete"] = False
         result[name] = record
+    # Scoped targets retain their own component evidence/status; legacy values
+    # remain unresolved in the adapter and never become new scoped gold facts.
+    from bibliography import adapt_legacy_metadata
+    scoped = adapt_legacy_metadata(data)
+    for name in ("photographed_edition", "first_publication"):
+        result[name] = _field(scoped.get(name), "scoped_publication_evidence",
+                              status="observed" if data.get("metadata_schema_version") == "bibliography-v2" else "missing")
+    result["metadata_schema_version"] = scoped.get("metadata_schema_version")
     return result
 
 

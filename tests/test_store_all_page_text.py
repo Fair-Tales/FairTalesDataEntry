@@ -12,8 +12,8 @@ This locks in the decoupled semantics at the consume path in
 
 * ``has_text=true`` + ``is_story_page=false`` (a copyright page) -> the
   transcribed text is PRESERVED, story flag stays false.
-* ``has_text=false`` (a genuinely wordless illustration) -> text is still
-  blanked.
+* ``has_text=false`` with contradictory nonempty text -> text is preserved and
+  flagged; an unverified model flag cannot authorize discarding transcription.
 
 Exercised against an in-memory ``vision_json`` stub — no network, no Streamlit
 runtime — the same style as ``tests/test_uploader_page_isolation.py``.
@@ -60,9 +60,8 @@ def test_copyright_page_text_is_preserved(monkeypatch, ai_settings):
     assert page_type == "copyright"
 
 
-def test_wordless_page_text_is_blanked(monkeypatch, ai_settings):
-    """has_text=false (a genuinely wordless illustration) still blanks text,
-    even if the model narrated the illustration into ``text``."""
+def test_conflicting_wordless_flag_preserves_text(monkeypatch, ai_settings):
+    """A contradictory model flag is evidence to inspect, not a deletion rule."""
     _stub_vision_json(monkeypatch, {
         "has_text": False,
         "text": "A rabbit hops across a green meadow.",  # illustration narration
@@ -76,7 +75,8 @@ def test_wordless_page_text_is_blanked(monkeypatch, ai_settings):
 
     assert status == "ok"
     text, is_story_page, page_type = payload
-    assert text == ""
+    assert text == "A rabbit hops across a green meadow."
+    assert 'has_text_conflict' in payload.details['validation_flags']
     assert is_story_page is True
 
 

@@ -199,6 +199,9 @@ if st.button(Admin.prepare_book_download_button, key="admin_prepare_book_downloa
                 rows = []
                 for doc in docs:
                     d = doc.to_dict()
+                    if collection_name == 'books':
+                        from bibliography import export_publication_columns
+                        d = {**d, **export_publication_columns(d)}
                     clean = {}
                     for k, v in d.items():
                         try:
@@ -209,7 +212,7 @@ if st.button(Admin.prepare_book_download_button, key="admin_prepare_book_downloa
 
                 if rows:
                     csv_buf = io.StringIO()
-                    fieldnames = list(rows[0].keys())
+                    fieldnames = list(dict.fromkeys(key for row in rows for key in row))
                     writer = csv.DictWriter(csv_buf, fieldnames=fieldnames, extrasaction='ignore')
                     writer.writeheader()
                     writer.writerows(rows)

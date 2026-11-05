@@ -156,6 +156,8 @@ def _result_to_fields(outcome, payload, method, corrected, rotation_uncertain=Fa
         'rotation_uncertain': bool(rotation_uncertain),
         'updated_at': _now(),
     }
+    if getattr(payload, 'details', None):
+        common['extraction_evidence'] = payload.details
     if outcome == 'ok':
         text, is_story, page_type = payload
         common.update(
@@ -175,17 +177,21 @@ def _fields_to_result(data):
     ``rotation_uncertain`` defaults False for results persisted before #217."""
     status = data.get('status')
     if status == 'done':
+        from extraction_core import PageExtractionPayload
         return (
             'ok',
-            (data.get('text', ''), bool(data.get('is_story', False)), data.get('page_type', '')),
+            PageExtractionPayload(data.get('text', ''), bool(data.get('is_story', False)),
+                                  data.get('page_type', ''), data.get('extraction_evidence')),
             data.get('method'),
             bool(data.get('corrected', False)),
             bool(data.get('rotation_uncertain', False)),
         )
     if status == 'failed':
+        from extraction_core import PageFailurePayload
         return (
             'error',
-            (data.get('error_type', 'Error'), data.get('error_message', '')),
+            PageFailurePayload(data.get('error_type', 'Error'), data.get('error_message', ''),
+                               data.get('extraction_evidence')),
             data.get('method'),
             bool(data.get('corrected', False)),
             bool(data.get('rotation_uncertain', False)),
@@ -288,20 +294,30 @@ def _page_docs(db, job_id, page_count):
 
 def _text_revision(page_docs):
     """Content revision includes failed coverage as well as ordered story text."""
+    from conventions import region_revision_payload
     payload = [[p.get('page_number'), p.get('status'), p.get('text', ''),
                 bool(p.get('is_story'))] for p in page_docs]
+    for row, page in zip(payload, page_docs):
+        regions = region_revision_payload(page.get('extraction_evidence'))
+        if regions is not None:
+            row.append(regions)
     return hashlib.sha256(json.dumps(payload, ensure_ascii=False).encode()).hexdigest()
 
 
 def _character_write(db, job_id, worker_id, revision, fields):
+    return _revision_stage_write(db, job_id, worker_id, revision, fields, prefix='character')
+
+
+def _revision_stage_write(db, job_id, worker_id, revision, fields, *, prefix):
+    """Shared owner/revision guard for paid whole-book stages."""
     ref = _job_ref(db, job_id)
 
     def commit(transaction):
         job = ref.get(transaction=transaction).to_dict() or {}
         if (job.get('status') in ('cancelled', 'finalized')
-                or job.get('character_status') != 'processing'
-                or job.get('character_claimed_by') != worker_id
-                or job.get('character_input_revision') != revision):
+                or job.get(f'{prefix}_status') != 'processing'
+                or job.get(f'{prefix}_claimed_by') != worker_id
+                or job.get(f'{prefix}_input_revision') != revision):
             return False
         pages = []
         for number in range(1, job.get('page_count', 0) + 1):
@@ -456,6 +472,7 @@ def _run_worker(fs, db, client, settings, job_id, s3_prefix, page_count,
             if cancelled():
                 return
             if _pages_all_terminal(db, job_id, page_count):
+                _reconcile_job_metadata(fs, db, job_id, worker_client)
                 _detect_characters(db, job_id, worker_client, settings)
             _refresh_completion(db, job_id)
     except _SERVICE_ERRORS as exc:
@@ -463,6 +480,77 @@ def _run_worker(fs, db, client, settings, job_id, s3_prefix, page_count,
         if not cancel_event.is_set():
             _set_job_if_active(db, job_id, {'status': 'blocked', 'worker_error': str(exc),
                                           'updated_at': _now()})
+
+
+def _reconcile_job_metadata(fs, db, job_id, client):
+    """One worker-side late metadata pass; progress polling never spends.
+
+    Results are suggestions on the operational job. Materialization copies
+    them into a separate Book field without changing any confirmed metadata.
+    """
+    from bibliography import PERSISTED_FIELDS, fallback_page_candidates
+    from utilities import finalize_photo_metadata
+
+    ref = _job_ref(db, job_id)
+    worker_id = uuid.uuid4().hex
+
+    def claim(transaction):
+        job = ref.get(transaction=transaction).to_dict() or {}
+        if job.get('status') in ('cancelled', 'finalized') or not job.get('book_id'):
+            return None
+        book = db.collection('books').document(job['book_id']).get(transaction=transaction).to_dict() or {}
+        if not book.get('metadata_evidence_payloads') or book.get('metadata_reconciliation'):
+            return None
+        pages = [dict((_page_ref(db, job_id, number).get(transaction=transaction).to_dict() or {}),
+                      page_number=number) for number in range(1, job.get('page_count', 0) + 1)]
+        if any(page.get('status') not in ('done', 'failed') for page in pages):
+            return None
+        revision = _text_revision(pages)
+        prior_status = job.get('metadata_reconciliation_status')
+        if prior_status in ('done', 'failed') and job.get('metadata_reconciliation_input_revision') == revision:
+            return None
+        if prior_status == 'processing':
+            claimed_at = job.get('metadata_reconciliation_claimed_at')
+            if claimed_at is not None and claimed_at > _now() - timedelta(seconds=_CLAIM_LEASE_SECONDS):
+                return None
+            if job.get('metadata_reconciliation_dispatch_started'):
+                # The previous request may have been billed. Retain the unknown
+                # outcome and fail closed rather than silently spending again.
+                transaction.set(ref, {'metadata_reconciliation_status': 'failed',
+                                      'metadata_reconciliation_error': 'dispatch_outcome_unknown_after_expired_lease'}, merge=True)
+                return None
+        transaction.set(ref, {
+            'metadata_reconciliation_status': 'processing',
+            'metadata_reconciliation_claimed_by': worker_id,
+            'metadata_reconciliation_claimed_at': _now(),
+            'metadata_reconciliation_input_revision': revision,
+            'metadata_reconciliation_dispatch_started': False,
+        }, merge=True)
+        return book, pages, job.get('s3_prefix'), revision
+
+    claimed = _atomic(db, claim)
+    if claimed is None:
+        return
+    book, pages, prefix, revision = claimed
+    def write(fields):
+        return _revision_stage_write(db, job_id, worker_id, revision, fields,
+                                     prefix='metadata_reconciliation')
+    seed = {field: book.get(field) for field in PERSISTED_FIELDS}
+    successful = [page for page in pages if page.get('status') == 'done']
+    candidates = fallback_page_candidates(successful, exclude=seed.get('metadata_page_numbers') or [])
+    try:
+        images = {page['page_number']: _s3_read(fs, f"{prefix}/page_{page['page_number']}.jpg")
+                  for page in candidates}
+        if not write({'metadata_reconciliation_dispatch_started': True}):
+            return
+        with _renewing_lease(lambda: write({'metadata_reconciliation_claimed_at': _now()})):
+            result = finalize_photo_metadata(seed, successful, client, images_by_number=images)
+        status = 'failed' if result.get('metadata_finalization', {}).get('status') == 'failed' else 'done'
+        write({'metadata_reconciliation': result, 'metadata_reconciliation_status': status})
+    except _SERVICE_ERRORS as exc:
+        write({'metadata_reconciliation_status': 'failed',
+               'metadata_reconciliation_error': f'{type(exc).__name__}: {exc}'})
+        raise
 
 
 def _set_job_if_active(db, job_id, fields):
@@ -487,11 +575,13 @@ def _refresh_completion(db, job_id):
                  for n in range(1, job.get('page_count', 0) + 1)]
         finished = bool(pages) and all(p.get('status') in ('done', 'failed')
                                        and not p.get('artifacts_pending') for p in pages)
-        complete = finished and job.get('character_status') in _CHARACTER_TERMINAL
+        complete = (finished and job.get('character_status') in _CHARACTER_TERMINAL
+                    and job.get('metadata_reconciliation_status') != 'processing')
         failed = sum(p.get('status') == 'failed' for p in pages)
         if complete:
             state = ('failed' if failed == len(pages) else 'partial'
-                     if failed or job.get('character_status') == 'failed' else 'complete')
+                     if failed or job.get('character_status') == 'failed'
+                     or job.get('metadata_reconciliation_status') == 'failed' else 'complete')
         else:
             state = 'waiting'
         transaction.set(ref, {'status': state, 'extraction_complete': complete,
@@ -522,6 +612,7 @@ def _pages_all_terminal(db, job_id, page_count):
 
 def _detect_characters(db, job_id, client, settings):
     """Lease the current complete text revision before the existing whole-book call."""
+    from conventions import convention_metadata, project_analysis_text
     ref = _job_ref(db, job_id)
     worker_id = uuid.uuid4().hex
 
@@ -563,12 +654,26 @@ def _detect_characters(db, job_id, client, settings):
     if claimed is None:
         return
     pages, revision = claimed
-    story_pages = [(p['page_number'], p.get('text')) for p in pages
-                   if p.get('status') == 'done' and p.get('is_story')
-                   and isinstance(p.get('text'), str) and p.get('text').strip()]
-    coverage = 'incomplete' if any(p.get('status') == 'failed' for p in pages) else 'complete'
+    story_pages, input_projection = [], []
+    for page in pages:
+        evidence = page.get('extraction_evidence')
+        evidence = evidence if isinstance(evidence, dict) else {}
+        projection = project_analysis_text({**evidence, 'text': page.get('text')})
+        used = (page.get('status') == 'done' and page.get('is_story') is True
+                and bool(projection['analysis_text'].strip()))
+        input_projection.append({'page_number': page['page_number'], 'used': used,
+                                 **projection})
+        if used:
+            story_pages.append((page['page_number'], projection['analysis_text']))
+    unresolved_pages = sum(page.get('is_story') is None and page.get('status') == 'done'
+                           for page in pages)
+    coverage = 'incomplete' if (unresolved_pages or any(
+        p.get('status') == 'failed' for p in pages)) else 'complete'
     fields = {'character_revision': revision, 'character_pages_used': len(story_pages),
-              'character_coverage': coverage, 'updated_at': _now()}
+              'character_coverage': coverage, 'updated_at': _now(),
+              'character_input_projection': input_projection,
+              'character_unresolved_pages': unresolved_pages,
+              'character_conventions': convention_metadata()}
     if not story_pages:
         fields.update(character_status='skipped', character_outcome='no_text',
                       character_suggestions=[])
@@ -578,18 +683,24 @@ def _detect_characters(db, job_id, client, settings):
         with _renewing_lease(lambda: _character_write(
             db, job_id, worker_id, revision, {'character_claimed_at': _now()},
         )):
-            suggestions = detect_book_characters(
-                story_pages, client, model=settings.get('character_detection_model'),
-            )
+            arguments = {'model': settings.get('character_detection_model')}
+            if 'prompt_variant' in settings:
+                arguments['prompt_variant'] = settings['prompt_variant']
+            suggestions = detect_book_characters(story_pages, client, **arguments)
             if not isinstance(suggestions, list):
                 raise ValueError('Character detector returned no suggestion list')
             fields.update(character_status='done', character_suggestions=suggestions,
+                          character_raw_response=getattr(suggestions, 'raw_response', None),
                           character_outcome='suggestions' if suggestions else 'empty',
                           character_error=None)
             _character_write(db, job_id, worker_id, revision, fields)
     except _SERVICE_ERRORS as exc:
         logger.warning('background job %s: character detection failed: %s', job_id, exc)
         fields.update(character_status='failed', character_outcome='failed', character_error=str(exc))
+        if hasattr(exc, 'raw_response'):
+            fields.update(character_raw_response=exc.raw_response,
+                          character_raw_text=getattr(exc, 'raw_text', None),
+                          character_failure_kind=getattr(exc, 'failure_kind', None))
         _character_write(db, job_id, worker_id, revision, fields)
 
 
@@ -928,19 +1039,22 @@ def wait_for_character_suggestions(db, link, *, worker_alive, on_wait=None):
     """Block until character detection reaches a terminal state and return the
     precomputed suggestions, or ``None`` (detection failed / skipped / no worker
     left) so the consumer can run it live instead."""
+    from character_evidence import restore_character_suggestions
     job_ref = _job_ref(db, link['job_id'])
     while True:
         data = job_ref.get().to_dict() or {}
         char_status = data.get('character_status')
         if char_status == 'done':
-            return data.get('character_suggestions')
+            return restore_character_suggestions(data.get('character_suggestions'),
+                                                  data.get('character_raw_response'))
         if char_status in ('failed', 'skipped'):
             return None
         if not worker_alive():
             time.sleep(_POLL_SECONDS)
             data = job_ref.get().to_dict() or {}
             if data.get('character_status') == 'done':
-                return data.get('character_suggestions')
+                return restore_character_suggestions(data.get('character_suggestions'),
+                                                      data.get('character_raw_response'))
             return None
         if on_wait is not None:
             on_wait()

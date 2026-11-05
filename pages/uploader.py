@@ -191,7 +191,8 @@ def _consume_background_result(result, page_number, model):
         )
         raise PageExtractionError(error_type, error_message)
     text, is_story, page_type = payload
-    return text, is_story, page_type, bool(corrected), bool(rotation_uncertain)
+    from extraction_core import ProcessedPagePayload
+    return ProcessedPagePayload(payload, bool(corrected), bool(rotation_uncertain))
 
 
 def _register_placeholder_page(page, page_number):
@@ -254,7 +255,8 @@ def _register_processed_page(page_number, produce, model):
     page = Page(page_number=page_number, book=current_book.title)
     try:
         try:
-            text, is_story, page_type, corrected, rotation_uncertain = produce()
+            produced = produce()
+            text, is_story, page_type, corrected, rotation_uncertain = produced
         except PageExtractionError:
             # Detail already logged to extraction_errors; keep the blank page in
             # the sequence and record it for the user (#132). ``corrected`` stays
@@ -266,6 +268,8 @@ def _register_processed_page(page_number, produce, model):
         page.contains_story = is_story
         page.corrected = corrected
         page.rotation_uncertain = rotation_uncertain
+        if getattr(produced, 'details', None):
+            page.extraction_evidence = produced.details
         page.register()
         return 'ok', (text if (page_type == 'copyright' and text) else None)
     except Exception as exc:  # noqa: BLE001 - per-page isolation boundary, see docstring
@@ -280,6 +284,37 @@ def _register_processed_page(page_number, produce, model):
         )
         _register_placeholder_page(page, page_number)
         return 'failed', None
+
+
+def _capture_metadata_page(produce, pages, number):
+    """Retain this invocation's predicted OCR without another datastore read."""
+    produced = produce()
+    pages.append({'page_number': number, 'text': produced[0],
+                  'contains_story': produced[1], 'page_type': produced[2],
+                  'status': 'completed', **(getattr(produced, 'details', None) or {})})
+    return produced
+
+
+def _reconcile_uploaded_metadata(book, pages, images, client):
+    """An explicit upload action may save suggestions; confirmed values survive.
+
+    No progress poll invokes this helper. The result is separate from every
+    student-editable title, credit and publication field, including overrides.
+    """
+    from bibliography import PERSISTED_FIELDS
+    from utilities import finalize_photo_metadata
+
+    if (not getattr(book, 'metadata_evidence_payloads', None)
+            or getattr(book, 'metadata_reconciliation', None)):
+        return
+    seed = {field: getattr(book, field, None) for field in PERSISTED_FIELDS}
+    # A resumed single-book upload can reconstruct the evidence-only seed even
+    # after session-state metadata has gone away.
+    result = finalize_photo_metadata(seed, pages, client, images_by_number=images)
+    book.metadata_reconciliation = result
+    if result.get('metadata_finalization', {}).get('status') == 'failed':
+        from text_content.publication import PublicationText
+        st.warning(PublicationText.reconciliation_failed)
 
 
 def _finalize_job_batch(job, raw_bytes_list, total, fs, db, ai_client, model,
@@ -299,6 +334,7 @@ def _finalize_job_batch(job, raw_bytes_list, total, fs, db, ai_client, model,
     copyright_text = None
     failed_pages = []
     settings = get_ai_settings()
+    metadata_pages = []
 
     # Make sure a worker is advancing this job in THIS process — resume it if the
     # starting session's worker died or this is a later/other session — and link
@@ -353,19 +389,24 @@ def _finalize_job_batch(job, raw_bytes_list, total, fs, db, ai_client, model,
                 raw_bytes, page_number, photos_url, fs, ai_client, report
             )
             report(Uploader.substep_extracting)
-            text, is_story, page_type = extract_page_info(
+            payload = extract_page_info(
                 bytes_for_extraction, ai_client, book=current_book,
                 page_number=page_number, page_name=f"page_{page_number}.jpg",
                 flow=ExtractionErrorLog.FLOW_SINGLE,
             )
-            return text, is_story, page_type, method is not None, rotation_uncertain
+            from extraction_core import ProcessedPagePayload
+            return ProcessedPagePayload(payload, method is not None, rotation_uncertain)
 
-        page_status, cp = _register_processed_page(page_number, _produce, model)
+        page_status, cp = _register_processed_page(page_number,
+            lambda: _capture_metadata_page(_produce, metadata_pages, page_number), model)
         if page_status == 'failed':
             failed_pages.append(page_number)
         elif cp and copyright_text is None:
             copyright_text = cp
         progress.progress(page_number / total)
+
+    _reconcile_uploaded_metadata(current_book, metadata_pages,
+        {number: raw for number, raw in enumerate(raw_bytes_list, 1)}, ai_client)
 
     # Precomputed whole-book character detection (#170/#182/#183): hand the
     # worker's suggestions to enter-text so the review form appears instantly.
@@ -403,6 +444,8 @@ def _inline_ai_batch(raw_bytes_list, total, fs, ai_client, model, status, progre
     copyright_text = None
     failed_pages = []
 
+    metadata_pages = []
+
     # Phase 1 — upload raw photos to S3 (orientation-normalised, #51). Idempotent.
     oriented_list = []
     for fi, raw_bytes in enumerate(raw_bytes_list):
@@ -429,19 +472,24 @@ def _inline_ai_batch(raw_bytes_list, total, fs, ai_client, model, status, progre
                 raw_bytes, page_number, photos_url, fs, ai_client, report
             )
             report(Uploader.substep_extracting)
-            text, is_story, page_type = extract_page_info(
+            payload = extract_page_info(
                 bytes_for_extraction, ai_client, book=current_book,
                 page_number=page_number, page_name=f"page_{page_number}.jpg",
                 flow=ExtractionErrorLog.FLOW_SINGLE,
             )
-            return text, is_story, page_type, method is not None, rotation_uncertain
+            from extraction_core import ProcessedPagePayload
+            return ProcessedPagePayload(payload, method is not None, rotation_uncertain)
 
-        page_status, cp = _register_processed_page(page_number, _produce, model)
+        page_status, cp = _register_processed_page(page_number,
+            lambda: _capture_metadata_page(_produce, metadata_pages, page_number), model)
         if page_status == 'failed':
             failed_pages.append(page_number)
         elif cp and copyright_text is None:
             copyright_text = cp
         progress.progress((i + 1) / total)
+
+    _reconcile_uploaded_metadata(current_book, metadata_pages,
+        {start_page + index: raw for index, raw in enumerate(raw_bytes_list, 1)}, ai_client)
 
     # Auto-run character detection the next time this book's enter-text page
     # loads (#170), now that OCR has run and there is story text to work with.

@@ -140,7 +140,7 @@ def test_required_page_settings_fail_before_vision_call(
     assert calls == []
 
 
-def test_wordless_guard_matches_application_wrapper(image_bytes, isolated):
+def test_conflicting_text_is_preserved_in_application_and_evaluation(image_bytes, isolated):
     from pages.uploader import attempt_page_extraction
 
     reply = {'has_text': False, 'text': 'invented description',
@@ -155,16 +155,22 @@ def test_wordless_guard_matches_application_wrapper(image_bytes, isolated):
     result = extract_page(image_bytes, client, isolated, sink)
     assert outcome == 'ok'
     assert app_payload == (result['text'], result['contains_story'], result['page_type'])
-    assert result['text'] == ''
+    assert result['text'] == 'invented description'
+    assert result['validation_flags'] == ['has_text_conflict']
     assert client.requests[0] == client.requests[1]
 
 
 def test_metadata_injects_settings_lookup_and_value_sources(image_bytes, isolated):
     client = FakeClient(
         {'title_page': 1, 'copyright_page': 2},
-        {'title': 'A story', 'authors': [], 'illustrators': ['Artist']},
-        {'publisher': 'Imprint', 'first_published_year': 2001,
-         'isbn': '9780306406157'},
+        {'title': {'value': 'A story', 'evidence': [{'page_number': 3, 'quote': 'A story'}]},
+         'credits': [{'name': 'Artist', 'role': 'illustrator', 'page_number': 3, 'quote': 'Illustrated by Artist'}],
+         'publisher_statements': [
+             {'publisher': 'Imprint', 'publisher_role': 'imprint', 'scope': 'edition',
+              'year': 2010, 'page_number': 7, 'quote': 'This edition 2010 Imprint'},
+             {'publisher': 'Original', 'publisher_role': 'imprint', 'scope': 'original',
+              'year': 2001, 'page_number': 7, 'quote': 'First published 2001 Original'}],
+         'isbns': [{'raw': '9780306406157', 'page_number': 7, 'quote': '9780306406157'}], 'conflicts': []},
     )
     looked_up = []
     usage = []
@@ -172,7 +178,8 @@ def test_metadata_injects_settings_lookup_and_value_sources(image_bytes, isolate
     def lookup(isbn):
         looked_up.append(isbn)
         return {'title': 'Different edition', 'authors': ['Writer'],
-                'publisher': 'Another imprint'}
+                'publisher': 'Another imprint',
+                'edition_identifiers': [{'type': 'ISBN_13', 'identifier': isbn}]}
 
     result = extract_metadata([(7, image_bytes), (3, image_bytes)], client,
                               isolated, lambda *args: usage.append(args), lookup)
@@ -184,9 +191,11 @@ def test_metadata_injects_settings_lookup_and_value_sources(image_bytes, isolate
     assert result['sources']['title']['page_number'] == 3
     assert result['sources']['publisher']['page_number'] == 7
     assert result['sources']['authors']['source'] == 'isbn_lookup'
-    assert len(usage) == 3
+    assert result['photographed_edition']['year'] == 2010
+    assert result['first_publication']['publisher'] == 'Original'
+    assert len(usage) == 2
     assert [request['model'] for request in client.requests] == [
-        isolated['locate_model'], isolated['metadata_model'], isolated['metadata_model'],
+        isolated['locate_model'], isolated['metadata_model'],
     ]
 
 
@@ -263,7 +272,8 @@ def test_shared_isbn_lookup_exposes_raw_provider_response(monkeypatch):
     responses = []
     result = utilities.lookup_isbn('9780306406157', response_sink=responses.append)
     assert result == {'title': 'A story', 'authors': ['Writer'],
-                      'publisher': 'Imprint', 'published_date': '2001-04-05'}
+                      'publisher': 'Imprint', 'published_date': '2001-04-05',
+                      'edition_identifiers': [], 'provider_volume_id': 'provider-volume'}
     assert responses == [raw]
     assert responses[0]['items'][0]['volumeInfo']['language'] == 'en'
     assert len(calls) == 1

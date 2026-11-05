@@ -11,6 +11,10 @@ class Page(DataStructureBase):
         'page_number': -1,
         'contains_story': False,
         'text': "",
+        # Archival model regions/provisional labels and versioned projections.
+        # Manual text remains the existing student-editable field; this sidecar
+        # is never used to overwrite it or populated by a read-time migration.
+        'extraction_evidence': None,
         # Whether an auto-corrected (cropped/rotated) image was written for this
         # page at processing time (#184). Recorded here so enter-text can decide
         # whether to offer the "show original" toggle WITHOUT an S3 HEAD request

@@ -165,7 +165,12 @@ def _detect_groups(batch, fs, client, *, splitter=None, metadata_reader=None):
                 raise ValueError('Metadata photo limit exceeded; enter details during review')
             pages = [(by_position[pos].name, downscale_for_vision(_read(fs, by_position[pos].key), max_edge=batch.settings.get('extraction_max_edge', 2000)))
                      for pos in group.positions]
-            result = validate_metadata(metadata_reader(pages, client))
+            response = metadata_reader(pages, client)
+            try:
+                result = validate_metadata(response)
+            except ValueError:
+                group.metadata_failed_response = response
+                raise
             group.metadata = result
             group.metadata_state = 'done'
         except SERVICE_ERRORS as exc:
@@ -183,6 +188,8 @@ def validate_metadata(value):
         return {}
     if not isinstance(value, dict):
         raise ValueError('Metadata response must be an object')
+    if value.get('metadata_extraction_status') == 'invalid_response':
+        raise ValueError('Invalid joint metadata response')
     for field in ('title', 'publisher'):
         if value.get(field) is not None and not isinstance(value[field], str):
             raise ValueError(f'Invalid metadata {field}')

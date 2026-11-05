@@ -62,6 +62,7 @@ streamlit run Home.py                      # serves http://localhost:8501
 ## 3. Set environment variables
 
 ```bash
+export FAIRTALES_RUN_E2E=1                    # explicit opt-in; ordinary pytest stays offline
 export APP_BASE_URL="http://localhost:8501"   # optional; this is the default
 export TEST_USER_EMAIL="you@example.com"      # a CONFIRMED test user
 export TEST_USER_PASSWORD="••••••••"

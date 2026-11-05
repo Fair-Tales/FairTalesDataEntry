@@ -884,11 +884,17 @@ def run_character_detection():
         st.warning(EnterText.detect_no_api_key)
         return False
 
-    pages = [
-        (page_number, page.text)
-        for page_number, page in st.session_state.book_pages_dict.items()
-        if page.contains_story and (page.text or "").strip()
-    ]
+    from conventions import project_analysis_text
+    pages, input_projection = [], []
+    for page_number, page in st.session_state.book_pages_dict.items():
+        evidence = getattr(page, 'extraction_evidence', None)
+        evidence = evidence if isinstance(evidence, dict) else {}
+        projection = project_analysis_text({**evidence, 'text': page.text})
+        used = page.contains_story is True and bool(projection['analysis_text'].strip())
+        input_projection.append({'page_number': page_number, 'used': used, **projection})
+        if used:
+            pages.append((page_number, projection['analysis_text']))
+    st.session_state['_detected_character_input_projection'] = input_projection
     if not pages:
         st.warning(EnterText.detect_no_text)
         return False
@@ -904,6 +910,12 @@ def run_character_detection():
         try:
             suggestions = detect_book_characters(pages, client, progress_callback=_on_progress)
         except (anthropic.AnthropicError, json.JSONDecodeError, ValueError, KeyError) as error:
+            if hasattr(error, 'raw_response'):
+                st.session_state['_detected_failure'] = {
+                    'raw_response': error.raw_response,
+                    'raw_text': getattr(error, 'raw_text', None),
+                    'failure_kind': getattr(error, 'failure_kind', None),
+                }
             st.error(EnterText.detect_failed.format(error=error))
             return False
 

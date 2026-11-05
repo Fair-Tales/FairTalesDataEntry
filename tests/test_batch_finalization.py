@@ -281,6 +281,32 @@ def test_empty_success_is_durable_and_never_stages_paid_detection(setup):
     assert '_pending_character_autodetect' not in state
 
 
+def test_unresolved_only_raw_response_survives_batch_handoff(setup):
+    db, fs, book = setup
+    raw = {'characters': [], 'unresolved_mentions': [{'surface': 'someone', 'page': 1}]}
+    db.store['pipeline_jobs/job'].update(character_suggestions=[], character_outcome='empty',
+                                         character_raw_response=raw)
+    bf.finalize_batch_job(book, db, fs, 'job')
+    state = {'book_pages_dict': _pages(db)}
+    bf.stage_batch_character_review(state, book, db)
+    assert state['_detected_characters'] == []
+    assert state['_detected_characters'].raw_response == raw
+    assert state['_batch_character_result']['raw_response'] == raw
+
+
+def test_region_revision_matches_materialized_pages_and_detects_changes():
+    evidence = {'regions': [{'kind': 'narrative', 'text': 'Story'},
+                            {'kind': 'paratext', 'text': 'Blurb'}]}
+    page = SimpleNamespace(text='Story\n\nBlurb', contains_story=True, extraction_evidence=evidence)
+    fields = {1: {'status': 'done', 'text': page.text, 'is_story': True,
+                  'page_type': 'narrative', 'extraction_evidence': evidence}}
+    revision = bf._result_text_revision(fields)
+    assert bf.page_text_revision({1: page}) == revision
+    page.extraction_evidence = {'regions': [{'kind': 'narrative', 'text': 'Story'},
+                                          {'kind': 'illustration_lettering', 'text': 'Blurb'}]}
+    assert bf.page_text_revision({1: page}) != revision
+
+
 def test_review_preserves_aliases_and_clears_previous_book_widget_values(setup):
     db, fs, book = setup
     bf.finalize_batch_job(book, db, fs, 'job')

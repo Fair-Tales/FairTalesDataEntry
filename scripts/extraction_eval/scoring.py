@@ -14,6 +14,7 @@ from copy import deepcopy
 from collections import Counter, defaultdict
 
 from text_content.alias_metrics import AliasMetrics
+from text_content.evaluation import EvaluationText
 
 from .alias_metrics import aggregate_alias_foundation, score_alias_foundation
 from .normalization import (UNCERTAINTY, character_similarity, edit_distance,
@@ -24,13 +25,16 @@ ELIGIBLE = {"observed", "verified"}
 UNRUN = {"pending", "dispatched", "budget_stopped", "outcome_unknown", "unknown_outcome"}
 
 
-def apply_overlay(manifest, overlay):
+def apply_overlay(manifest, overlay, *, convention_version=None):
     """Return a copy with reviewed reference changes, before opening predictions.
 
     Overlay schema: version, snapshot_id, reviewed=true, changes=[{book_id,
     page_id (for page fields), field, value, status, provenance}]. Fields are text,
     contains_story, characters, or metadata.<field>. Originals are never mutated.
     """
+    if overlay.get("schema_version") == "adjudication-v2":
+        from .adjudication import apply_v2_overlay
+        return apply_v2_overlay(manifest, overlay, convention_version=convention_version)
     if not overlay.get("version") or overlay.get("reviewed") is not True:
         raise ValueError("Adjudication requires a version and reviewed=true")
     if not manifest.get("snapshot_id") or overlay.get("snapshot_id") != manifest.get("snapshot_id"):
@@ -69,7 +73,9 @@ def apply_overlay(manifest, overlay):
         if field == "text":
             record["kind"] = "wordless" if not normalize_text(change.get("value")) else "text"
         target[field] = record
-    revised["adjudication"] = {"version": overlay["version"], "snapshot_id": overlay["snapshot_id"]}
+    from .store import digest
+    revised["adjudication"] = {"version": overlay["version"], "snapshot_id": overlay["snapshot_id"],
+                              "overlay_hash": digest(overlay), "legacy_unchecked_provenance": True}
     return revised
 
 
@@ -149,6 +155,8 @@ def score_ocr(reference, prediction):
         result["wordless_reference"] = True
         result["predicted_tokens"] = len(tokenize(actual))
         result["invented_tokens"] = len(tokenize(actual)) if status == "completed" else None
+        result["unreviewed_disagreement_tokens"] = result["invented_tokens"]
+        result["confirmed_hallucinated_tokens"] = (result["invented_tokens"] or 0) if reference.get("status") == "verified" else 0
         result["invented_characters"] = len(actual_normal) if status == "completed" else None
         result["verified_wordless"] = reference.get("status") == "verified"
         return result
@@ -414,8 +422,39 @@ def _wordless(pages):
             "end_to_end_agreement_rate": _ratio(agreed, len(wordless)),
             "coverage": _ratio(agreed + disputed, len(wordless)),
             "invented_tokens": sum(page.get("invented_tokens") or 0 for page in wordless),
+            "invented_tokens_legacy_diagnostic": True,
+            "unreviewed_disagreement_tokens": sum(page.get("unreviewed_disagreement_tokens") or 0 for page in wordless if not page.get("verified_wordless")),
+            "confirmed_hallucinated_tokens": sum(page.get("confirmed_hallucinated_tokens") or 0 for page in wordless),
             "verified_pages": sum(page.get("verified_wordless", False) for page in wordless),
             "qualification": "Imported wordless agreement; disputed pages require adjudication before calling text hallucinated."}
+
+
+def _reference_corrections(book, prediction, pages):
+    corrections = {"credited_fields": 0, "recovered_correct_tokens": 0, "unresolved_reviews": 0}
+    regressions = {name: {"errors": 0, "eligible": 0} for name in ("blank_regression", "recovery_regression")}
+    for page, score in zip(book.get("pages", []), pages):
+        reference = page.get("reference", {})
+        actual = prediction.get("pages", {}).get(page.get("id")) or {}
+        for field, record in reference.items():
+            if not isinstance(record, dict):
+                continue
+            verdict = record.get("adjudication_verdict")
+            corrections["unresolved_reviews"] += verdict in {"ambiguous", "convention_pending"}
+            if verdict not in {"reference_wrong", "both_wrong"}:
+                continue
+            corrections["credited_fields"] += 1
+            if field == "text" and record.get("value") and not (record.get("original_reference") or {}).get("value"):
+                corrections["recovered_correct_tokens"] += score.get("ocr", {}).get("matched_tokens", 0)
+                regressions["recovery_regression"]["eligible"] += 1
+                regressions["recovery_regression"]["errors"] += not (actual.get("status") == "completed" and normalize_text(actual.get("text")) == normalize_text(record.get("value")))
+            if field == "contains_story" and record.get("value") is False and (record.get("adjudication_evidence") or {}).get("page_type") == "blank":
+                regressions["blank_regression"]["eligible"] += 1
+                # Legacy run artifacts omitted has_text after the page adapter
+                # enforced its text contract. Reconstruct this missing boolean
+                # symmetrically; an explicitly contradictory value still fails.
+                has_text = actual.get("has_text", bool(actual.get("text")))
+                regressions["blank_regression"]["errors"] += not (actual.get("status") == "completed" and not normalize_text(actual.get("text")) and has_text is False and actual.get("contains_story") is False)
+    return regressions, corrections
 
 
 def score_book(book, prediction=None, protocol=None):
@@ -427,9 +466,36 @@ def score_book(book, prediction=None, protocol=None):
     for page in book.get("pages", []):
         reference = page.get("reference", {})
         actual = prediction.get("pages", {}).get(page.get("id"))
+        actual_record = actual if isinstance(actual, dict) else {}
         pages.append({"id": page.get("id"), "page_number": page.get("page_number"),
+                      "classification_source": actual_record.get("classification_source", "page_prompt"),
                       "ocr": score_ocr(reference.get("text", {"status": "missing"}), actual),
                       "story": score_story(reference.get("contains_story", {"status": "missing"}), actual)})
+    optional_stages = {}
+    for name in ("story_context", "metadata_reconciliation"):
+        stage = prediction.get(name)
+        intended = isinstance(stage, dict)
+        stage = stage if intended else {}
+        status = stage.get("status", "pending") if intended else "not_requested"
+        unresolved_pages = (sum(isinstance(row, dict) and row.get("contains_story") is None
+                                for row in (stage.get("pages") or []))
+                            if name == "story_context" else 0)
+        if name == "story_context" and type(stage.get("unresolved_pages")) is int:
+            unresolved_pages = max(unresolved_pages, stage.get("unresolved_pages", 0))
+        fallback = name == "story_context" and intended and (
+            stage.get("fallback") is True or any(page.get("classification_source") == "provisional_fallback" for page in pages))
+        optional_stages[name] = {"intended": intended, "status": status,
+                                "completed": intended and status == "completed",
+                                "failed": intended and status == "failed",
+                                "unrun": intended and status in UNRUN,
+                                "unresolved": intended and (status not in {"completed", "failed"} or bool(unresolved_pages)),
+                                "unresolved_pages": unresolved_pages, "fallback": fallback,
+                                "error": stage.get("error"), "error_type": stage.get("error_type")}
+    fallback_counts = Counter()
+    for page in pages:
+        if page.get("classification_source") == "provisional_fallback":
+            fallback_counts.update({key: page["story"].get(key, 0) for key in
+                                    ("tp", "fp", "fn", "tn", "failed_true", "failed_false", "unrun_true", "unrun_false")})
     reference = book.get("reference", {})
     metadata_prediction = prediction.get("metadata", {})
     metadata_value = metadata_prediction.get("value", {}) or {}
@@ -438,23 +504,53 @@ def score_book(book, prediction=None, protocol=None):
     metadata = {field: score_metadata(field, record, {"value": metadata_value.get(field),
                                       "status": "lookup_failed" if metadata_status == "completed" and field in failed_fields else metadata_status},
                                       equivalents.get(field))
-                for field, record in reference.get("metadata", {}).items()}
+                for field, record in reference.get("metadata", {}).items()
+                if field in {"title", "authors", "illustrators", "publisher", "published_year"}}
     for field, record in metadata.items():
         record["prediction_source"] = metadata_value.get("sources", {}).get(field)
+    metadata_operational = {field: score_metadata(field, record,
+                            {"value": metadata_value.get(field), "status": "failed" if field in failed_fields else metadata_status},
+                            equivalents.get(field))
+                            for field, record in reference.get("metadata", {}).items()
+                            if field in {"title", "authors", "illustrators", "publisher", "published_year"}}
     character_matches = match_characters(reference.get("characters", {"status": "missing"}),
                                          prediction.get("characters"), equivalents.get("characters"))
     ref_hash = hashlib.sha256(json.dumps({"pages": [{"id": page.get("id"), "reference": page.get("reference")}
                                                   for page in book.get("pages", [])], "reference": reference},
                                        sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    from .publication_metrics import score_publication
+    from .store import digest
+    from .alias_metrics import _entities, character_input_pages
+    from alias_pipeline import build_alias_index
+    projected_entities = _entities(prediction.get("characters") or {})
+    alias_index = build_alias_index(projected_entities, book_id=str(book.get("id", "")))
+    recorded_surfaces = Counter((entity.get("entity_id"), alias) for entity in projected_entities for alias in entity.get("raw_aliases", []))
+    archived_surfaces = Counter((entry.get("entity_id"), entry.get("name")) for entry in alias_index.get("entries", []))
+    alias_foundation = score_alias_foundation(book, prediction)
+    occurrence_keys = [(item.get("page_id"), item.get("start"), item.get("end"), tuple(item.get("candidate_entity_ids", [])))
+                       for item in alias_foundation.get("M4", {}).get("occurrences", [])]
+    projection_integrity = {"lost_raw_surfaces": sum((recorded_surfaces - archived_surfaces).values()),
+                            "duplicate_occurrences": len(occurrence_keys) - len(set(occurrence_keys)),
+                            "scope": EvaluationText.projection_integrity_scope}
+    character_inputs = sorted(character_input_pages(book, prediction))
+    regressions, corrections = _reference_corrections(book, prediction, pages)
     return {"id": book.get("id"), "title": book.get("title"), "reference_hash": ref_hash,
+            "optional_stages": optional_stages,
+            "story_context_fallback": _story_metrics(dict(fallback_counts)),
+            "character_input_hash": digest(character_inputs),
+            "projection_integrity": projection_integrity,
+            "publication": score_publication(reference.get("metadata", {}), metadata_value,
+                                             status=metadata_status, protocol=protocol),
+            "regressions": regressions, "reference_corrections": corrections,
             "pages": pages, "ocr": _ocr_totals([page["ocr"] for page in pages]),
             "wordless": _wordless([page["ocr"] for page in pages]), "metadata": metadata,
+            "metadata_operational": metadata_operational,
             "metadata_diagnostics": {"status": metadata_status, "located": metadata_value.get("located"),
                                      "isbn": metadata_value.get("isbn"), "error": metadata_prediction.get("error"),
                                      "isbn_lookup": metadata_value.get("isbn_lookup"),
                                      "lookup_failed_fields": sorted(failed_fields)},
             "characters": score_characters(character_matches),
-            "alias_foundation": score_alias_foundation(book, prediction),
+            "alias_foundation": alias_foundation,
             "themes": {"status": reference.get("themes", {}).get("status", "not_annotated"), "scored": False}}
 
 
@@ -516,12 +612,35 @@ def aggregate(scores, protocol=None):
     verified_book_values = [_ocr_totals([page["ocr"] for page in book["pages"] if page["ocr"]["reference_status"] == "verified"])["f1"] for book in books]
     verified_book_values = [value for value in verified_book_values if value is not None]
     incomplete_stages = sum(page["ocr"]["unrun"] for page in pages) + sum(record["unrun"] for book in books for record in book["metadata"].values()) + sum(book["characters"]["unrun"] for book in books)
+    optional_stages = {}
+    for name in ("story_context", "metadata_reconciliation"):
+        records = [book.get("optional_stages", {}).get(name, {}) for book in books]
+        totals = {key: sum(record.get(key, 0) for record in records)
+                  for key in ("intended", "completed", "failed", "unrun", "unresolved", "unresolved_pages", "fallback")}
+        optional_stages[name] = {**totals, "all_books": len(books),
+                                "output_coverage": _ratio(totals["completed"], totals["intended"]),
+                                "failure_rate_all_books": _ratio(totals["failed"], len(books)),
+                                "fallback_rate_all_books": _ratio(totals["fallback"], len(books)),
+                                "status_counts": dict(Counter(record.get("status", "not_requested") for record in records))}
+        incomplete_stages += totals["unrun"]
+    fallback_counts = Counter()
+    for book in books:
+        fallback_counts.update({key: book.get("story_context_fallback", {}).get(key, 0) for key in
+                                ("tp", "fp", "fn", "tn", "failed_true", "failed_false", "unrun_true", "unrun_false")})
     lookup_failed_books = [book["id"] for book in books
                            if (book.get("metadata_diagnostics", {}).get("isbn_lookup") or {}).get("status") == "failed"
                            or any(record.get("prediction_status") == "lookup_failed"
                                   for record in book.get("metadata", {}).values())]
+    from .comparison import SCORER_VERSION
+    from .publication_metrics import aggregate_publication
     return {"label": "pilot reference-agreement", "protocol_version": protocol.get("version", "pilot-metrics-v2"),
-            "scorer_version": "pilot-metrics-v2+alias-foundation-v1",
+            "scorer_version": SCORER_VERSION,
+            "optional_stages": optional_stages,
+            "story_context_fallback": _story_metrics(dict(fallback_counts)),
+            "alias_recall_interpretation": EvaluationText.alias_smoke,
+            "publication": aggregate_publication(books),
+            "reference_corrections": {key: sum(book.get("reference_corrections", {}).get(key, 0) for book in books)
+                                      for key in ("credited_fields", "recovered_correct_tokens", "unresolved_reviews")},
             "books": len(books), "pages": len(pages), "incomplete": incomplete_stages > 0,
             "ocr": {"book_macro_f1": _ratio(sum(book_values), len(book_values)), "book_denominator": len(book_values),
                     "token_micro": _ocr_totals(ocr), "intended_text_pages": sum(page["scored"] for page in ocr),

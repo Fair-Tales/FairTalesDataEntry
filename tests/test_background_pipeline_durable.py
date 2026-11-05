@@ -138,6 +138,55 @@ def test_empty_success_is_terminal_and_never_repeated(transaction_db, monkeypatc
     assert job['character_suggestions'] == []
 
 
+def test_raw_unresolved_ledger_survives_durable_empty_success(transaction_db, monkeypatch):
+    from alias_schema import RecordedSuggestions
+    db = transaction_db
+    terminal_pages(db)
+    raw = {'characters': [], 'unresolved_mentions': [{'surface': 'someone', 'page': 1}]}
+    monkeypatch.setattr(bp, 'detect_book_characters', lambda *a, **kw: RecordedSuggestions([], raw_response=raw))
+    bp._detect_characters(db, 'job1', object(), SETTINGS)
+    job = bp._job_ref(db, 'job1').get().to_dict()
+    assert job['character_status'] == 'done'
+    assert job['character_raw_response'] == raw
+    restored = bp.wait_for_character_suggestions(db, {'job_id': 'job1'}, worker_alive=lambda: False)
+    assert restored == [] and restored.raw_response == raw
+
+
+def test_character_projection_excludes_paratext_and_invalidates_on_region_edit(transaction_db, monkeypatch):
+    db = transaction_db
+    terminal_pages(db, 1)
+    evidence = {'regions': [{'kind': 'narrative', 'text': 'Story'},
+                            {'kind': 'paratext', 'text': 'Blurb'}]}
+    page = bp._page_ref(db, 'job1', 1)
+    page.set({'text': 'Story\n\nBlurb', 'extraction_evidence': evidence}, merge=True)
+    before = bp._text_revision(bp._page_docs(db, 'job1', 1))
+    inputs = []
+    monkeypatch.setattr(bp, 'detect_book_characters', lambda pages, *a, **kw: inputs.append(pages) or [])
+    bp._detect_characters(db, 'job1', object(), SETTINGS)
+    assert inputs == [[(1, 'Story')]]
+    assert bp._job_ref(db, 'job1').get().to_dict()['character_input_projection'][0]['projection_status'] == 'projected'
+    evidence['regions'][1]['kind'] = 'illustration_lettering'
+    page.set({'extraction_evidence': evidence}, merge=True)
+    assert before != bp._text_revision(bp._page_docs(db, 'job1', 1))
+
+
+def test_partial_character_failure_is_durable_with_raw_evidence(transaction_db, monkeypatch):
+    from character_evidence import IncompleteCharacterResponse
+    db = transaction_db
+    terminal_pages(db)
+    partial = {'characters': [{'name': 'one'}]}
+    def detector(*args, **kwargs):
+        raise IncompleteCharacterResponse('partial', raw_response=partial,
+            raw_text='partial bytes', failure_kind='truncated_response')
+    monkeypatch.setattr(bp, 'detect_book_characters', detector)
+    bp._detect_characters(db, 'job1', object(), SETTINGS)
+    job = bp._job_ref(db, 'job1').get().to_dict()
+    assert job['character_status'] == 'failed'
+    assert job['character_raw_response'] == partial
+    assert job['character_raw_text'] == 'partial bytes'
+    assert job['character_failure_kind'] == 'truncated_response'
+
+
 def test_incomplete_coverage_and_all_failed_are_distinct(transaction_db, monkeypatch):
     db = transaction_db
     terminal_pages(db)

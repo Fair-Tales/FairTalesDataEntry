@@ -1,0 +1,121 @@
+{
+  "variant": "pipeline-evidence-v1-context-and-bibliography-v2",
+  "request_version": "1",
+  "parser_version": "pipeline-parser-v2",
+  "provider": "anthropic-messages",
+  "max_attempts": 1,
+  "settings": {
+    "extraction_model": "claude-sonnet-5",
+    "metadata_model": "claude-sonnet-5",
+    "character_detection_model": "claude-sonnet-5",
+    "locate_model": "claude-haiku-4-5",
+    "rotation_model": "claude-sonnet-4-6",
+    "crop_quality_model": "claude-haiku-4-5",
+    "theme_model": "claude-sonnet-4-6",
+    "extraction_max_edge": 2000,
+    "extraction_max_tokens": 2048,
+    "locate_max_edge": 784,
+    "enable_rotation_correction": true,
+    "enable_crop_quality_gate": true,
+    "prompt_variant": "rules-plus-icl",
+    "story_context_enabled": true,
+    "story_context_model": "claude-sonnet-5",
+    "story_context_max_tokens": 8192,
+    "metadata_reconciliation_enabled": true,
+    "page_schema_version": "page-regions-v1"
+  },
+  "pricing": {
+    "verified": true,
+    "verified_at": "2026-11-04T23:03:19.304138+00:00",
+    "source": "Verified 2026-11-04 against docs.anthropic.com pricing (Sonnet 5 = $2/$10 per MTok, cache read $0.20, 5-min cache write $2.50) and the repository's ai_pricing.py, which is the same table record_api_usage bills against. Sonnet 4.6 and Haiku 4.5 base rates were already correct; their cache rates now use ai_pricing.py's 0.1x/1.25x multipliers.",
+    "models": {
+      "claude-sonnet-5": {
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.2,
+        "cache_write": 2.5,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 8192,
+        "max_images": 100,
+        "max_request_bytes": 32000000
+      },
+      "claude-sonnet-4-6": {
+        "input": 3,
+        "output": 15,
+        "cache_read": 0.3,
+        "cache_write": 3.75,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 8192,
+        "max_images": 100,
+        "max_request_bytes": 32000000
+      },
+      "claude-haiku-4-5": {
+        "input": 1,
+        "output": 5,
+        "cache_read": 0.1,
+        "cache_write": 1.25,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 8192,
+        "max_images": 100,
+        "max_request_bytes": 32000000
+      }
+    }
+  },
+  "conventions": {
+    "convention_version": "pipeline-conventions-v1",
+    "conventions": {
+      "C1": {
+        "version": "all-print-regions-v1",
+        "status": "provisional",
+        "rule": "Archive all book-authored lettering; analyse narrative, informational and in-scene illustration lettering separately from paratext."
+      },
+      "C2": {
+        "version": "main-content-v1",
+        "status": "provisional",
+        "rule": "Main narrative, informational and wordless narrative pages participate; bibliographic matter, decorative endpapers, glossary/index and supplemental activities do not."
+      },
+      "C3": {
+        "version": "names-descriptions-v1",
+        "status": "accepted",
+        "rule": "Names and descriptive referring expressions are lexical aliases; pronouns, body parts and editorial labels are separately retained evidence."
+      },
+      "C3_population": {
+        "version": "categorized-entities-v1",
+        "status": "provisional",
+        "rule": "Retain individuals, collectives, generic groups and discourse roles in separate strata with unresolved identity."
+      },
+      "C4": {
+        "version": "scoped-publication-v1",
+        "status": "accepted",
+        "rule": "Keep photographed-edition imprint and publishing house distinct; preserve first-publication and edition events and source evidence."
+      },
+      "C5": {
+        "version": "pilot-claims-v1",
+        "status": "provisional",
+        "rule": "Existing positives and consistency metrics support exploratory pilot-only claims; dev20 aliases-only recall has ten positives and is a smoke test."
+      },
+      "C6": {
+        "version": "credited-retellers-v1",
+        "status": "provisional",
+        "rule": "Analytical authors include explicitly credited authors and retellers; retain all original contributor roles."
+      },
+      "C7": {
+        "version": "evidenced-short-category-collective-v1",
+        "status": "provisional",
+        "rule": "Also emit bare/short contiguous printed referring heads with full phrase and owner evidence; label embedded_short_form when no independent occurrence exists. Category words must be printed and refer in context. Collective occurrences stay with the collective; membership alone never attaches them to an individual. Ambiguous heads retain alternative candidates."
+      }
+    }
+  },
+  "example_pack_version": "pipeline-evidence-v1",
+  "prompt_version": "pipeline-prompts-v2",
+  "billing": {
+    "funding": "subscription_credits",
+    "confirmed": false,
+    "organisation": "",
+    "project": "",
+    "confirmed_by": "",
+    "confirmed_at": "",
+    "secret_name": "EVAL_ANTHROPIC_API_KEY",
+    "key_sha256": ""
+  }
+}

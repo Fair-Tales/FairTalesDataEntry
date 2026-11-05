@@ -7,6 +7,7 @@ import sqlite3
 from types import SimpleNamespace
 
 from .store import CachedFailure, OutcomeUnknown, canonical, digest
+from .billing import BILLING_EXHAUSTED, BillingStopped, billing_rejection
 
 
 class RequestLimitError(ValueError):
@@ -116,8 +117,11 @@ class Gateway:
         self.paid_calls = 0
         self.dry_run = dry_run
         self.context = {}
+        self.billing_stopped = False
 
     def create(self, **request):
+        if self.billing_stopped:
+            raise BillingStopped(BILLING_EXHAUSTED)
         ceiling = request_ceiling(request, self.prices)
         identity = {"request_version": self.config.get("request_version", "1"), "replicate": self.replicate, "provider": self.config.get("provider", "anthropic-messages"), "request": request}
         attempts = self.config.get("max_attempts", 1)
@@ -135,6 +139,9 @@ class Gateway:
                     continue
                 if state in {"dispatched", "outcome_unknown"}:
                     raise OutcomeUnknown(f"Request {key} has an unknown outcome; manual reconciliation required")
+                if str(cached.get('error', '')).startswith('billing_stopped:'):
+                    self.billing_stopped = True
+                    raise BillingStopped(BILLING_EXHAUSTED)
                 raise CachedFailure(f"Request {key} permanently failed: {cached.get('error')}")
             if self.dry_run:
                 raise DryRunMiss(f"Uncached request for {request.get('model')}; no paid call dispatched")
@@ -145,6 +152,11 @@ class Gateway:
                 # Always preserve a dispatch outcome, including cancellation.
                 # No exception is swallowed: only definite 429 rejections retry.
                 code = getattr(exc, "status_code", None)
+                if billing_rejection(exc):
+                    self.ledger.fail(key, 'billing_stopped: ' + BILLING_EXHAUSTED,
+                                     rejected=True, retryable=False)
+                    self.billing_stopped = True
+                    raise BillingStopped(BILLING_EXHAUSTED) from exc
                 rejected = code in {400, 401, 403, 404, 413, 422, 429}
                 self.ledger.fail(key, f"{type(exc).__name__}: {exc}", rejected=rejected, retryable=code == 429)
                 if code == 429 and attempt + 1 < attempts:

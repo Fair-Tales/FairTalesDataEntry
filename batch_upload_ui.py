@@ -49,6 +49,10 @@ def _make_book(metadata, ordinal):
     from pages.add_books_batch import _match_existing
     book = BatchBook()
     book.title = (metadata.get('title') or '').strip() or BatchBookEntry.untitled_title.format(n=ordinal)
+    from bibliography import PERSISTED_FIELDS
+    for field in PERSISTED_FIELDS:
+        if field in metadata:
+            setattr(book, field, metadata[field])
     year = metadata.get('published_year')
     if isinstance(year, int):
         book.published = year

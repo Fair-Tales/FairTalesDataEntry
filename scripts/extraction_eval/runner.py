@@ -9,11 +9,16 @@ import sqlite3
 import json
 
 from .gateway import DryRunMiss, RequestLimitError
+from .billing import BillingStopped
 from .store import (BudgetStopped, CachedFailure, OutcomeUnknown, atomic_json,
                     canonical, digest, read_json)
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCE_PATHS = ("ai_runtime.py", "extraction_core.py", "utilities.py", "image_processing.py", "text_content/ai_prompts.py")
+SOURCE_PATHS = ("ai_runtime.py", "extraction_core.py", "utilities.py", "image_processing.py",
+                "text_content/ai_prompts.py", "conventions.py", "bibliography.py",
+                "character_evidence.py", "alias_schema.py", "alias_pipeline.py",
+                "text_content/pipeline_prompts.py", "text_content/pipeline_examples.json",
+                "text_content/pipeline_runtime.py", "text_content/publication.py")
 
 
 def code_fingerprint():
@@ -131,7 +136,8 @@ def metadata_with_lookup_outcome(metadata, out):
     return value
 
 
-def cached_isbn_lookup(out, lookup, *, dry_run=False, capture_raw=False):
+def cached_isbn_lookup(out, lookup, *, dry_run=False, capture_raw=False,
+                       replay_only=False, frozen_lookup_dir=None):
     """Freeze provider answers, including absence, but never network failures.
 
     Old null-value/null-response entries have no evidence of a provider answer
@@ -149,7 +155,7 @@ def cached_isbn_lookup(out, lookup, *, dry_run=False, capture_raw=False):
                      if parameter.kind != inspect.Parameter.POSITIONAL_ONLY}
 
     def fetch(isbn, *, outcome_sink=None):
-        path = Path(out) / "lookups" / f"{digest(str(isbn))}.json"
+        path = Path(frozen_lookup_dir or Path(out) / "lookups") / f"{digest(str(isbn))}.json"
         if path.exists():
             saved = read_json(path)
             outcome = isbn_cache_outcome(saved)
@@ -159,6 +165,10 @@ def cached_isbn_lookup(out, lookup, *, dry_run=False, capture_raw=False):
                 return saved.get("value")
         if dry_run:
             raise DryRunMiss("Uncached ISBN lookup; dry run does not access the network")
+        if replay_only:
+            if outcome_sink is not None:
+                outcome_sink({'status': 'failed', 'reason': 'frozen_lookup_unavailable'})
+            return None
         raw, outcomes = [], []
         kwargs = {}
         if accepts_keywords or "response_sink" in keyword_names:
@@ -181,24 +191,29 @@ def cached_isbn_lookup(out, lookup, *, dry_run=False, capture_raw=False):
 def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, dry_run=False, core=None, isbn_lookup=None, progress=print):
     if core is None:
         import extraction_core as core
-    capture_lookup_raw = isbn_lookup is None
+    replay_only = isbn_lookup is None
+    capture_lookup_raw = False
     if isbn_lookup is None:
-        from utilities import lookup_isbn
-        isbn_lookup = lookup_isbn
+        isbn_lookup = lambda isbn: None
     out = Path(out)
     stages = Stages(out)
     selected = set(selection.get("book_ids", []))
-    results = {"version": 1, "snapshot_id": manifest.get("snapshot_id"),
+    from conventions import convention_metadata
+    results = {"version": 2, "snapshot_id": manifest.get("snapshot_id"),
                "run_id": getattr(getattr(gateway, "ledger", None), "run_id", None),
-               "books": {}, "dry_run": dry_run}
+               "books": {}, "dry_run": dry_run, "conventions": convention_metadata()}
     settings = config.get("settings", {})
     stop_reason = None
     current_book_id = None
-    isbn = cached_isbn_lookup(out, isbn_lookup, dry_run=dry_run, capture_raw=capture_lookup_raw)
+    isbn = cached_isbn_lookup(out, isbn_lookup, dry_run=dry_run, capture_raw=capture_lookup_raw,
+                              replay_only=replay_only,
+                              frozen_lookup_dir=config.get('frozen_lookup_dir'))
 
     def perform(key, callback, *, refresh_lookup=False):
         nonlocal stop_reason
         gateway.context = {"book_id": current_book_id, "stage": key}
+        if stop_reason and stop_reason[0] == 'billing_stopped':
+            return {'status': 'pending', 'error': stop_reason[1]}
         saved = stages.get(key)
         refreshing_lookup = False
         if saved is not None:
@@ -224,8 +239,15 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, dry_
         except OutcomeUnknown as exc:
             stop_reason = ("outcome_unknown", str(exc))
             value = {"status": "outcome_unknown", "error": str(exc)}
+        except BillingStopped as exc:
+            stop_reason = ('billing_stopped', str(exc))
+            value = {'status': 'billing_stopped', 'error': str(exc)}
         except (CachedFailure, RequestLimitError, OSError, ValueError, TypeError) as exc:
             value = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+            if getattr(exc, 'failure_kind', None):
+                value.update(failure_kind=exc.failure_kind,
+                             raw_response=getattr(exc, 'raw_response', None),
+                             raw_text=getattr(exc, 'raw_text', None))
         if not dry_run:
             stages.put(key, value)
         return value
@@ -246,7 +268,8 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, dry_
                 if not images:
                     raise ValueError("No images for metadata extraction")
                 value = core.extract_metadata(images, gateway, settings, gateway.record_usage, isbn)
-                return {"status": "completed", "value": value}
+                status = 'failed' if value.get('metadata_extraction_status') == 'invalid_response' else 'completed'
+                return {"status": status, "value": value}
             book_result["metadata"] = perform(f"{book_id}:metadata", metadata, refresh_lookup=True)
             for page in pages:
                 page_id = page.get("id")
@@ -268,17 +291,75 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, dry_
                         result["corrected_path"] = str(image_path.resolve())
                     return result
                 book_result["pages"][page_id] = perform(f"{book_id}:page:{page_id}", extract)
+            predicted_pages = [dict(book_result['pages'].get(page.get('id'), {}),
+                                    page_number=page.get('page_number')) for page in pages]
+            page_stages_terminal = all(row.get('status') in {'completed', 'failed'} for row in predicted_pages)
+
+            def context():
+                if not page_stages_terminal:
+                    from text_content.pipeline_runtime import CONTEXT_PENDING
+                    return {'status': 'pending', 'error': CONTEXT_PENDING}
+                images = []
+                for page, prediction in zip(pages, predicted_pages):
+                    if page.get('image'):
+                        corrected = prediction.get('corrected_path')
+                        image = Path(corrected).read_bytes() if corrected else local_image(snapshot_dir, page)
+                        images.append((page.get('page_number'), image))
+                return core.classify_book_context(predicted_pages, images, gateway, settings, gateway.record_usage)
+
+            if settings.get('story_context_enabled', False):
+                book_result['story_context'] = perform(f'{book_id}:story_context', context)
+                from extraction_core import apply_context_classification
+                final_pages = apply_context_classification(predicted_pages, book_result['story_context'])
+                book_result['pages'] = {page.get('id'): result for page, result in zip(pages, final_pages)}
+
+            def reconcile():
+                if not page_stages_terminal:
+                    return {'status': 'pending', 'error': 'Waiting for all page stages'}
+                initial = book_result.get('metadata', {})
+                if initial.get('status') != 'completed':
+                    return {'status': 'failed', 'error': 'Initial metadata is unavailable'}
+                images = [(page.get('page_number'), local_image(snapshot_dir, page))
+                          for page in pages if page.get('image')]
+                value = core.reconcile_metadata(initial.get('value', {}), predicted_pages, images,
+                                                gateway, settings, gateway.record_usage)
+                failed = (value.get('metadata_extraction_status') == 'invalid_response'
+                          or value.get('metadata_finalization', {}).get('status') == 'failed')
+                return {'status': 'failed' if failed else 'completed', 'value': value}
+
+            if settings.get('metadata_reconciliation_enabled', False):
+                book_result['metadata_initial'] = book_result.get('metadata')
+                book_result['metadata_reconciliation'] = perform(f'{book_id}:metadata_reconciliation', reconcile)
+                if book_result['metadata_reconciliation'].get('status') == 'completed':
+                    book_result['metadata'] = book_result['metadata_reconciliation']
             def characters():
                 predicted_pages = [dict(book_result["pages"].get(page.get("id"), {}), page_number=page.get("page_number")) for page in pages]
                 # Failures supply no text. Unrun pages make the book incomplete:
                 # do not freeze a character stage on a partial budget-stopped book.
                 if any(row.get("status") not in {"completed", "failed"} for row in predicted_pages):
                     return {"status": "pending", "error": "Waiting for all page stages"}
+                if (settings.get('story_context_enabled', False)
+                        and book_result.get('story_context', {}).get('status') not in {'completed', 'failed'}):
+                    return {'status': 'pending', 'error': 'Waiting for whole-book classification'}
                 value = core.extract_characters(predicted_pages, gateway, settings, gateway.record_usage)
-                return {"status": "completed", "value": value, "input": "predicted_story_flags_and_text"}
+                from conventions import project_analysis_text
+                input_pages = [{'page_id': source.get('id'), 'page_number': row.get('page_number'),
+                                'text': project_analysis_text(row).get('analysis_text', '')}
+                               for source, row in zip(pages, predicted_pages)
+                               if row.get('status') == 'completed' and row.get('contains_story') is True
+                               and project_analysis_text(row).get('analysis_text', '').strip()]
+                return {"status": "completed", "value": value,
+                        'raw_response': getattr(value, 'raw_response', None),
+                        "input": "predicted_story_flags_and_text",
+                        'input_pages': input_pages,
+                        'conventions': convention_metadata(),
+                        'input_coverage': {'total_pages': len(predicted_pages),
+                                           'included_pages': len(input_pages),
+                                           'eligible_story_pages': sum(row.get('status') == 'completed' and row.get('contains_story') is True for row in predicted_pages),
+                                           'unresolved_pages': sum(row.get('contains_story') is None for row in predicted_pages)}}
             book_result["characters"] = perform(f"{book_id}:characters", characters)
             atomic_json(out / ("dry_run_predictions.json" if dry_run else "predictions.json"), results)
-        results["incomplete"] = any(stage.get("status") not in {"completed", "failed"} for book in results["books"].values() for stage in [book.get("metadata", {}), book.get("characters", {}), *book.get("pages", {}).values()])
+        results["incomplete"] = bool(stop_reason) or any(stage.get("status") not in {"completed", "failed"} for book in results["books"].values() for stage in [book.get("metadata", {}), book.get("characters", {}), *book.get("pages", {}).values()])
         results["stop_reason"] = stop_reason
         atomic_json(out / ("dry_run_predictions.json" if dry_run else "predictions.json"), results)
         return results

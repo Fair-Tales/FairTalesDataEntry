@@ -10,6 +10,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from .snapshot import _atomic_json
+from .exposure import EXPOSED_IDS, exposure_ledger
 
 SELECTION_VERSION = "pilot-book-selection-v1"
 
@@ -43,7 +44,11 @@ def _inventory(manifest):
                      "page_count": len(pages), "image_count": image_count,
                      "observed_words_per_image": density, "text_density": density_category,
                      "wordless_reference_pages": sum(r.get("kind") == "wordless" for r in observed_texts),
-                     "character_count": len(book.get("reference", {}).get("characters", {}).get("value") or [])})
+                     "character_count": len(book.get("reference", {}).get("characters", {}).get("value") or []),
+                     "explicit_alias_count": sum(len(character.get("aliases") or []) for character in
+                                                 (book.get("reference", {}).get("characters", {}).get("value") or [])),
+                     "recorded_story_text": any(page.get("reference", {}).get("contains_story", {}).get("value") is True
+                                                and bool(page.get("reference", {}).get("text", {}).get("value")) for page in pages)})
     counts = sorted(row.get("image_count") for row in rows)
     cuts = [counts[min(len(counts) - 1, int(len(counts) * fraction))]
             for fraction in (0.25, 0.5, 0.75)] if counts else []
@@ -178,10 +183,12 @@ def select_books(manifest, limit=None, books=None, seed=20261104, challenge_book
     selected.sort(key=lambda row: row.get("id", ""))
     selected_ids = {row.get("id") for row in selected}
     touched_groups = {row.get("holdout_group") for row in selected}
+    exposed_groups = {row.get("holdout_group") for row in candidates if row.get("id") in EXPOSED_IDS}
+    quarantined_groups = touched_groups | exposed_groups
     held_out_exclusions = [{"id": row.get("id"), "holdout_group": row.get("holdout_group"),
-                            "reason": "duplicate_group_contains_selected_book"}
+                            "reason": "previous_content_exposure" if row.get("holdout_group") in exposed_groups else "duplicate_group_contains_selected_book"}
                            for row in candidates if row.get("id") not in selected_ids
-                           and row.get("holdout_group") in touched_groups]
+                           and row.get("holdout_group") in quarantined_groups]
     selection = {"version": SELECTION_VERSION, "snapshot_id": manifest.get("snapshot_id"),
                  "seed": seed, "requested_limit": limit, "method": method,
                  "book_ids": [row.get("id") for row in selected], "selected": selected,
@@ -189,7 +196,8 @@ def select_books(manifest, limit=None, books=None, seed=20261104, challenge_book
                  "challenge_books": sorted(challenge),
                  "duplicate_groups": duplicate_groups,
                  "held_out_book_ids": [row.get("id") for row in candidates
-                                       if row.get("holdout_group") not in touched_groups],
+                                       if row.get("holdout_group") not in quarantined_groups],
+                 "exposure_ledger": exposure_ledger(selected_ids),
                  "held_out_exclusions": held_out_exclusions,
                  "page_count": sum(row.get("image_count", 0) for row in selected),
                  "probability_sample_count": sum(row.get("role") == "probability" for row in selected),
@@ -211,3 +219,50 @@ def save_selection(path, selection):
         return existing
     _atomic_json(path, selection)
     return selection
+
+
+def select_holdout_books(manifest, *, alias_positive=27, alias_zero=13, seed=20261105):
+    """Freeze §8's two-stratum sample using metadata/counts only; perform no reads.
+
+    This constructs a plan, never executes it. Counts are recomputed from the
+    supplied immutable inventory; no unseen prose is returned in the selection.
+    """
+    candidates, excluded, duplicate_groups = _inventory(manifest)
+    exposed_groups = {row.get("holdout_group") for row in candidates if row.get("id") in EXPOSED_IDS}
+    representatives = {}
+    for row in candidates:
+        if row.get("holdout_group") in exposed_groups or not row.get("recorded_story_text"):
+            continue
+        representatives.setdefault(row.get("holdout_group"), row)
+    strata = {"alias_positive": [], "alias_zero": []}
+    for row in representatives.values():
+        strata["alias_positive" if row.get("explicit_alias_count") else "alias_zero"].append(row)
+    rng = random.Random(seed)
+    selected = []
+    for label, count in (("alias_positive", alias_positive), ("alias_zero", alias_zero)):
+        population = sorted(strata[label], key=lambda row: row.get("id", ""))
+        if type(count) is not int or count < 0 or count > len(population):
+            from text_content.evaluation import EvaluationErrors
+            raise ValueError(EvaluationErrors.holdout_allocation)
+        for row in rng.sample(population, count):
+            selected.append({**row, "reporting_stratum": row.get("stratum"), "stratum": label,
+                             "role": "probability", "inclusion_probability": count / len(population),
+                             "population_stratum_size": len(population)})
+    selected.sort(key=lambda row: row.get("id", ""))
+    selected_ids = {row["id"] for row in selected}
+    result = {"version": "pilot-holdout-alias-strata-v1", "snapshot_id": manifest.get("snapshot_id"),
+              "method": "stratified_random_alias_presence", "seed": seed,
+              "book_ids": sorted(selected_ids), "selected": selected,
+              "eligible_counts": {label: len(rows) for label, rows in strata.items()},
+              "inventory": list(representatives.values()), "excluded": excluded,
+              "duplicate_groups": duplicate_groups, "exposure_ledger": exposure_ledger(),
+              "remaining_unexposed_book_ids": sorted(row["id"] for row in representatives.values() if row["id"] not in selected_ids),
+              "exposed_after_unblinding": exposure_ledger(selected_ids),
+              "page_count": sum(row.get("image_count", 0) for row in selected),
+              "challenge_count": 0, "probability_sample_count": len(selected)}
+    books = {book.get("id"): book for book in manifest.get("books", [])}
+    for row in selected:
+        book = books.get(row["id"], {})
+        row["reference_hash"] = hashlib.sha256(json.dumps({"pages": [{"id": page.get("id"), "reference": page.get("reference")} for page in book.get("pages", [])], "reference": book.get("reference", {})}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    result["selection_id"] = hashlib.sha256(json.dumps(result, sort_keys=True).encode()).hexdigest()
+    return result

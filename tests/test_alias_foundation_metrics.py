@@ -296,7 +296,7 @@ def test_reports_expose_additive_version_conventions_and_metric_qualifications(t
     actual = prediction([{"name": "Whale", "aliases": ["little whale"]}])
     result = write_reports({"books": [book]}, {"books": {"book": actual}}, tmp_path)
     assert result["protocol_version"] == "pilot-metrics-v2"
-    assert result["scorer_version"].endswith("alias-foundation-v1")
+    assert result["scorer_version"] == "pilot-metrics-v3+alias-foundation-v1+bibliography-v2"
     assert result["alias_foundation"]["convention_version"]
     for name in ("C1", "C2", "C6"):
         assert result["alias_foundation"]["conventions"][name]["status"] == "provisional"

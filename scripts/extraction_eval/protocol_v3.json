@@ -1,0 +1,87 @@
+{
+  "version": "pilot-metrics-v3-field-aware-2026-11-05",
+  "normalization_version": "pilot-normalization-v1",
+  "primary_endpoint": "book_macro_ocr_token_multiset_f1",
+  "interpretation": "pilot reference-agreement; independently verified annotations reported separately",
+  "eligibility": [
+    "observed",
+    "verified"
+  ],
+  "excluded_reference_statuses": [
+    "missing",
+    "ambiguous",
+    "not_annotated"
+  ],
+  "normalization": "NFKC, casefold, collapsed whitespace, canonical apostrophes; Unicode alphanumeric words with internal apostrophes; retain diacritics, numbers and repetitions; no stemming or stopword removal",
+  "uncertainty": "Explicit [?], [illegible], [unreadable] and [unclear] markers consume tokens and never match, including marker versus marker",
+  "empty_story_reference": "wordless agreement subgroup; agreed_wordless/disputed_wordless; failed and unrun retained in intended denominator; no token F1",
+  "empty_nonstory_reference": "not_annotated because importer deliberately blanked these pages",
+  "failed_text_prediction": "zero recovered content in intended denominator",
+  "unrun_text_prediction": "zero recovered content in intended denominator and incomplete run flag",
+  "ocr_matching_unit": "photographed page or spread, never adjacent-page pooling",
+  "ordered_secondary_metrics": "CER retains normalized punctuation; WER uses normalized tokens; insertions may exceed 1.0",
+  "character_matching": "book-local one-to-one exact normalized variant overlap; one leading article/possessive determiner stripped symmetrically; ambiguous assignments report conservative/optimistic bounds",
+  "incomplete_credits": "known-credit recall; no strict set accuracy or precision against incomplete author/illustrator lists",
+  "themes": "not_annotated; never score default false values",
+  "bootstrap_unit": "book",
+  "bootstrap_repeats": 2000,
+  "bootstrap_seed": 20261104,
+  "sampling": "stratified inverse-probability population estimates; challenges reported separately",
+  "reviewed_equivalences": {},
+  "excluded_metadata_only_titles": [
+    "I Love Christmas",
+    "Invisible Isabelle",
+    "Seasons",
+    "Ten Wriggly, Wiggly Caterpillars",
+    "Things You Should Know about Bugs"
+  ],
+  "convention_version": "pipeline-conventions-v1",
+  "conventions": {
+    "C1": {
+      "version": "all-print-regions-v1",
+      "status": "provisional",
+      "rule": "Archive all book-authored lettering; analyse narrative, informational and in-scene illustration lettering separately from paratext."
+    },
+    "C2": {
+      "version": "main-content-v1",
+      "status": "provisional",
+      "rule": "Main narrative, informational and wordless narrative pages participate; bibliographic matter, decorative endpapers, glossary/index and supplemental activities do not."
+    },
+    "C3": {
+      "version": "names-descriptions-v1",
+      "status": "accepted",
+      "rule": "Names and descriptive referring expressions are lexical aliases; pronouns, body parts and editorial labels are separately retained evidence."
+    },
+    "C3_population": {
+      "version": "categorized-entities-v1",
+      "status": "provisional",
+      "rule": "Retain individuals, collectives, generic groups and discourse roles in separate strata with unresolved identity."
+    },
+    "C4": {
+      "version": "scoped-publication-v1",
+      "status": "accepted",
+      "rule": "Keep photographed-edition imprint and publishing house distinct; preserve first-publication and edition events and source evidence."
+    },
+    "C5": {
+      "version": "pilot-claims-v1",
+      "status": "provisional",
+      "rule": "Existing positives and consistency metrics support exploratory pilot-only claims; dev20 aliases-only recall has ten positives and is a smoke test."
+    },
+    "C6": {
+      "version": "credited-retellers-v1",
+      "status": "provisional",
+      "rule": "Analytical authors include explicitly credited authors and retellers; retain all original contributor roles."
+    },
+    "C7": {
+      "version": "evidenced-short-category-collective-v1",
+      "status": "provisional",
+      "rule": "Also emit bare/short contiguous printed referring heads with full phrase and owner evidence; label embedded_short_form when no independent occurrence exists. Category words must be printed and refer in context. Collective occurrences stay with the collective; membership alone never attaches them to an individual. Ambiguous heads retain alternative candidates."
+    }
+  },
+  "comparison_version": "field-aware-paired-v1",
+  "publication_equivalence_version": "publication-equivalence-v1",
+  "primary_alias_endpoint": "alias_recall",
+  "alias_recall_interpretation": "Dev20 6/10 equivalence-normalized aliases across five books is a smoke test; strict raw surface credit 4/10 is separate.",
+  "comparison_bootstrap_repeats": 10000,
+  "comparison_bootstrap_seed": 20261105
+}

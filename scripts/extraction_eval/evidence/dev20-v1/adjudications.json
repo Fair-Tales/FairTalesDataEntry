@@ -1,0 +1,179 @@
+{
+  "convention_version": "pipeline-conventions-v1",
+  "records": [
+    {
+      "book_id": "how_the_grinch_stole_christmas",
+      "corrected_value": "MERRY MERRY",
+      "evidence": {
+        "accepted_tokens": 2,
+        "adjudication_source": "planning/wordless_adjudication_2026-11-05.md",
+        "cached_response_hash": "ba311de739be88619ba99174dee03ed7002a0b3f20828525d6960bdf62994565",
+        "image_sha256": "d82672dbba80bfc8eac77823d876161a0ecbe4da362414004c8a0df458c7eb17",
+        "method": "photographic_review_reported_in_supplied_adjudication",
+        "region_kind": "illustration_lettering"
+      },
+      "field": "text",
+      "original_value_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "page_id": "how_the_grinch_stole_christmas_46",
+      "reason": "Printed text omitted from pilot transcription",
+      "reviewer": "Identity unavailable in supplied adjudication report",
+      "status": "verified",
+      "verdict": "reference_wrong"
+    },
+    {
+      "book_id": "it's_christmas",
+      "corrected_value": "Wheee!",
+      "evidence": {
+        "accepted_tokens": 1,
+        "adjudication_source": "planning/wordless_adjudication_2026-11-05.md",
+        "cached_response_hash": "f81d1215d0f6709be96521e30bee7535b2ac26f3564af06292b1ffbcfc12a84c",
+        "image_sha256": "24b28ba1278a65022fb962a198a2025d025a828df955fc2320b283fe597ba28c",
+        "method": "photographic_review_reported_in_supplied_adjudication",
+        "region_kind": "illustration_lettering"
+      },
+      "field": "text",
+      "original_value_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "page_id": "it's_christmas_30",
+      "reason": "Printed text omitted from pilot transcription",
+      "reviewer": "Identity unavailable in supplied adjudication report",
+      "status": "verified",
+      "verdict": "reference_wrong"
+    },
+    {
+      "book_id": "norman_the_slug_with_the_silly_shell",
+      "corrected_value": "But he was falling",
+      "evidence": {
+        "accepted_tokens": 4,
+        "adjudication_source": "planning/wordless_adjudication_2026-11-05.md",
+        "cached_response_hash": "b118199e282e500b3a7c6ee86ea1e8c40bb19beb3042dd4775aa10d6ba3bc0cb",
+        "image_sha256": "3437c8bc9eea8ccdec9b3bba32abe64d7a3b5a8611ddd1b60a38fe2899187f88",
+        "method": "photographic_review_reported_in_supplied_adjudication",
+        "region_kind": "narrative"
+      },
+      "field": "text",
+      "original_value_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "page_id": "norman_the_slug_with_the_silly_shell_24",
+      "reason": "Printed text omitted from pilot transcription",
+      "reviewer": "Identity unavailable in supplied adjudication report",
+      "status": "verified",
+      "verdict": "reference_wrong"
+    },
+    {
+      "book_id": "santa_is_coming_to_devon",
+      "corrected_value": "Finally, when the snow had died down and the clouds parted, Santa discovered exactly where they were, stuck right at the very top of Exeter Cathedral! \"Everybody, PULL!\"",
+      "evidence": {
+        "accepted_tokens": 28,
+        "adjudication_source": "planning/wordless_adjudication_2026-11-05.md",
+        "cached_response_hash": "704ed22c32f7a8c60fc9652c2507c675f6b03ac3daae7dfe2bd3dca2d5554d77",
+        "image_sha256": "237824a65911849b42b49747a3bb18169465c06118241af3960add3a9f1bc5d0",
+        "method": "photographic_review_reported_in_supplied_adjudication",
+        "quotation_discrepancy": "The supplied shortened table omits \"Everybody, PULL!\"; the full cached accepted 28-token output is retained under the supplied 80-token verdict.",
+        "region_kind": "narrative"
+      },
+      "field": "text",
+      "original_value_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "page_id": "santa_is_coming_to_devon_24",
+      "reason": "Printed text omitted from pilot transcription",
+      "reviewer": "Identity unavailable in supplied adjudication report",
+      "status": "verified",
+      "verdict": "reference_wrong"
+    },
+    {
+      "book_id": "the_book_with_no_pictures",
+      "corrected_value": "Oh, is that so?",
+      "evidence": {
+        "accepted_tokens": 4,
+        "adjudication_source": "planning/wordless_adjudication_2026-11-05.md",
+        "cached_response_hash": "16f418cde59766787e22ddf2fb85143a80d0f140767937c32ac1781567cbb0cf",
+        "image_sha256": "f8807e343d4cf2ad1eca4736a167215611827898a974c1350ca738d1dc7a85f6",
+        "method": "photographic_review_reported_in_supplied_adjudication",
+        "region_kind": "narrative"
+      },
+      "field": "text",
+      "original_value_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "page_id": "the_book_with_no_pictures_33",
+      "reason": "Printed text omitted from pilot transcription",
+      "reviewer": "Identity unavailable in supplied adjudication report",
+      "status": "verified",
+      "verdict": "reference_wrong"
+    },
+    {
+      "book_id": "the_runaway_pea",
+      "corrected_value": "\"Owwww,\" cried the pea, \"my bottom's on fire,\"",
+      "evidence": {
+        "accepted_tokens": 8,
+        "adjudication_source": "planning/wordless_adjudication_2026-11-05.md",
+        "cached_response_hash": "8c26a66957cdf9dfa67709a1b625dd7e39af76445cd452cef4c47a58f8d4a694",
+        "image_sha256": "5f30f671eccf609cb9fe8537214ff976b63d0d4b5052dd6ae60e8f784fb2f96e",
+        "method": "photographic_review_reported_in_supplied_adjudication",
+        "region_kind": "narrative"
+      },
+      "field": "text",
+      "original_value_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "page_id": "the_runaway_pea_20",
+      "reason": "Printed text omitted from pilot transcription",
+      "reviewer": "Identity unavailable in supplied adjudication report",
+      "status": "verified",
+      "verdict": "reference_wrong"
+    },
+    {
+      "book_id": "wiggling_worms_at_work",
+      "corrected_value": "In a few minutes the cocoon slips off the worm's head, just as the ring would slip off your finger. The ends of the cocoon close. Inside the cocoon the eggs are fertilized.",
+      "evidence": {
+        "accepted_tokens": 33,
+        "adjudication_source": "planning/wordless_adjudication_2026-11-05.md",
+        "cached_response_hash": "f067cc01f9167d12f27d15cad24dc02aef34129a23b217fbc1b8921d8490db73",
+        "image_sha256": "216a46d4e94649529e053e715aad703f805313d2f41da88f9da760f233e70f3a",
+        "method": "photographic_review_reported_in_supplied_adjudication",
+        "region_kind": "narrative"
+      },
+      "field": "text",
+      "original_value_hash": "c92861a387217c84ffe1f40a5dfee4bc3bbe7cb826a8976ba3142d6da73fb673",
+      "page_id": "wiggling_worms_at_work_29",
+      "reason": "Printed text omitted from pilot transcription",
+      "reviewer": "Identity unavailable in supplied adjudication report",
+      "status": "verified",
+      "verdict": "reference_wrong"
+    },
+    {
+      "book_id": "the_book_with_no_pictures",
+      "corrected_value": false,
+      "evidence": {
+        "adjudication_source": "planning/pipeline_improvement_design_2026-11-05.md#7",
+        "image_sha256": "2799b9e051da36c4de2cd83c47f506b2744ac5a6d8b9ca3cecc861c5e1d6ccd9",
+        "independent_image_count": 1,
+        "method": "reported_chris_photographic_review",
+        "page_type": "blank",
+        "transferred_from": null
+      },
+      "field": "contains_story",
+      "original_value_hash": "f60395d016ba05405277ac8219ca055d778b80008f5fa0978e37c9b4b41a4232",
+      "page_id": "the_book_with_no_pictures_6",
+      "reason": "Genuinely blank page received the imported all-pages story default",
+      "reviewer": "Chris",
+      "status": "verified",
+      "verdict": "reference_wrong"
+    },
+    {
+      "book_id": "the_book_with_no_pictures",
+      "corrected_value": false,
+      "evidence": {
+        "adjudication_source": "planning/pipeline_improvement_design_2026-11-05.md#7",
+        "image_sha256": "2799b9e051da36c4de2cd83c47f506b2744ac5a6d8b9ca3cecc861c5e1d6ccd9",
+        "independent_image_count": 1,
+        "method": "identical_image_hash_transfer_from_page_6",
+        "page_type": "blank",
+        "transferred_from": "the_book_with_no_pictures_6"
+      },
+      "field": "contains_story",
+      "original_value_hash": "f60395d016ba05405277ac8219ca055d778b80008f5fa0978e37c9b4b41a4232",
+      "page_id": "the_book_with_no_pictures_24",
+      "reason": "Genuinely blank page received the imported all-pages story default",
+      "reviewer": "Chris",
+      "status": "verified",
+      "verdict": "reference_wrong"
+    }
+  ],
+  "schema_version": "adjudication-v2",
+  "snapshot_id": "b0993f0b5142b15676275a52d10d64a5a1635437fb0551ae82bb9493b18e1fe4"
+}

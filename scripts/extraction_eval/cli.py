@@ -50,7 +50,7 @@ def build_parser():
     score.add_argument("--snapshot", type=Path, required=True)
     score.add_argument("--run", type=Path, required=True)
     score.add_argument("--out", type=Path, help="Defaults to run/reports")
-    score.add_argument("--protocol", type=Path, default=PACKAGE / "protocol.json")
+    score.add_argument("--protocol", type=Path, default=PACKAGE / "protocol_v3.json")
     score.add_argument("--adjudications", type=Path, help="Reviewed versioned reference overlay; original scores retained")
     score.add_argument("--equivalences", type=Path, help="Reviewed versioned name/imprint equivalences")
     score.add_argument("--compare-run", type=Path, help="Paired book-cluster comparison against another local run")
@@ -125,15 +125,14 @@ def _snapshot(args):
     return 2 if manifest.get("source_consistent") is False else 0
 
 
-def _live_anthropic(secrets_path):
-    # Documented standalone scripts exception (#129), same secrets loader as
-    # data_cleanup. Never create Firestore or S3 clients in the extract command.
+def _live_anthropic(secrets_path, config):
+    # Credentials are read only after confirmation; client creation is shared.
     from scripts.data_cleanup import load_secrets
-    import anthropic
-    secret = load_secrets(secrets_path).get("ANTHROPIC_API_KEY")
-    if not secret:
-        raise ValueError("ANTHROPIC_API_KEY is absent")
-    return anthropic.Anthropic(api_key=secret, max_retries=0)
+    from utilities import get_anthropic_client
+    from .billing import validate_billing
+    validate_billing(config)
+    key = validate_billing(config, load_secrets(secrets_path))
+    return get_anthropic_client(api_key=key, max_retries=0)
 
 
 def _extract(args):
@@ -180,16 +179,22 @@ def _extract(args):
             if answer != "AFFIRMATIVE":
                 print("No paid calls authorized.")
                 return 1
+            from .billing import validate_billing
+            validate_billing(config)
         frozen = freeze_run(args.out, manifest, selection, config, args.replicate, args.max_spend_usd, args.monthly_cap_usd, ledger_path)
         ledger = Ledger(ledger_path, frozen.get("run_id"), args.max_spend_usd, args.monthly_cap_usd)
         client = None
         try:
             ledger.recover()
             if args.execute:
-                client = _live_anthropic(args.secrets)
+                client = _live_anthropic(args.secrets, config)
             gateway = Gateway(client, ledger, config, replicate=args.replicate, dry_run=not args.execute)
             result = run_extract(args.snapshot, manifest, selection, args.out, gateway, config, dry_run=not args.execute)
             atomic_json(args.out / "calls.json", ledger.rows())
+            if result.get('stop_reason'):
+                from text_content.pipeline_runtime import RUN_STOPPED
+                reason, detail = result.get('stop_reason')
+                print(RUN_STOPPED.format(reason=reason, detail=detail), file=sys.stderr)
             if not args.execute:
                 print("Estimate after local processing and response-cache replay:")
                 print(json.dumps(estimate(manifest, selection, result), indent=2))
@@ -207,6 +212,9 @@ def _score(args):
     protocol = read_json(args.protocol)
     # Read/freeze overlays before even opening predictions.
     overlay = read_json(args.adjudications) if args.adjudications else None
+    if args.compare_run and overlay and overlay.get("schema_version") != "adjudication-v2":
+        from text_content.evaluation import EvaluationErrors
+        raise ValueError(EvaluationErrors.comparison_overlay_required)
     if args.equivalences:
         from .scoring import apply_equivalences
         table = read_json(args.equivalences)
@@ -214,7 +222,7 @@ def _score(args):
     adjudicated = None
     if overlay:
         from .scoring import apply_overlay
-        adjudicated = apply_overlay(manifest, overlay)
+        adjudicated = apply_overlay(manifest, overlay, convention_version=protocol.get("convention_version"))
     run_config = read_json(args.run / "run.json")
     from .store import digest
     contract = run_config.get("contract", {})
@@ -236,11 +244,12 @@ def _score(args):
     manifest["_snapshot_dir"] = str(args.snapshot.resolve())
     out = args.out or args.run / "reports"
     summary = write_reports(manifest, predictions, out, protocol=protocol, selection=selection, calls=calls)
+    corrected_summary = None
     if adjudicated:
         adjudicated["_snapshot_dir"] = manifest.get("_snapshot_dir")
-        write_reports(adjudicated, predictions, out / "adjudicated", protocol=protocol, selection=selection, calls=calls)
+        corrected_summary = write_reports(adjudicated, predictions, out / "adjudicated", protocol=protocol, selection=selection, calls=calls)
     if args.compare_run:
-        from .statistics import paired_comparison
+        from .comparison import compare_metrics
         candidate_run = read_json(args.compare_run / "run.json")
         other_contract = candidate_run.get("contract", {})
         if other_contract.get("snapshot_hash") != contract.get("snapshot_hash"):
@@ -253,8 +262,12 @@ def _score(args):
         if other_selection != other_contract.get("selection"):
             raise ValueError("Comparison selection differs from its frozen run contract")
         comparison_summary = write_reports(manifest, candidate, out / "comparison_candidate", protocol=protocol, selection=other_selection)
-        # reporting emits comparison-ready per-book rows under book_scores.
-        comparison = paired_comparison(summary.get("book_scores", []), comparison_summary.get("book_scores", []), value="ocr_f1")
+        comparison = {"raw_to_raw": compare_metrics(summary.get("book_scores", []), comparison_summary.get("book_scores", [])),
+                      "corrected_to_corrected": None, "fixed_baseline_measurement_repair": None}
+        if adjudicated is not None and corrected_summary is not None:
+            corrected_candidate = write_reports(adjudicated, candidate, out / "comparison_candidate" / "adjudicated", protocol=protocol, selection=other_selection)
+            comparison["corrected_to_corrected"] = compare_metrics(corrected_summary.get("book_scores", []), corrected_candidate.get("book_scores", []))
+            comparison["fixed_baseline_measurement_repair"] = compare_metrics(summary.get("book_scores", []), corrected_summary.get("book_scores", []), measurement_repair=True)
         atomic_json(out / "comparison.json", comparison)
     print(f"Offline report: {out / 'summary.json'}")
     print(snapshot_audit_description(manifest))

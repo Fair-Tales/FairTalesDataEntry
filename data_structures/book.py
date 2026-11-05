@@ -12,6 +12,10 @@ from .author import Author
 from .illustrator import Illustrator
 from .publisher import Publisher
 from datetime import date, datetime, timezone
+from copy import deepcopy
+from bibliography import (METADATA_SCHEMA_VERSION, PUBLICATION_POLICY_VERSION, PERSISTED_FIELDS, empty_target,
+                           legacy_publication)
+from text_content.publication import PublicationText
 
 
 class ValidationLeaseStatus(Enum):
@@ -100,13 +104,18 @@ def _isbn_year(published_date):
     return None
 
 def form_content(self):
-    st.header(BookForm.header)
-
     # Capture the entity id once, before any field is written back, so every
     # widget key below stays constant for this render even as fields change on
     # submit. Keying per document_id prevents one book's values bleeding into
     # the next (see #80).
     key_suffix = self.document_id
+    st.header(BookForm.header)
+    later_evidence = getattr(self, 'metadata_reconciliation', None)
+    if isinstance(later_evidence, dict):
+        st.caption(PublicationText.reconciliation_suggestion.format(
+            title=later_evidence.get('title') or PublicationText.unknown,
+            authors=', '.join(later_evidence.get('authors') or []) or PublicationText.unknown,
+            illustrators=', '.join(later_evidence.get('illustrators') or []) or PublicationText.unknown))
 
     isbn_meta = st.session_state.get('isbn_metadata', {})
     isbn_used = False
@@ -129,7 +138,7 @@ def form_content(self):
         st.caption(BookForm.title_readonly_caption)
 
     isbn_year = _isbn_year(isbn_meta.get('published_date', ''))
-    if self.published != -1:
+    if type(self.published) is int and 1900 <= self.published <= date.today().year:
         published_index = self.published - 1900
     elif isbn_year is not None:
         published_index = isbn_year - 1900
@@ -212,6 +221,33 @@ def form_content(self):
     if st.session_state.get('ai_prefilled_publisher'):
         st.caption(BookForm.ai_prefill_publisher_caption)
 
+    st.caption(PublicationText.legacy_caption)
+    publication_inputs = {}
+    for target_name, labels in (
+        ('photographed_edition', {'imprint': PublicationText.imprint,
+                                  'publishing_house': PublicationText.publishing_house,
+                                  'year': PublicationText.edition_year}),
+        ('first_publication', {'imprint': PublicationText.first_publisher,
+                               'publishing_house': PublicationText.first_house,
+                               'year': PublicationText.first_year}),
+    ):
+        target = getattr(self, target_name) or empty_target(first=target_name == 'first_publication')
+        values = {}
+        for field, label in labels.items():
+            values[field] = st.text_input(label, value=str(target.get(field) or ''),
+                key=f"book_form_{target_name}_{field}_{key_suffix}").strip()
+        if target_name == 'first_publication':
+            scopes = list(PublicationText.scope_labels)
+            scope = target.get('scope', 'unknown')
+            values['scope'] = st.selectbox(PublicationText.first_scope, options=scopes,
+                index=scopes.index(scope) if scope in scopes else 0,
+                format_func=lambda value: PublicationText.scope_labels.get(value, PublicationText.unknown),
+                key=f"book_form_first_publication_scope_{key_suffix}")
+            values['territory'] = st.text_input(PublicationText.first_territory,
+                value=target.get('territory') or '',
+                key=f"book_form_first_publication_territory_{key_suffix}").strip()
+        publication_inputs[target_name] = values
+
     illustrator_options = [None] + list(
         st.session_state['illustrator_dict'].keys()
         )
@@ -263,6 +299,15 @@ def form_content(self):
 
     if submitted:
 
+        for values in publication_inputs.values():
+            if values.get('year') and not values['year'].isdigit():
+                st.warning(PublicationText.invalid_year)
+                return
+        first_input = publication_inputs.get('first_publication', {})
+        if first_input.get('scope') == 'territorial_first' and not first_input.get('territory'):
+            st.warning(PublicationText.territory_required)
+            return
+
         if not _title.strip():
             st.warning(BookForm.title_required)
             return
@@ -280,6 +325,7 @@ def form_content(self):
         self.publisher = _publisher
         self.illustrator = _illustrator
         self.comment = _comment
+        self.apply_publication_form(publication_inputs)
 
         for theme, theme_string in BookForm.theme_options.items():
             setattr(self, theme, theme_string in _themes)
@@ -341,6 +387,9 @@ class Book(DataStructureBase):
         # list; older book documents predate this field and fall back to [].
         'characters': []
     }
+    fields.update({field: None for field in PERSISTED_FIELDS})
+    fields.update(publication_events=[], credits=[], metadata_conflicts=[],
+                  metadata_evidence_payloads=[], metadata_history=[])
     fields.update({
         theme: False
         for theme in BookForm.theme_options.keys()
@@ -359,6 +408,12 @@ class Book(DataStructureBase):
         'comment': 'Comment'
     }
     form_fields.update(BookForm.theme_options)
+    form_fields.update({
+        'imprint': PublicationText.imprint,
+        'publishing_house': PublicationText.publishing_house,
+        'photographed_edition': PublicationText.edition_year,
+        'first_publication': PublicationText.first_scope,
+    })
 
     ref_fields = ['author', 'illustrator', 'publisher']  # Reference fields will display document ID for human consumption
 
@@ -368,7 +423,50 @@ class Book(DataStructureBase):
 
     @property
     def document_id(self):
-        return self.title.lower().replace(" ", "_")
+        return getattr(self, '_migration_document_id', None) or self.title.lower().replace(" ", "_")
+
+    def apply_publication_form(self, inputs):
+        """Retain earlier target values and mark explicit manual corrections."""
+        changed = {}
+        for target_name, values in inputs.items():
+            before = getattr(self, target_name) or empty_target(first=target_name == 'first_publication')
+            after = deepcopy(before)
+            for field, raw in values.items():
+                value = int(raw) if field == 'year' and raw else raw or None
+                if value != before.get(field):
+                    after[field] = value
+                    after.setdefault('manual_overrides', {})[field] = True
+                    if field in {'imprint', 'publishing_house', 'year'}:
+                        # Input alone supplies no quoted source/event evidence.
+                        after[field + '_status'] = 'unresolved'
+            after['publisher'] = after.get('imprint')
+            after['publisher_status'] = after.get('imprint_status', 'unresolved')
+            if after != before:
+                changed[target_name] = after
+        if not changed:
+            return
+        if not self.legacy_publication:
+            self.legacy_publication = legacy_publication(self.to_dict(), record_id=self.document_id)
+        history = deepcopy(self.metadata_history or [])
+        history.append({'source': 'manual_form', 'targets': {
+            key: deepcopy(getattr(self, key)) for key in changed},
+            'recorded_at': datetime.now(timezone.utc)})
+        self.metadata_history = history
+        for target_name, value in changed.items():
+            setattr(self, target_name, value)
+        self.metadata_schema_version = METADATA_SCHEMA_VERSION
+        self.publication_policy_version = PUBLICATION_POLICY_VERSION
+        if not self.metadata_conventions:
+            from conventions import convention_metadata
+            self.metadata_conventions = convention_metadata()
+        edition = self.photographed_edition or empty_target()
+        first = self.first_publication or empty_target(first=True)
+        if self.photographed_edition is None:
+            self.photographed_edition = edition
+        if self.first_publication is None:
+            self.first_publication = first
+        self.imprint, self.publishing_house = edition.get('imprint'), edition.get('publishing_house')
+        self.published_year_scope, self.published_year_territory = first.get('scope'), first.get('territory')
 
     def to_form(self):
         if 'adding_book_entries' in st.session_state and st.session_state['adding_book_entries']:

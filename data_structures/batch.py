@@ -91,6 +91,7 @@ class BatchGroup(BatchEntity):
         'is_registered': False, 'entered_by': None, 'datetime_created': None,
         'last_updated': None, 'batch_id': '', 'ordinal': 0, 'positions': [],
         'metadata': {}, 'metadata_state': 'pending', 'metadata_error': '',
+        'metadata_failed_response': None,
         'book_id': '', 'job_id': '', 'state': 'review', 'error': '',
     }
     for _name in fields:

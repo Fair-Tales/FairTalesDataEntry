@@ -70,6 +70,8 @@ class _FakeBook:
         self.author = None
         self.publisher = None
         self.illustrator = None
+        self.photographed_edition = None
+        self.first_publication = None
         for theme in BookForm.theme_options:
             setattr(self, theme, False)
 
@@ -85,6 +87,9 @@ class _FakeBook:
     @property
     def document_id(self):
         return self._title.lower().replace(" ", "_")
+
+    def apply_publication_form(self, inputs):
+        self.publication_inputs = inputs
 
 
 class _FakeSt:
@@ -125,6 +130,8 @@ class _FakeSt:
         # The published-year select is wrapped in int(); return a valid year.
         if label == BookForm.published_label:
             return 2000
+        if label == book_mod.PublicationText.first_scope:
+            return 'unknown'
         # Return a non-None sentinel for author/publisher/illustrator so all
         # three are set and the submit reaches the clean navigate branch.
         return f"sentinel::{label}"
