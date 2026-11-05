@@ -4,7 +4,9 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import shlex
 import sqlite3
+import sys
 
 from .store import atomic_json, read_json, run_lock
 
@@ -20,6 +22,12 @@ def build_parser():
     snapshot.add_argument("--books", nargs="+", help="Optional exact book IDs or titles")
     snapshot.add_argument("--secrets", default=".streamlit/secrets.toml", help="Use IAM-enforced read-only credentials")
     snapshot.add_argument("--project", default="sawdataentry")
+    snapshot.add_argument("--audit-source-changes", action="store_true", help="Opt in to re-reading captured source documents to detect changes")
+    snapshot.add_argument("--audit-membership", action="store_true", help="Opt in to re-querying related-document membership")
+    snapshot.add_argument("--audit", action="store_true", help="Enable both optional audits (additional billed reads)")
+    snapshot.add_argument("--estimated-books", type=int, default=195, help="Offline estimate of ALL entered-by books, including books outside --books (default: 195)")
+    snapshot.add_argument("--estimated-documents-per-book", type=int, default=50, help="Offline estimate of captured documents per book (default: 50)")
+    snapshot.add_argument("--read-confirmation-threshold", type=int, default=10000, help="Require AFFIRMATIVE above this estimated read count (default: 10000; not a hard cap)")
 
     extract = commands.add_parser("extract", help="Local predictions only; paid calls require --execute and confirmation")
     extract.add_argument("--snapshot", type=Path, required=True)
@@ -53,19 +61,68 @@ def _load_snapshot(path):
     manifest = read_json(path / "manifest.json")
     if manifest.get("complete") is not True:
         raise ValueError("Snapshot has not completed")
-    if manifest.get("source_consistent") is not True:
+    consistency = manifest.get("source_consistent")
+    if consistency is False:
         raise ValueError("Snapshot changed during capture; inspect audit and create a new snapshot")
+    if consistency is not True:
+        audits = manifest.get("audits")
+        explicit = isinstance(audits, dict) and all(
+            type(audits.get(name)) is bool for name in ("source_changes", "membership"))
+        if "source_consistent" not in manifest or consistency is not None or not explicit or all(audits.get(name) for name in ("source_changes", "membership")):
+            raise ValueError("Snapshot has missing or invalid source-audit provenance")
     return manifest
 
 
 def _snapshot(args):
-    from .snapshot import create_live_backend, create_snapshot
-    # A completed snapshot resume does not even construct clients.
+    from google.api_core.exceptions import ResourceExhausted
+    from .read_cost import estimate_snapshot_reads
+    from .reporting import snapshot_audit_description
+    from .snapshot import _check_audits, _check_selection, create_live_backend, create_snapshot
+    source_changes = args.audit or args.audit_source_changes
+    membership = args.audit or args.audit_membership
+    if args.read_confirmation_threshold < 0:
+        raise ValueError("--read-confirmation-threshold must be non-negative")
+    # The estimate and authorization precede credentials, clients and reads.
     with run_lock(args.out):
-        backend = None if (args.out / "manifest.json").exists() else create_live_backend(args.secrets, project=args.project)
-        manifest = create_snapshot(args.out, backend, entered_by=args.entered_by, books=args.books)
+        audits = {"source_changes": source_changes, "membership": membership}
+        for name in ("manifest.json", "inventory.json", "inventory-progress.json"):
+            state_path = args.out / name
+            if state_path.exists():
+                state = read_json(state_path)
+                _check_selection(state, args.entered_by, args.books)
+                _check_audits(state, audits)
+                break
+        audit_path = args.out / "audit-progress.json"
+        if audit_path.exists():
+            _check_audits(read_json(audit_path), audits)
+        plan = estimate_snapshot_reads(args.out, books=args.books,
+            estimated_books=args.estimated_books,
+            estimated_documents_per_book=args.estimated_documents_per_book,
+            audit_source_changes=source_changes, audit_membership=membership)
+        print("Estimated Firestore document reads before any service access:")
+        print(json.dumps(plan, indent=2), flush=True)
+        if plan.get("estimated_firestore_reads", 0) > args.read_confirmation_threshold:
+            try:
+                answer = input("Type AFFIRMATIVE to authorize these estimated Firestore reads: ")
+            except EOFError:
+                answer = ""
+            if answer != "AFFIRMATIVE":
+                print("No Firestore reads authorized.")
+                return 1
+        try:
+            backend = None if (args.out / "manifest.json").exists() else create_live_backend(args.secrets, project=args.project)
+            manifest = create_snapshot(args.out, backend, entered_by=args.entered_by, books=args.books,
+                                       audit_source_changes=source_changes, audit_membership=membership)
+        except ResourceExhausted:
+            print(f"Project {args.project!r}'s Firestore quota is exhausted. Stopped immediately; no quota retries. "
+                  "The daily free-tier quota resets around midnight US/Pacific. "
+                  f"Captured progress is preserved in {args.out}. After the quota resets, resume by rerunning "
+                  f"the same snapshot command and options with --out {shlex.quote(str(args.out))}; "
+                  "saved documents will be reused.", file=sys.stderr)
+            return 2
     print(f"Snapshot {manifest.get('snapshot_id')}: {len(manifest.get('books', []))} books; {len(manifest.get('excluded_books', []))} exclusions; {len(manifest.get('audit', []))} audit findings")
-    return 0 if manifest.get("source_consistent") else 2
+    print(snapshot_audit_description(manifest))
+    return 2 if manifest.get("source_consistent") is False else 0
 
 
 def _live_anthropic(secrets_path):
@@ -145,7 +202,7 @@ def _extract(args):
 
 
 def _score(args):
-    from .reporting import write_reports
+    from .reporting import snapshot_audit_description, write_reports
     manifest = _load_snapshot(args.snapshot)
     protocol = read_json(args.protocol)
     # Read/freeze overlays before even opening predictions.
@@ -200,6 +257,7 @@ def _score(args):
         comparison = paired_comparison(summary.get("book_scores", []), comparison_summary.get("book_scores", []), value="ocr_f1")
         atomic_json(out / "comparison.json", comparison)
     print(f"Offline report: {out / 'summary.json'}")
+    print(snapshot_audit_description(manifest))
     return 0
 
 
