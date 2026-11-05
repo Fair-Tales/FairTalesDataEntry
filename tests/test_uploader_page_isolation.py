@@ -285,3 +285,25 @@ def test_extraction_failure_and_isolation_failure_share_the_same_log_helper(
     # The page is still registered blank, same as any other failed page.
     pages_store = firestore.store.get("pages", {})
     assert pages_store["the_gruffalo_1"]["text"] == ""
+
+
+def test_failed_isbn_lookup_warns_after_page_processing(wired_session, monkeypatch):
+    from utilities import AI_SETTINGS_DEFAULTS
+    from text_content import BookPhotoEntry
+
+    monkeypatch.setattr(uploader, 'get_anthropic_client', lambda: object())
+    monkeypatch.setattr(uploader, 'get_ai_settings', lambda: dict(AI_SETTINGS_DEFAULTS))
+    monkeypatch.setattr(uploader, '_inline_ai_batch', lambda *args: ('ISBN 9780306406157', []))
+    warnings = []
+    monkeypatch.setattr(uploader.st, 'warning', warnings.append)
+
+    def failed_lookup(isbn, *, outcome_sink):
+        assert isbn == '9780306406157'
+        outcome_sink({'status': 'failed', 'reason': 'http_error', 'http_status': 429})
+        return None
+
+    monkeypatch.setattr(uploader, 'lookup_isbn', failed_lookup)
+    uploader._process_photo_batch([b'photo'], ['p1'], _FakeFs())
+
+    assert warnings == [BookPhotoEntry.isbn_lookup_failed]
+    assert wired_session['_upload_pipeline_done'] is True

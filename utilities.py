@@ -8,15 +8,19 @@ import anthropic
 import base64
 import difflib
 import hmac
+import inspect
 import json
 import logging
+import random
 import re
+import time
 import urllib.request
 import urllib.error
 from urllib.parse import urlencode
 import bcrypt
 import smtplib
 from email.mime.text import MIMEText
+from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone, timedelta
 
 from ai_pricing import usage_cost
@@ -1951,37 +1955,121 @@ def strip_leading_article(name):
     return stripped or name.strip()
 
 
-def lookup_isbn(isbn, *, response_sink=None):
-    """
-    Look up book metadata via the Google Books API (free, no auth required).
-    Returns dict with keys title, authors, publisher, published_date,
-    or None on any failure. Optional ``response_sink(raw_data)`` receives the
-    decoded provider response before metadata parsing, allowing standalone
-    evaluation to preserve the full lookup response alongside parsed values.
-    """
-    if not isbn:
-        return None
-    url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}&maxResults=1"
+ISBN_LOOKUP_MAX_ATTEMPTS = 3
+ISBN_LOOKUP_TIMEOUT = 5.0
+# Keep retries interactive: at most three extra seconds beyond the old timeout.
+ISBN_LOOKUP_TOTAL_TIMEOUT = 8.0
+
+
+def _isbn_retry_delay(headers, attempt):
+    """Return exponential backoff with jitter, respecting Retry-After if valid."""
+    delay = 0.25 * (2 ** (attempt - 1)) + random.uniform(0, 0.25)
+    retry_after = headers.get('Retry-After') if headers is not None else None
+    if retry_after is None:
+        return delay
     try:
-        with urllib.request.urlopen(url, timeout=5) as resp:
-            data = json.loads(resp.read())
-        if response_sink is not None:
-            response_sink(data)
-        if data.get('totalItems', 0) == 0:
-            return None
-        info = data['items'][0]['volumeInfo']
-        return {
-            'title': info.get('title', ''),
-            'authors': info.get('authors', []),
-            'publisher': info.get('publisher', ''),
-            'published_date': info.get('publishedDate', ''),
-        }
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError,
-            ValueError, KeyError, IndexError) as exc:
-        # Narrowed from a broad ``except`` (#127): a network/timeout failure or an
-        # unexpected response shape degrades to "no metadata", but is logged.
-        logger.warning("lookup_isbn failed for %r: %s", isbn, exc)
-        return None
+        provider_delay = int(retry_after)
+    except (TypeError, ValueError):
+        try:
+            retry_at = parsedate_to_datetime(retry_after)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            provider_delay = (retry_at - datetime.now(timezone.utc)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            return delay
+    return max(delay, provider_delay)
+
+
+def lookup_isbn(isbn, *, response_sink=None, outcome_sink=None):
+    """Look up Google Books metadata, optionally using ``google_books_api_key``.
+
+    Keep the existing dict-or-None return contract. ``outcome_sink(outcome)``
+    distinguishes ``found``, provider-confirmed ``not_found``, and ``failed``;
+    failures include a safe reason and, for HTTP errors, the status code.
+    ``response_sink(raw_data)`` receives decoded responses before parsing.
+    Retry only 429, 5xx and timeouts, with bounded backoff and Retry-After.
+    """
+    def finish(status, attempts, *, reason=None, http_status=None, value=None):
+        outcome = {'status': status, 'attempts': attempts}
+        if reason is not None:
+            outcome['reason'] = reason
+        if http_status is not None:
+            outcome['http_status'] = http_status
+        if status == 'failed':
+            # Never log the URL or exception text: either could contain the key.
+            logger.warning("lookup_isbn failed for %r: %s (HTTP %s, attempts %s)",
+                           isbn, reason, http_status, attempts)
+        if outcome_sink is not None:
+            outcome_sink(outcome)
+        return value
+
+    if not isbn:
+        return finish('failed', 0, reason='missing_isbn')
+    query = {'q': f'isbn:{isbn}', 'maxResults': 1}
+    try:
+        api_key = st.secrets.get('google_books_api_key')
+    except FileNotFoundError:
+        # Streamlit also raises this subclass when no secrets file exists.
+        api_key = None
+    if api_key:
+        query['key'] = api_key
+    url = 'https://www.googleapis.com/books/v1/volumes?' + urlencode(query)
+    deadline = time.monotonic() + ISBN_LOOKUP_TOTAL_TIMEOUT
+    attempts = 0
+    reason = 'timeout'
+    http_status = None
+    while attempts < ISBN_LOOKUP_MAX_ATTEMPTS:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        attempts += 1
+        headers = None
+        http_status = None
+        try:
+            with urllib.request.urlopen(
+                    url, timeout=min(ISBN_LOOKUP_TIMEOUT, remaining)) as resp:
+                data = json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            http_status = exc.code
+            headers = exc.headers
+            exc.close()
+            reason = 'http_error'
+            retryable = http_status == 429 or 500 <= http_status < 600
+        except (urllib.error.URLError, TimeoutError) as exc:
+            reason = ('timeout' if isinstance(exc, TimeoutError)
+                      or isinstance(getattr(exc, 'reason', None), TimeoutError)
+                      else 'network_error')
+            retryable = reason == 'timeout'
+        except (ValueError, UnicodeError):
+            return finish('failed', attempts, reason='invalid_response')
+        else:
+            # Keep callback errors outside provider/parsing exception handlers.
+            if response_sink is not None:
+                response_sink(data)
+            if not isinstance(data, dict):
+                return finish('failed', attempts, reason='invalid_response')
+            if data.get('totalItems') == 0:
+                return finish('not_found', attempts)
+            items = data.get('items')
+            if not isinstance(items, list) or not items or not isinstance(items[0], dict):
+                return finish('failed', attempts, reason='invalid_response')
+            info = items[0].get('volumeInfo')
+            if not isinstance(info, dict):
+                return finish('failed', attempts, reason='invalid_response')
+            return finish('found', attempts, value={
+                'title': info.get('title', ''),
+                'authors': info.get('authors', []),
+                'publisher': info.get('publisher', ''),
+                'published_date': info.get('publishedDate', ''),
+            })
+        if not retryable or attempts >= ISBN_LOOKUP_MAX_ATTEMPTS:
+            break
+        delay = _isbn_retry_delay(headers, attempts)
+        if delay >= deadline - time.monotonic():
+            # A long Retry-After ends this attempt; never retry before it expires.
+            break
+        time.sleep(delay)
+    return finish('failed', attempts, reason=reason, http_status=http_status)
 
 
 def extract_book_metadata(image_bytes, client):
@@ -2205,6 +2293,54 @@ def extract_copyright_metadata(image_bytes, client):
     return {'publisher': publisher, 'published_year': year, 'isbn': isbn, 'raw': raw_text}
 
 
+def apply_isbn_metadata(metadata, *, isbn_lookup=None):
+    """Back-fill metadata from ISBN and retain the lookup outcome for UI/scoring.
+
+    Mutates and returns ``metadata``; callers can retry a failed enrichment
+    without repeating vision extraction. Legacy one-argument injected lookups
+    remain supported, but an unexplained None cannot establish provider absence.
+    """
+    isbn = metadata.get('isbn')
+    outcome = {'status': 'not_attempted', 'attempts': 0}
+    isbn_metadata = None
+    if isbn:
+        lookup = isbn_lookup if isbn_lookup is not None else lookup_isbn
+        try:
+            parameters = inspect.signature(lookup).parameters.values()
+        except (TypeError, ValueError):
+            parameters = ()
+        accepts_outcome = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            or (parameter.name == 'outcome_sink'
+                and parameter.kind != inspect.Parameter.POSITIONAL_ONLY)
+            for parameter in parameters
+        )
+        if accepts_outcome:
+            isbn_metadata = lookup(isbn, outcome_sink=outcome.update)
+        else:
+            isbn_metadata = lookup(isbn)
+        if outcome.get('status') == 'not_attempted':
+            outcome = ({'status': 'found', 'attempts': 1} if isbn_metadata is not None
+                       else {'status': 'failed', 'attempts': 1,
+                             'reason': 'outcome_unavailable'})
+
+    sources = metadata.setdefault('sources', {})
+    # Google Books fills only these fields; illustrators/year remain vision-only.
+    if isbn_metadata:
+        for field in ('title', 'authors', 'publisher'):
+            if not metadata.get(field) and isbn_metadata.get(field):
+                value = isbn_metadata[field]
+                metadata[field] = list(value) if field == 'authors' else value
+                sources[field] = {'source': 'isbn_lookup', 'isbn': isbn}
+    metadata['isbn_metadata'] = isbn_metadata
+    metadata['isbn_lookup'] = outcome
+    metadata['lookup_failed_fields'] = (
+        [field for field in ('title', 'authors', 'publisher') if not metadata.get(field)]
+        if outcome.get('status') == 'failed' else []
+    )
+    return metadata
+
+
 def extract_photo_first_metadata(pages, client, title_page_hint=None,
                                  progress_callback=None, *, isbn_lookup=None):
     """Two-pass, cost-aware metadata extraction for the photo-first flow
@@ -2215,7 +2351,8 @@ def extract_photo_first_metadata(pages, client, title_page_hint=None,
     Pass 2 (extract): Claude Sonnet reads ONLY those one or two pages — the title
     page via ``extract_book_metadata`` and the copyright page via
     ``extract_copyright_metadata`` — and any ISBN found is fed into the Google
-    Books lookup (``lookup_isbn``), the most reliable metadata source.
+    Books lookup (``lookup_isbn``) to back-fill title, authors and publisher
+    only where vision was silent.
 
     Cost profile: one Haiku call-set + up to two Sonnet calls per book.
 
@@ -2232,6 +2369,8 @@ def extract_photo_first_metadata(pages, client, title_page_hint=None,
     Books where the title page was silent — plus:
       - 'isbn'          (str or None)
       - 'isbn_metadata' (Google Books dict or None) for the Add-Book form pre-fill
+      - 'isbn_lookup'   (lookup outcome, distinguishing failure from absence)
+      - 'lookup_failed_fields' (missing fields whose ISBN back-fill failed)
       - 'located'       (the locate-pass result dict)
 
     Anthropic API errors propagate to the caller (mirrors ``extract_book_metadata``).
@@ -2287,29 +2426,11 @@ def extract_photo_first_metadata(pages, client, title_page_hint=None,
         metadata['published_year'] = copyright_meta['published_year']
         sources['published_year'] = {'source': 'copyright_page', 'page_position': copyright_pos}
 
-    # ISBN → Google Books (most reliable source). Use the copyright-page ISBN.
-    isbn = copyright_meta.get('isbn')
-    lookup = isbn_lookup if isbn_lookup is not None else lookup_isbn
-    isbn_metadata = lookup(isbn) if isbn else None
-
-    # Google Books back-fills only where vision was silent. Vision stays primary
-    # for the printed title and for illustrators (which the API rarely returns).
-    if isbn_metadata:
-        if not metadata.get('title') and isbn_metadata.get('title'):
-            metadata['title'] = isbn_metadata['title']
-            sources['title'] = {'source': 'isbn_lookup', 'isbn': isbn}
-        if not metadata.get('authors') and isbn_metadata.get('authors'):
-            metadata['authors'] = list(isbn_metadata['authors'])
-            sources['authors'] = {'source': 'isbn_lookup', 'isbn': isbn}
-        if not metadata.get('publisher') and isbn_metadata.get('publisher'):
-            metadata['publisher'] = isbn_metadata['publisher']
-            sources['publisher'] = {'source': 'isbn_lookup', 'isbn': isbn}
-
-    metadata['isbn'] = isbn
-    metadata['isbn_metadata'] = isbn_metadata
+    # Use the copyright-page ISBN to fill any remaining metadata gaps.
+    metadata['isbn'] = copyright_meta.get('isbn')
     metadata['located'] = located
     metadata['sources'] = sources
-    return metadata
+    return apply_isbn_metadata(metadata, isbn_lookup=isbn_lookup)
 
 
 def locate_cover_pages(pages, client):

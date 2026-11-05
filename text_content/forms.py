@@ -174,6 +174,10 @@ class BookPhotoEntry:
     )
     extract_button = "Read the book and pre-fill details"
     extracting = "Reading the title and copyright pages..."
+    isbn_lookup_failed = (
+        "ISBN enrichment is temporarily unavailable for this book. "
+        "Please review the details read from the photos and fill in any gaps."
+    )
     extract_failed = (
         "Could not read the book automatically ({error}). "
         "You can still enter the details manually."
