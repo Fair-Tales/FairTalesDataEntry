@@ -30,7 +30,7 @@ import logging
 from uuid import uuid4
 
 import streamlit as st
-from google.api_core.exceptions import GoogleAPIError
+from google.api_core.exceptions import GoogleAPIError, AlreadyExists, FailedPrecondition
 
 from utilities import (
     page_layout, check_authentication_status, is_team_or_above, entered_by_username,
@@ -40,7 +40,7 @@ from image_processing import load_page_image
 from data_structures import Book, Page, Character, Alias, EditLog
 from data_structures.book import ValidationLeaseStatus, ValidationLeaseUnavailable
 from page_save_recovery import PageSaveRecovery
-from text_content import Validation, BookForm, CharacterForm
+from text_content import Validation, BookForm, CharacterForm, AliasForm
 
 logger = logging.getLogger(__name__)
 
@@ -554,33 +554,51 @@ def _edit_aliases(book, character_ref):
         return
 
     for alias_doc in alias_docs:
-        alias = Alias(db_object=alias_doc.to_dict())
-        with st.form(f"validation_alias_form_{alias_doc.id}"):
+        alias = Alias.from_snapshot(alias_doc)
+        if alias.entry_status in ('rejected', 'superseded'):
+            continue
+        key_suffix = alias.document_id
+        canonical = alias.effective_canonical()
+        st.caption(AliasForm.canonical_detail.format(
+            canonical=canonical['canonical_form'], source=canonical['canonical_source'],
+            status=alias.entry_status))
+        with st.form(f"validation_alias_form_{key_suffix}"):
             new_name = st.text_input(
                 Validation.alias_name_label, value=alias.name,
-                key=f"validation_alias_name_{alias_doc.id}",
+                key=f"validation_alias_name_{key_suffix}",
+            )
+            override = st.text_input(
+                AliasForm.canonical_override_label,
+                value=alias.canonical_form if alias.canonical_override else '',
+                help=AliasForm.canonical_override_help,
+                key=f"validation_alias_override_{key_suffix}",
             )
             submitted = st.form_submit_button(
                 Validation.save_alias_button,
-                key=f"validation_alias_submit_{alias_doc.id}",
+                key=f"validation_alias_submit_{key_suffix}",
             )
-        if not submitted:
+        if not submitted or not new_name.strip():
             continue
-        new_name = new_name.strip()
-        if not new_name or new_name == alias.name:
-            continue
-        # An alias document id is derived from its name, so a rename is a
-        # create-new + delete-old migration. Guard against colliding with an
-        # existing alias in this book.
-        new_alias = Alias(book=book.title)
-        new_alias.character = character_ref
-        new_alias.name = new_name
-        if firestore.document_exists(collection='aliases', doc_id=new_alias.document_id):
+        original_override = alias.canonical_form if alias.canonical_override else ''
+        try:
+            if new_name != alias.name:
+                _log(book, EditLog.ENTITY_ALIAS, alias.document_id, 'name', alias.name, new_name)
+                if override != original_override:
+                    _log(book, EditLog.ENTITY_ALIAS, alias.document_id,
+                         'canonical_override', original_override, override)
+                alias.create_correction(new_name, canonical_override=override)
+            elif override != original_override:
+                _log(book, EditLog.ENTITY_ALIAS, alias.document_id,
+                     'canonical_override', original_override, override)
+                alias.set_canonical_override(override)
+            else:
+                continue
+        except AlreadyExists:
             st.warning(Validation.alias_exists)
             continue
-        _log(book, EditLog.ENTITY_ALIAS, alias.document_id, 'name', alias.name, new_name)
-        new_alias.register()
-        firestore.delete_document(collection='aliases', doc_id=alias_doc.id)
+        except FailedPrecondition:
+            st.warning(AliasForm.save_conflict)
+            continue
         st.success(Validation.alias_saved)
         st.rerun()
 
@@ -603,13 +621,16 @@ def characters_editor(book):
         Validation.character_select_label, options=names,
         key="validation_character_select",
     )
-    character_ref = character_dict[selected_name]
+    character_ref = character_dict.get(selected_name)
+    if character_ref is None:
+        st.warning(AliasForm.missing_character)
+        return
     char_doc = character_ref.get()
     if not char_doc.exists:
         st.warning(Validation.no_characters)
         return
 
-    character = Character(db_object=char_doc.to_dict())
+    character = Character.from_snapshot(char_doc)
 
     with st.form(f"validation_character_form_{character_ref.id}"):
         new_name = st.text_input(

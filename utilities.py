@@ -1722,6 +1722,7 @@ def detect_book_characters(pages, client, progress_callback=None, model=None):
     confirm.
     """
     from text_content import AIPrompts
+    from alias_schema import recorded_aliases, RecordedSuggestions
 
     pages = list(pages)
     # Single call over the whole book — report a coarse 0 -> 1 so existing
@@ -1753,14 +1754,11 @@ def detect_book_characters(pages, client, progress_callback=None, model=None):
         gender = character.get("gender", "Non-specific")
         if gender not in valid_genders:
             gender = "Non-specific"
-        seen = set()
-        aliases = []
-        for alias in character.get("aliases", []) or []:
-            alias = str(alias).strip()
-            if alias and alias.lower() != name.lower() and alias.lower() not in seen:
-                seen.add(alias.lower())
-                aliases.append(alias)
+        aliases = recorded_aliases(character.get("aliases", []))
         suggestions.append({
+            **character,
+            "raw_alias_entries": character.get("aliases", []),
+            "unresolved_mentions": result.get("unresolved_mentions", []),
             "name": name,
             "gender": gender,
             "human": bool(character.get("human", True)),
@@ -1771,7 +1769,7 @@ def detect_book_characters(pages, client, progress_callback=None, model=None):
 
     if progress_callback is not None:
         progress_callback(1, 1)
-    return suggestions
+    return RecordedSuggestions(suggestions, raw_response=result)
 
 
 # --- #170: auto-run character detection after OCR + on-demand re-run ------
@@ -2997,7 +2995,10 @@ def load_character_dict():
     for character in firestore_wrapper.get_all_documents_stream(collection='characters'):
         # A partial/malformed doc would raise KeyError inside this shared cached
         # loader and break session init for every user (#232). Skip it.
-        name = (character.to_dict() or {}).get('name')
+        record = character.to_dict() or {}
+        if record.get('entry_status') in ('rejected', 'superseded', 'withdrawn'):
+            continue
+        name = record.get('name')
         if not name:
             logger.warning(
                 "load_character_dict: skipping characters/%s with missing/blank name",

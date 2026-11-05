@@ -474,8 +474,7 @@ def _detect_and_create_characters(book, page_objs, client, progress):
         characters_created += 1
 
         for alias_name in suggestion.get("aliases", []) or []:
-            alias_name = (alias_name or "").strip()
-            if not alias_name or alias_name.lower() == name.lower():
+            if not isinstance(alias_name, str) or not alias_name.strip():
                 continue
             alias = Alias(book=book.get_ref())
             alias.character = character_ref

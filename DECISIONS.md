@@ -387,9 +387,9 @@ descriptive forms such as `the brown bear` or `her daughter`. See
     comparison at $57.73 with request reuse. Forty books buys roughly ±7 points on alias
     recall and ±8 on groundedness — coarse, but enough to expose real overfitting.
 
-**Metrics after this decision.** Alias recall (headline), M1 groundedness (93.8% at
-baseline: 97 of 112 aliases verbatim in the pipeline's own text, 8 more after determiner
-stripping, 7 ungrounded), M2 redundancy, M3 referent collision, M4 mention attribution
+**Metrics after this decision.** Alias recall (headline), M1 groundedness (92.9% at
+baseline: 95 of 112 aliases exact in the pipeline's own text, 9 more after determiner
+stripping, 8 ungrounded, under boundary-safe matching), M2 redundancy, M3 referent collision, M4 mention attribution
 (diagnostic only). An empty output is *undefined* groundedness, never perfect
 groundedness. Groundedness carries a known confound: an alias can be ungrounded because
 the text is missing rather than because the alias is wrong.

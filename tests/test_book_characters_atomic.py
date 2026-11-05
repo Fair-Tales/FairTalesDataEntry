@@ -331,6 +331,9 @@ class _CommitBatch:
     def set(self, ref, data, merge=True):
         self.sets.append((ref, data, merge))
 
+    def create(self, ref, data):
+        self.sets.append((ref, data, False))
+
     def update(self, ref, values):
         self.updates.append((ref, values))
 
@@ -381,7 +384,7 @@ def _row(name, aliases, action):
     }
 
 
-def test_commit_surfaces_skipped_aliases_and_uses_arrayunion(session, monkeypatch):
+def test_commit_preserves_cross_character_aliases_and_uses_arrayunion(session, monkeypatch):
     from text_content import EnterText
 
     enter_text = _load_enter_text_defs(monkeypatch)
@@ -394,8 +397,7 @@ def test_commit_surfaces_skipped_aliases_and_uses_arrayunion(session, monkeypatc
     session["current_book"] = book
     session["username"] = "alice"
     session["character_dict"] = {}
-    # Two different characters, each carrying the SAME alias name "Buddy": the
-    # second collides on the book-scoped alias document_id and is dropped.
+    # Same surface under two identities remains two recorded entries.
     session["_detected_characters"] = [{'name': 'Tom'}, {'name': 'Ivy'}]
     rows = [
         _row('Tom', 'Buddy', EnterText.review_action_create),
@@ -405,12 +407,12 @@ def test_commit_surfaces_skipped_aliases_and_uses_arrayunion(session, monkeypatc
     commit_detected_characters(rows)
 
     messages = session["_detected_characters_result"]
-    # The skipped-alias notice is surfaced (was silently dropped before #237).
-    assert any("Buddy" in m and "already" in m for m in messages)
-    assert EnterText.review_skipped_aliases.format(names="Buddy") in messages
-
-    # Both characters created; exactly one "Buddy" alias survived.
-    assert EnterText.review_created.format(characters=2, aliases=1) in messages
+    assert EnterText.review_skipped_aliases.format(names="Buddy") not in messages
+    assert EnterText.review_created.format(characters=2, aliases=2) in messages
+    aliases = [(ref, data) for ref, data, _ in fs.batch.sets if ref.path.startswith('aliases/')]
+    assert len({ref.id for ref, _ in aliases}) == 2
+    assert [data['name'] for _, data in aliases] == ['Buddy', 'Buddy']
+    assert all(data['canonical_form'] == 'buddy' for _, data in aliases)
 
     # The book<->character link is staged as an atomic ArrayUnion, not a
     # whole-list overwrite (#225).
@@ -423,7 +425,7 @@ def test_commit_surfaces_skipped_aliases_and_uses_arrayunion(session, monkeypatc
     assert fs.batch.committed
 
 
-def test_commit_surfaces_preexisting_alias_collision(session, monkeypatch):
+def test_commit_legacy_alias_id_does_not_block_identity_scoped_entry(session, monkeypatch):
     from text_content import EnterText
 
     enter_text = _load_enter_text_defs(monkeypatch)
@@ -443,6 +445,5 @@ def test_commit_surfaces_preexisting_alias_collision(session, monkeypatch):
     commit_detected_characters(rows)
 
     messages = session["_detected_characters_result"]
-    assert EnterText.review_skipped_aliases.format(names="Buddy") in messages
-    # No alias created; the character still is.
-    assert EnterText.review_created.format(characters=1, aliases=0) in messages
+    assert EnterText.review_skipped_aliases.format(names="Buddy") not in messages
+    assert EnterText.review_created.format(characters=1, aliases=1) in messages

@@ -1,3 +1,70 @@
+# Alias canonical backfill (offline first)
+
+`scripts/backfill_alias_canonical.py` implements the additive alias migration in
+the 2026-11-05 pipeline design. It preserves exact `Alias.name` strings, stored
+document IDs, attachments, timestamps and unrelated metadata. Existing manual
+overrides and unknown/stale canonical metadata are preserved and flagged. Only
+missing fields of an absent or consistent derived bundle are filled. Canonical
+forms retain articles and possessives; mention matching is a separate adapter.
+The 1,494 characters remain readable through their existing references and need
+**no migration reads or writes**.
+
+The default is an entirely non-writing dry run. To prepare an offline ledger:
+
+```bash
+.venv/bin/python scripts/backfill_alias_canonical.py --snapshot aliases.json
+```
+
+The local JSON shape is:
+
+```json
+{"aliases": [{"id": "actual_legacy_document_id", "data": {"name": "The brown bear", "book": "books/example", "character": "characters/example_bear"}, "update_time": null}]}
+```
+
+Every invocation prints its read/write budget **before opening the input or
+constructing clients**, then a complete JSON field diff with original raw fields,
+references, timestamps and hashes. Snapshot mode requires no secrets and makes
+zero service calls. It writes no local files; redirect stdout to save its ledger.
+
+The future Firestore path is explicitly selected with `--firestore`. The default
+limit estimates **200 alias reads** and caps them at **201 reads** (one overflow
+sentinel, 0.402% of the 50,000/day allowance), then aborts without writes if more
+than 200 aliases exist. Set `--max-aliases` to a reviewed higher bound if necessary.
+It scans aliases once with no automatic stream retry, never dereferences book or
+character references, and never reads the character/page corpus. Other application
+usage and the account's remaining daily quota are unknown.
+
+Future live execution, after the owner permits live service use:
+
+```bash
+.venv/bin/python scripts/backfill_alias_canonical.py --firestore
+.venv/bin/python scripts/backfill_alias_canonical.py --firestore --execute --checkpoint cleanup_reports/alias_canonical_progress.json
+```
+
+These are two separate invocations and therefore two budgeted scans if both are
+run. An execution invocation already prints its full diff before any write.
+Execution performs at most one atomic conditional write per changed alias
+(at most 200 at the default limit), through `Alias`'s shared Field persistence
+layer; no direct document writes occur in this script. Snapshot `update_time`
+preconditions reject both concurrent raw edits and concurrent human overrides.
+A conflict stops the run; retry by rerunning a fresh, bounded scan. Confirmed
+progress is saved after each write. Completed entries need no write on replay,
+including when an earlier write succeeded but saving its checkpoint failed.
+The raw-count/hash invariants compare the scanned data and proposed projection;
+there is deliberately no second verification scan. Retaining the exact raw inputs
+preserves matching inputs. Ignoring the added projection fields is a lossless
+rollback. There are no model or S3 calls and no inference cost.
+
+The frozen mention/grounding regression fixture at
+`tests/fixtures/alias_dev20_predictions.json` is an exact, unmodified copy of
+the cached dev20 prediction artifact at
+`/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/predictions.json`.
+Both files are 384,458 bytes with SHA-256
+`7976646dec39ab8798684894d0db64a3cf2e30affdd4e185ec6e4a2e807199cf`.
+The fixture retains full raw predictions and recorded source-path references;
+tests read only the repository fixture and never follow those paths or depend
+on the temporary source remaining available. No inference was rerun to make it.
+
 # scripts/data_cleanup.py — junk-data audit + guarded delete (issue #120)
 
 A standalone CLI to find and (after manual inspection) delete junk / test /

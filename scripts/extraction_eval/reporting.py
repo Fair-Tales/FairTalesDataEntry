@@ -10,6 +10,8 @@ import os
 import tempfile
 from pathlib import Path
 
+from text_content.alias_metrics import AliasMetrics
+
 from .scoring import aggregate, score_book
 from .runner import metadata_with_lookup_outcome
 
@@ -132,6 +134,9 @@ def write_reports(manifest, predictions, out, protocol=None, selection=None, cal
                                                         if call.get("state") not in {"completed", "settled", "failed"})})
     summary["book_scores"] = [{"id": score["id"], "reference_hash": score["reference_hash"],
                                "ocr_f1": score["ocr"]["f1"], "role": score.get("role", "descriptive"),
+                               "alias_recall": score["characters"]["alias_recall"],
+                               "alias_grounding": {key: score["alias_foundation"]["M1"].get(key) for key in
+                                                   ("aliases", "exact", "determiner_stripped", "grounded", "lexical_grounding")},
                                "stratum": score.get("stratum", "all"),
                                "inclusion_probability": score.get("inclusion_probability", 1.0)} for score in scores]
     _atomic_text(output / "summary.json", json.dumps(summary, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
@@ -148,6 +153,7 @@ def write_reports(manifest, predictions, out, protocol=None, selection=None, cal
         book_rows.append({"book_id": book_id, "title": book.get("title"), "role": score.get("role", "descriptive"),
                           "pages": len(score["pages"]), "ocr_f1": score["ocr"]["f1"], "ocr": score["ocr"],
                           "wordless": score["wordless"], "metadata": score["metadata"], "characters": score["characters"],
+                          "alias_foundation": score["alias_foundation"],
                           "reference_hash": score["reference_hash"], "cost_usd": book_cost})
         parts = [f'<section><h2>{html.escape(str(book.get("title", book_id)))}</h2>',
                  f'<p>Book: {html.escape(str(book_id))}; settled cost: ${book_cost:.4f}</p>',
@@ -177,7 +183,7 @@ def write_reports(manifest, predictions, out, protocol=None, selection=None, cal
                           f'<pre>{html.escape(str(actual.get("error") or ""))}</pre></article>'])
         parts.append("</section>")
         sections.append("\n".join(parts))
-    _csv(output / "books.csv", book_rows, ["book_id", "title", "role", "pages", "ocr_f1", "ocr", "wordless", "metadata", "characters", "reference_hash", "cost_usd"])
+    _csv(output / "books.csv", book_rows, ["book_id", "title", "role", "pages", "ocr_f1", "ocr", "wordless", "metadata", "characters", "reference_hash", "cost_usd", "alias_foundation"])
     _csv(output / "pages.csv", page_rows, ["book_id", "page_id", "page_number", "reference_status", "prediction_status", "subgroup", "f1", "cer", "wer", "reference_text", "predicted_text", "ocr", "story", "error"])
     call_fields = sorted({key for call in calls for key in call}) or ["key", "run_id", "state", "reserved_usd", "cost_usd", "label", "error"]
     _csv(output / "calls.csv", calls, call_fields)
@@ -191,6 +197,7 @@ def write_reports(manifest, predictions, out, protocol=None, selection=None, cal
                 '<p>Imported OCR, cleaning and some metadata are AI-derived. These results measure agreement, not independently verified accuracy. '
                 'Wordless agreement has a separate denominator. Disputed wordless pages require human adjudication. '
                 'Failed or unrun eligible text recovers zero tokens; incomplete work remains visible.</p>'
+                f'<p>{html.escape(AliasMetrics.report_intro)}</p>'
                 f'<p><strong>{html.escape(snapshot_audit_description(manifest))}</strong></p>'
                 f'<details open><summary>Run summary and denominators</summary><pre>{_pretty(summary)}</pre></details>'
                 + "\n".join(sections) + '</body></html>')

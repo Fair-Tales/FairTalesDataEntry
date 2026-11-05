@@ -13,6 +13,9 @@ import json
 from copy import deepcopy
 from collections import Counter, defaultdict
 
+from text_content.alias_metrics import AliasMetrics
+
+from .alias_metrics import aggregate_alias_foundation, score_alias_foundation
 from .normalization import (UNCERTAINTY, character_similarity, edit_distance,
                             normalize_name, normalize_text, token_counts, tokenize)
 from .statistics import bootstrap_books
@@ -299,8 +302,11 @@ def _entities(value, equivalences=None):
             aliases = [aliases]
         raw = [item.get("name", "")] + [alias.get("name", "") if isinstance(alias, dict) else alias for alias in aliases]
         normalized = {_equivalent(name, equivalences, character=True) for name in raw if isinstance(name, str) and name.strip()}
+        explicit_aliases = {_equivalent(name, equivalences, character=True) for name in raw[1:]
+                            if isinstance(name, str) and name.strip()}
         entities.append({"id": str(item.get("id", i)), "name": item.get("name", ""),
                          "variants": sorted(normalized), "raw_variants": raw,
+                         "explicit_aliases": sorted(explicit_aliases),
                          "visual_only": bool(item.get("visual_only", False))})
     return entities
 
@@ -368,10 +374,19 @@ def score_characters(matches):
     ref_variants = sum(len(ref["variants"]) for ref in refs)
     pred_variants = sum(len(pred["variants"]) for pred in preds)
     upper = min(upper, ref_variants, pred_variants)
+    known_aliases = sum(len(ref.get("explicit_aliases", [])) for ref in refs)
+    recovered_aliases = sum(len(set(refs[r].get("explicit_aliases", [])) & set(preds[p]["variants"]))
+                            for r, p in matches.get("matches", []))
     return {**matches, "entities": _prf(matches.get("matched_lower", 0), len(refs), len(preds)),
             "entities_upper": _prf(matches.get("matched_upper", 0), len(refs), len(preds)),
             "variants": _prf(lower, ref_variants, pred_variants),
             "variants_upper_bound": _prf(upper, ref_variants, pred_variants),
+            "alias_recall": {"label": AliasMetrics.recall_label, "matched": recovered_aliases,
+                             "reference": known_aliases, "recall": _ratio(recovered_aliases, known_aliases)},
+            "reference_alias_precision_diagnostic": {"label": AliasMetrics.precision_label,
+                                                     "value": _ratio(lower, pred_variants),
+                                                     "legacy_metric": "variants.precision",
+                                                     "reason": AliasMetrics.precision_reason},
             "visual_only_reference": sum(ref["visual_only"] for ref in refs),
             "visual_only_matched": sum(refs[r]["visual_only"] for r, _ in matches.get("matches", [])),
             "precision_qualification": "Agreement with possibly incomplete character/alias annotations; extras require review."
@@ -439,6 +454,7 @@ def score_book(book, prediction=None, protocol=None):
                                      "isbn_lookup": metadata_value.get("isbn_lookup"),
                                      "lookup_failed_fields": sorted(failed_fields)},
             "characters": score_characters(character_matches),
+            "alias_foundation": score_alias_foundation(book, prediction),
             "themes": {"status": reference.get("themes", {}).get("status", "not_annotated"), "scored": False}}
 
 
@@ -480,6 +496,17 @@ def aggregate(scores, protocol=None):
                        "incomplete_annotation_books": sum(not book["characters"]["complete_reference"] for book in books if book["characters"]["eligible"]),
                        "visual_only_reference": sum(book["characters"]["visual_only_reference"] for book in books),
                        "visual_only_matched": sum(book["characters"]["visual_only_matched"] for book in books)})
+    alias_records = [book["characters"]["alias_recall"] for book in books if book["characters"]["eligible"]]
+    alias_reference = sum(record["reference"] for record in alias_records)
+    alias_matched = sum(record["matched"] for record in alias_records)
+    alias_values = [record["recall"] for record in alias_records if record["recall"] is not None]
+    characters["alias_recall"] = {"label": AliasMetrics.recall_label, "matched": alias_matched,
+                                   "reference": alias_reference, "recall": _ratio(alias_matched, alias_reference),
+                                   "book_macro_recall": _ratio(sum(alias_values), len(alias_values)),
+                                   "eligible_books": len(alias_values)}
+    characters["reference_alias_precision_diagnostic"] = {
+        "label": AliasMetrics.precision_label, "value": characters["variants"]["precision"],
+        "legacy_metric": "variants.precision", "reason": AliasMetrics.precision_reason}
     sampling_records = [{"id": book["id"], "value": book["ocr"].get("f1"),
                          "role": book.get("role", "descriptive"), "stratum": book.get("stratum", "all"),
                          "inclusion_probability": book.get("inclusion_probability", 1.0)}
@@ -494,6 +521,7 @@ def aggregate(scores, protocol=None):
                            or any(record.get("prediction_status") == "lookup_failed"
                                   for record in book.get("metadata", {}).values())]
     return {"label": "pilot reference-agreement", "protocol_version": protocol.get("version", "pilot-metrics-v2"),
+            "scorer_version": "pilot-metrics-v2+alias-foundation-v1",
             "books": len(books), "pages": len(pages), "incomplete": incomplete_stages > 0,
             "ocr": {"book_macro_f1": _ratio(sum(book_values), len(book_values)), "book_denominator": len(book_values),
                     "token_micro": _ocr_totals(ocr), "intended_text_pages": sum(page["scored"] for page in ocr),
@@ -507,6 +535,7 @@ def aggregate(scores, protocol=None):
                                            "book_denominator": len(verified_book_values), "token_micro": _ocr_totals(verified)}},
             "wordless": {**_wordless(ocr), "books": [book["id"] for book in books if book["wordless"]["intended_pages"]]},
             "story": _story_metrics(dict(story_counts)), "metadata": metadata, "characters": characters,
+            "alias_foundation": aggregate_alias_foundation(books),
             "metadata_lookup_failures": {"affected_books": len(lookup_failed_books),
                                          "book_ids": lookup_failed_books,
                                          "excluded_fields": sum(record.get("exclusion") == "lookup_failed"

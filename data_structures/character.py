@@ -1,7 +1,9 @@
 import streamlit as st
 from datetime import datetime, timezone
 from text_content import CharacterForm
+from text_content.character_identity import CharacterIdentityText
 from utilities import load_character_dict, clear_entity_form_state
+from google.api_core.exceptions import FailedPrecondition
 from .base_structure import DataStructureBase, Field
 
 
@@ -11,6 +13,21 @@ class Character(DataStructureBase):
         'is_registered': False,
         'book': None,
         'name': "",
+        'storage_id': "",
+        'entity_id': "",
+        'entity_kind': "unclassified",
+        'identity_evidence': [],
+        'member_of': [],
+        'former_ids': [],
+        'unresolved_identity_alternatives': [],
+        'name_is_label': False,
+        'mentions': [],
+        'editorial_labels': [],
+        'raw_alias_entries': [],
+        'detection_audit': [],
+        'unresolved_mentions': [],
+        'name_history': [],
+        'entry_status': "unverified",
         'gender': "",
         'ethnicity': "",
         'disability': "",
@@ -42,24 +59,66 @@ class Character(DataStructureBase):
         super().__init__(collection='characters', db_object=db_object)
         if db_object is None:
             self.book = book
+        else:
+            stored_id = self.storage_id or self._document_id_for(self.name)
+            # Derive legacy identity without writes or a mass migration.
+            self._adopt_fields({'storage_id': stored_id,
+                                'entity_id': self.entity_id or f'characters/{stored_id}'})
+
+    @classmethod
+    def from_snapshot(cls, snapshot):
+        payload = snapshot.to_dict()
+        if payload is None:
+            raise ValueError(CharacterIdentityText.absent_snapshot)
+        return cls(db_object={**payload, 'storage_id': snapshot.id,
+                              '_update_time': getattr(snapshot, 'update_time', None),
+                              'is_registered': True})
+
+    def _prepare_registration(self):
+        stored_id = self.storage_id or self.document_id
+        self._adopt_fields({'storage_id': stored_id,
+                            'entity_id': self.entity_id or f'characters/{stored_id}'})
+
+    def register(self, *, create_only=True):
+        if not self.is_registered:
+            self._prepare_registration()
+        return super().register(create_only=True)
+
+    def register_batched(self, batch, *, create_only=True):
+        if not self.is_registered:
+            self._prepare_registration()
+        return super().register_batched(batch, create_only=True)
+
+    def _assign_field_bundle(self, field, value):
+        if not self.__dict__.get('is_registered', False):
+            return False
+        if field in ('storage_id', 'entity_id') and value != getattr(self, field):
+            raise ValueError(CharacterIdentityText.immutable_identity)
+        if field == 'name' and value != self.name:
+            self.rename(value)
+            return True
+        return False
+
+    def _validate_bundle_update(self, updates):
+        """The shared conditional writer must enforce the descriptor invariant."""
+        for field in ('storage_id', 'entity_id'):
+            if field in updates and updates.get(field) != getattr(self, field):
+                raise ValueError(CharacterIdentityText.immutable_identity)
 
     def _document_id_for(self, name):
-        """Compute the document id this character would have for ``name``.
+        """Legacy/new-entry ID formula; registered identities never rename.
 
-        ``document_id`` is ``{book_id}_{name}``, so a rename changes the id;
-        editing code uses this to test for a target-id collision (and to find
-        the old id) without mutating ``self.name``.
-
-        ``self.book`` is a ``DocumentReference`` whose ``.id`` is available
-        locally, so use it directly rather than ``.get().id``, which makes a
-        Firestore round-trip on every access of this hot-path property (mirrors
-        the #128 fix in page.py; audit item 8).
+        Reference IDs are available locally, so computing this value requires no
+        document reads. Legacy string and missing references remain readable.
         """
-        return f"{self.book.id}_{name.replace(' ', '_').lower()}"
+        book_id = getattr(self.book, 'id', None)
+        if book_id is None and isinstance(self.book, str):
+            book_id = self.book.rsplit('/', 1)[-1]
+        return f"{book_id or ''}_{name.replace(' ', '_').lower()}"
 
     @property
     def document_id(self):
-        return self._document_id_for(self.name)
+        return self.storage_id or self._document_id_for(self.name)
 
     def _render_fields(self, key_suffix):
         """Render the character form widgets and return the typed name.
@@ -67,10 +126,8 @@ class Character(DataStructureBase):
         The non-identifying fields (gender/ethnicity/disability/protagonist/
         human/plural) are assigned to ``self`` so the write-through ``Field``
         descriptors persist edits immediately for a registered character. The
-        **name** is deliberately returned as a local rather than written back:
-        because ``document_id`` is derived from the name, writing it through
-        would point the per-field update at a *new* document and orphan the old
-        one. Callers decide how to apply a name change (create new vs migrate).
+        **name** is returned as a local so it is changed only on submit. A
+        registered rename retains its stable identity and archives the old name.
         """
         name = st.text_input(
             CharacterForm.name_label, value=self.name,
@@ -193,7 +250,7 @@ class Character(DataStructureBase):
 
         Re-uses the same widgets as ``to_form``. Edits to the non-name fields
         write through to Firestore immediately via the ``Field`` descriptors.
-        On submit, a changed name triggers a safe rename migration (see
+        On submit, a changed name triggers a lossless name update (see
         ``rename``); an unchanged name needs no further work because the other
         fields have already been persisted by the write-through.
         """
@@ -217,9 +274,7 @@ class Character(DataStructureBase):
                 # more to do but close the edit form.
                 pass
             elif self._document_id_for(new_name) == self.document_id:
-                # Name differs only in case/whitespace, so the document id is
-                # unchanged — no migration needed; a plain write-through updates
-                # the stored name on the same document.
+                # The descriptor archives the prior form even for case edits.
                 self.name = new_name
             elif st.session_state.firestore.document_exists(
                 collection='characters',
@@ -228,91 +283,57 @@ class Character(DataStructureBase):
                 st.warning(CharacterForm.rename_exists)
                 return
             else:
-                # True rename: the document id changes, so migrate safely.
+                # Keep the stable reference and archive the prior display name.
                 self.rename(new_name)
             st.session_state.pop('_editing_character_id', None)
             st.session_state['now_entering'] = 'manage'
             st.rerun()
 
     def rename(self, new_name):
-        """Migrate this character to ``new_name`` (and hence a new document id).
+        """Retain storage/analytical identity and archive every prior display name.
 
-        ``document_id`` is ``{book_id}_{name}``, so a naive write-through would
-        create a new document and orphan the old one — along with its aliases
-        (whose ``character`` reference points at the old doc) and the book's
-        ``characters`` ref-list entry. This recreates the character under the
-        new id, repoints its aliases, swaps the book's characters-list entry,
-        updates the session lookup dicts and finally deletes the old document.
+        A rename no longer recreates/deletes the character or rewrites alias
+        attachments. The immutable stored reference remains valid for all callers.
         """
-        firestore = st.session_state['firestore']
-        old_ref = self.get_ref()
+        if not isinstance(new_name, str) or not new_name.strip():
+            raise ValueError(CharacterIdentityText.nonempty_name)
+        if new_name == self.name:
+            return
+        ref = self.get_ref()
+        snapshot = ref.get()
+        current = snapshot.to_dict() or {}
+        if current.get('name') != self.name:
+            raise FailedPrecondition(CharacterIdentityText.concurrent_change)
+        history = current.get('name_history')
+        if history is None:
+            history = []
+        if not isinstance(history, list):
+            raise ValueError(CharacterIdentityText.invalid_history)
         old_name = self.name
-
-        # Set the new name without triggering the per-field write-through: that
-        # would target the not-yet-existing new document with `.update()` (which
-        # fails on a missing doc). Suppress it and do a full `.set()` instead.
-        self.reading_from_db = True
-        self.name = new_name
-        self.last_updated = datetime.now(timezone.utc)
-        self.reading_from_db = False
-
-        new_ref = self.get_ref()
-        # Create the new document (full save) under the new id.
-        self.save_to_db()
-
-        # Repoint every alias from the old character reference to the new one.
-        # An alias's own document id is book+alias-name based, so it does not
-        # change here — only its `character` field.
-        for alias_doc in firestore.query_stream(
-            collection='aliases', field='character', op='==', value=old_ref
-        ):
-            firestore.update_field(
-                collection='aliases',
-                document=alias_doc.id,
-                field='character',
-                value=new_ref,
-            )
-
-        # Swap the entry in the current book's characters list (remove old ref,
-        # add new); each is persisted with an atomic ArrayRemove/ArrayUnion so a
-        # concurrent cast edit on the same book is not clobbered (#225).
-        current_book = st.session_state.get('current_book')
-        if current_book is not None:
-            current_book.remove_character(old_ref)
-            current_book.add_character(new_ref)
-
-        # Keep the book-scoped lookup in sync.
+        changes = {'name': new_name, 'name_history': [*history, old_name],
+                   'storage_id': self.document_id, 'entity_id': self.entity_id,
+                   'last_updated': datetime.now(timezone.utc)}
+        self.update_fields_conditionally(changes, expected_update_time=snapshot.update_time)
         book_dict = st.session_state.get('book_character_dict', {})
         book_dict.pop(old_name, None)
-        book_dict[new_name] = new_ref
-
-        # Update the global lookup: only drop the old key if it still points at
-        # this character (a different book may hold a same-named character).
+        book_dict[new_name] = ref
         global_dict = st.session_state.get('character_dict', {})
-        existing = global_dict.get(old_name)
-        if existing is not None and existing.path == old_ref.path:
+        previous = global_dict.get(old_name)
+        if previous is not None and previous.path == ref.path:
             global_dict.pop(old_name, None)
-        global_dict[new_name] = new_ref
-
-        # Finally remove the old document and invalidate the shared cache.
-        firestore.delete_document(collection='characters', doc_id=old_ref.id)
+        global_dict[new_name] = ref
         load_character_dict.clear()
 
     def delete(self):
-        """Delete this character, its aliases, and unlink it from its book.
-
-        Deletes every alias whose ``character`` reference points at this
-        character, removes the character from the current book's character
-        list, prunes the session lookup dicts, then deletes the character
-        document itself.
-        """
+        """Retire this character and its attachments, retaining the archive."""
         firestore = st.session_state['firestore']
         character_ref = self.get_ref()
 
         for alias_doc in firestore.query_stream(
             collection='aliases', field='character', op='==', value=character_ref
         ):
-            firestore.delete_document(collection='aliases', doc_id=alias_doc.id)
+            from .alias import Alias
+            Alias.from_snapshot(alias_doc).delete()
 
         current_book = st.session_state.get('current_book')
         if current_book is not None:
@@ -326,4 +347,7 @@ class Character(DataStructureBase):
         if existing is not None and existing.path == character_ref.path:
             global_dict.pop(self.name, None)
 
-        firestore.delete_document(collection='characters', doc_id=self.document_id)
+        snapshot = character_ref.get()
+        self.update_fields_conditionally(
+            {'entry_status': 'rejected'}, expected_update_time=snapshot.update_time)
+        load_character_dict.clear()

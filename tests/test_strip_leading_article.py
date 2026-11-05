@@ -1,10 +1,7 @@
-"""Tests for the alias article-stripping hotfix (utilities.strip_leading_article).
+"""Historical stripping helper and lossless reviewed-entry compatibility.
 
-Auto-detected aliases (and manually-typed ones) sometimes carry a leading
-article — "the Butterfly", "a Rabbit". These are stripped so the stored alias is
-"Butterfly" / "Rabbit". Only a *leading* article followed by whitespace is
-removed, so real names that merely START with those letters ("Theodore",
-"Anna", "Andrew") are never truncated. Pure helper — no Streamlit, no network.
+The helper remains for legacy callers; recorded aliases now preserve articles
+and possessives. Operational mention matching is tested in test_alias_pipeline.
 """
 
 from pathlib import Path
@@ -76,12 +73,11 @@ def test_non_string_is_returned_unchanged():
 
 
 def test_review_form_suggestions_are_alias_normalised():
-    """Regression lock: the character-detection review form must DISPLAY aliases
-    the way they'll be SAVED (leading article stripped), not just strip silently
-    on save. pages/enter_text.py runs Streamlit page code at import so it can't
+    """The character-detection review form must display aliases as saved.
+    pages/enter_text.py runs Streamlit page code at import so it can't
     be imported here; assert instead that _filter_existing_characters — which
     both detection paths (live re-run and precomputed auto-detect) route through
-    before the review form — normalises each kept suggestion's aliases via
+    before the review form — preserves each kept suggestion's aliases via
     _parse_aliases.
     """
     src = (

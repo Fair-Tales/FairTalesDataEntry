@@ -517,8 +517,8 @@ class EnterText:
         "exists for this book: {names}."
     )
     review_unresolved = (
-        "Could not merge these because their target was not created: {names}. "
-        "They were not added — please re-run detection or add them manually."
+        "Unresolved character identities or attachments: {names}. "
+        "Original suggestions and review decisions are retained in the audit."
     )
 
     # --- Image view / manual correction dialog ---
@@ -616,7 +616,8 @@ class EnterText:
     review_human_label = "Is human?"
     review_protagonist_label = "Is protagonist?"
     review_plural_label = "Is plural?"
-    review_aliases_label = "Aliases (comma-separated)"
+    review_aliases_label = "Alias surface"
+    review_extra_aliases_label = "Additional aliases (one per line)"
     review_action_label = "Action"
     back_to_text_button = "Back to text"
     cancel_button = "Cancel"
@@ -791,6 +792,13 @@ class AliasForm:
     # --- to_form() widget labels (data_structures/alias.py) ---
     select_character_label = "Select character"
     alias_label = "Alias"
+    canonical_label = "Canonical form"
+    canonical_override_label = "Canonical override (optional)"
+    canonical_override_help = "Leave blank for the derived form. A saved override survives surface edits; clear it to reset."
+    canonical_detail = "Canonical: {canonical} ({source}); status: {status}"
+    missing_character = "The recorded character is missing. Choose an attachment explicitly."
+    name_required = "Enter a nonempty alias surface."
+    save_conflict = "This alias changed during review. Reload and review the latest record before saving."
     save_button = "Save alias"
 
 
@@ -799,9 +807,8 @@ class ManageCharacters:
     header = "Manage characters and aliases"
     intro = """
         Below are the characters you have recorded for this book. You can edit a
-        character's details, delete a character — which also deletes all of its
-        aliases — or delete an individual alias. Deletions are permanent and
-        cannot be undone.
+        character's details, retire a character and its active aliases, or retire
+        an individual alias. Recorded wording and history remain in the archive.
     """
     no_characters = "No characters have been added to this book yet."
     aliases_label = "Aliases:"
@@ -809,27 +816,25 @@ class ManageCharacters:
     manage_button = "Manage characters"
     manage_help = """
         View the characters recorded for this book, edit their details, and
-        delete characters or their aliases.
+        retire characters or their aliases.
     """
     edit_character_button = "Edit character"
     cancel_edit_button = "Cancel editing"
-    delete_character_button = "Delete character"
-    delete_alias_button = "Delete"
+    delete_character_button = "Retire character"
+    delete_alias_button = "Retire alias"
     done_button = "Done"
-    delete_character_dialog_title = "Delete character?"
+    delete_character_dialog_title = "Retire character?"
     delete_character_warning = (
-        "Are you sure you want to delete '{name}'? This will also delete all of "
-        "this character's aliases. This action cannot be undone."
+        "Retire '{name}' and its aliases from active use? Recorded wording and history are retained."
     )
-    delete_alias_dialog_title = "Delete alias?"
+    delete_alias_dialog_title = "Retire alias?"
     delete_alias_warning = (
-        "Are you sure you want to delete the alias '{name}'? This action cannot "
-        "be undone."
+        "Retire '{name}' from active matching? The recorded surface and its history are retained."
     )
-    confirm_delete_button = "Yes, delete"
+    confirm_delete_button = "Yes, retire"
     cancel_button = "Cancel"
-    character_deleted = "Character deleted."
-    alias_deleted = "Alias deleted."
+    character_deleted = "Character retired; its recorded data is retained."
+    alias_deleted = "Alias retired; its recorded surface is retained."
 
 
 class UserForm:

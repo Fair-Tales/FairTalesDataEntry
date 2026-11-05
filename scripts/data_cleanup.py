@@ -416,6 +416,20 @@ PERSON_REF_FIELD = {
 }
 
 
+def build_firestore_client(secrets: dict, *, project: str = "sawdataentry"):
+    """Shared standalone credential recipe, without S3 or Streamlit setup."""
+    from google.cloud import firestore
+    from google.oauth2 import service_account
+
+    firestore_key = secrets.get("firestore_key")
+    if not firestore_key:
+        from text_content.backfill_alias import AliasBackfillText
+        raise KeyError(AliasBackfillText.missing_key)
+    key_info = json.loads(firestore_key) if isinstance(firestore_key, str) else firestore_key
+    creds = service_account.Credentials.from_service_account_info(key_info)
+    return firestore.Client(credentials=creds, project=project)
+
+
 class FirestoreS3Backend(CleanupBackend):
     """Live backend: real ``firestore.Client`` + ``s3fs.S3FileSystem``.
 
@@ -424,19 +438,9 @@ class FirestoreS3Backend(CleanupBackend):
     """
 
     def __init__(self, secrets: dict, *, project: str = "sawdataentry"):
-        # Lazy, narrow imports.
-        import json as _json
-
-        from google.cloud import firestore
-        from google.oauth2 import service_account
         import s3fs
 
-        firestore_key = secrets.get("firestore_key")
-        if not firestore_key:
-            raise KeyError("secrets is missing required 'firestore_key'")
-        key_info = _json.loads(firestore_key) if isinstance(firestore_key, str) else firestore_key
-        creds = service_account.Credentials.from_service_account_info(key_info)
-        self._db = firestore.Client(credentials=creds, project=project)
+        self._db = build_firestore_client(secrets, project=project)
 
         for required in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
             if required not in secrets:

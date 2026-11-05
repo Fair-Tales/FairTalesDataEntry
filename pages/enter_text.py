@@ -20,6 +20,8 @@ from utilities import (
     CHARACTER_AUTODETECT_SOURCE_AUTO, CHARACTER_AUTODETECT_SOURCE_MANUAL,
 )
 from data_structures import Page, Character, Alias, ExtractionErrorLog
+from alias_schema import effective_canonical, recorded_aliases
+from data_structures.alias_review import AliasReviewAudit
 from image_processing import make_display_copy, apply_manual_correction, load_page_image
 from pages.uploader import extract_page_info, PageExtractionError
 from text_content import EnterText, ManageCharacters, AliasForm, CharacterForm
@@ -776,16 +778,25 @@ def manage_characters_entry(element):
             character_doc = character_snaps.get(character_ref.path)
             if character_doc is None or not character_doc.exists:
                 continue
+            if (character_doc.to_dict() or {}).get('entry_status') == 'rejected':
+                continue
             with element.expander(name):
                 aliases = aliases_by_character.get(character_ref.path, [])
                 st.write(ManageCharacters.aliases_label)
                 if not aliases:
                     st.caption(ManageCharacters.no_aliases)
                 for alias_doc in aliases:
-                    alias_data = alias_doc.to_dict()
+                    alias_data = {**alias_doc.to_dict(), 'storage_id': alias_doc.id,
+                                  '_update_time': getattr(alias_doc, 'update_time', None)}
+                    if alias_data.get('entry_status') in ('rejected', 'superseded'):
+                        continue
                     alias_name = alias_data.get('name', '')
                     alias_col, button_col = st.columns([3, 1])
                     alias_col.write(alias_name)
+                    canonical = effective_canonical(alias_data)
+                    alias_col.caption(AliasForm.canonical_detail.format(
+                        canonical=canonical['canonical_form'], source=canonical['canonical_source'],
+                        status=alias_data.get('entry_status', 'unverified')))
                     if button_col.button(
                         ManageCharacters.delete_alias_button,
                         key=f"delete_alias_{alias_doc.id}",
@@ -795,7 +806,7 @@ def manage_characters_entry(element):
                     # Inline edit form: reconstruct the character from its stored
                     # document so edits write through (and a rename migrates) via
                     # Character.edit_form.
-                    character = Character(db_object=character_doc.to_dict())
+                    character = Character.from_snapshot(character_doc)
                     with st.form(f"edit_character_{character_ref.id}"):
                         character.edit_form()
                     st.button(
@@ -816,7 +827,8 @@ def manage_characters_entry(element):
                     ManageCharacters.delete_character_button,
                     key=f"delete_character_{character_ref.id}",
                 ):
-                    confirm_delete_character(character_doc.to_dict(), name)
+                    confirm_delete_character({**character_doc.to_dict(), 'storage_id': character_doc.id,
+                                              '_update_time': getattr(character_doc, 'update_time', None)}, name)
 
     element.button(ManageCharacters.done_button, width="stretch", on_click=adding_text, key="enter_text_manage_done_button")
 
@@ -840,14 +852,13 @@ def _filter_existing_characters(suggestions, *, book=None):
         for name in book.get_character_dict()
     }
     kept = [s for s in suggestions if s['name'].lower() not in existing]
-    # Normalise each kept suggestion's aliases the SAME way commit_detected_
-    # characters will (strip a leading article, drop blanks/dupes and the
-    # character's own name), so the review form shows EXACTLY what gets saved —
-    # e.g. "the Butterfly" displays as "Butterfly" rather than only being
-    # stripped silently on save. Both detection paths (live re-run and the
-    # precomputed auto-detect) route through here before the review form.
+    # Keep the emitted ledger before edits/rejections and preserve structured
+    # surfaces (a comma within an alias is not a list separator).
+    st.session_state['_detected_alias_audit'] = [dict(s) for s in suggestions]
+    st.session_state['_detected_raw_response'] = getattr(suggestions, 'raw_response', None)
+    st.session_state['_detected_alias_audit_book_id'] = getattr(book, 'document_id', None)
     for s in kept:
-        s['aliases'] = _parse_aliases(", ".join(s.get('aliases', [])), s.get('name') or '')
+        s['aliases'] = _parse_aliases(s.get('aliases', []), s.get('name') or '')
     skipped_names = [s['name'] for s in suggestions if s['name'].lower() in existing]
     st.session_state['_detected_existing_skipped'] = skipped_names
     return kept, skipped_names
@@ -902,22 +913,13 @@ def run_character_detection():
     return True
 
 
-def _parse_aliases(text, exclude_name):
-    """Split a comma-separated alias string, dropping blanks, duplicates and
-    any value equal to the character's own name.
+def _parse_aliases(value, exclude_name=None):
+    """Lossless structured rows; legacy comma strings remain accepted.
 
-    Each alias has a leading article ("the"/"a"/"an") stripped (hotfix) so an
-    auto-detected alias like "the Butterfly" is stored as "Butterfly"; dedup and
-    the exclude-name check run on the stripped value so "the Butterfly" and
-    "Butterfly" collapse together."""
-    aliases = []
-    seen = set()
-    for part in (text or "").split(','):
-        alias = strip_leading_article(part.strip())
-        if alias and alias.lower() != exclude_name.lower() and alias.lower() not in seen:
-            seen.add(alias.lower())
-            aliases.append(alias)
-    return aliases
+    ``exclude_name`` is retained for caller compatibility, but a recorded form
+    equal to the name remains an archival alias. Grouping happens downstream.
+    """
+    return recorded_aliases(value)
 
 
 def commit_detected_characters(rows, *, book=None, suggestions=None):
@@ -931,16 +933,15 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
     book = book if book is not None else st.session_state['current_book']
     if suggestions is None:
         suggestions = st.session_state['_detected_characters']
-    original_names = [s['name'] for s in suggestions]
     merge_prefix = EnterText.review_action_merge.split('{', 1)[0]
 
-    # Rows the user wants to create, keyed by their original (AI) name so that
-    # 'Merge into' actions can find their target.
+    # Preserve suggestion indices: equal display names do not establish identity.
     create_rows = {}
-    for original_name, row in zip(original_names, rows):
+    for suggestion_index, (source, row) in enumerate(zip(suggestions, rows)):
         if row['action'] == EnterText.review_action_create and row['name'].strip():
             row['_aliases'] = _parse_aliases(row['aliases'], row['name'].strip())
-            create_rows[original_name] = row
+            row['_source'] = source
+            create_rows[suggestion_index] = row
 
     # Existing characters already defined for this book are also valid merge
     # targets, resolved book-scoped (by reference) to avoid same-name collisions
@@ -957,12 +958,15 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
             continue
         target_name = action[len(merge_prefix):].strip()
         extra = [row['name'].strip()] + _parse_aliases(row['aliases'], row['name'].strip())
-        target = create_rows.get(target_name)
-        if target is not None:
+        targets = [candidate for candidate in create_rows.values()
+                   if target_name in (candidate['_source'].get('name'), candidate['name'])]
+        target = targets[0] if len(targets) == 1 else None
+        if len(targets) > 1:
+            unresolved.append(row['name'].strip())
+        elif target is not None:
             for alias in extra:
                 if (
                     alias
-                    and alias.lower() != target['name'].strip().lower()
                     and alias not in target['_aliases']
                 ):
                     target['_aliases'].append(alias)
@@ -995,7 +999,7 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
 
     # Build the characters we intend to create, de-duplicating by document id.
     planned_characters = []  # (Character, name, [alias names])
-    seen_char_ids = set()
+    proposed_char_ids = []
     for row in create_rows.values():
         name = row['name'].strip()
         character = Character(book=book_ref)
@@ -1004,11 +1008,23 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
         character.human = row['human']
         character.protagonist = row['protagonist']
         character.plural = row['plural']
+        for field in ('entity_kind', 'identity_evidence', 'member_of',
+                      'unresolved_identity_alternatives', 'name_is_label', 'mentions',
+                      'editorial_labels', 'raw_alias_entries', 'former_ids',
+                      'unresolved_mentions', 'detection_audit'):
+            if field in character.fields and field in row['_source']:
+                setattr(character, field, row['_source'][field])
         cid = character.document_id
-        if cid in seen_char_ids:
-            continue
-        seen_char_ids.add(cid)
+        proposed_char_ids.append(cid)
         planned_characters.append((character, name, row['_aliases']))
+
+    # A shared proposed name is not evidence for identity. Keep every source
+    # and decision in the audit, leave both unresolved, and report the conflict.
+    duplicate_ids = {cid for cid in proposed_char_ids if proposed_char_ids.count(cid) > 1}
+    unresolved.extend(name for character, name, _ in planned_characters
+                      if character.document_id in duplicate_ids)
+    planned_characters = [(character, name, aliases) for character, name, aliases in planned_characters
+                          if character.document_id not in duplicate_ids]
 
     # ONE existence read across all candidate character ids.
     existing_char_ids = firestore.get_existing_ids(
@@ -1016,6 +1032,16 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
     )
 
     batch = firestore.write_batch()
+    acknowledgements = []
+    pending_character_lookup = {}
+    has_matching_audit = st.session_state.get('_detected_alias_audit_book_id') == book_ref.id
+    audit = AliasReviewAudit(
+        book_ref.id, st.session_state.get('_detected_alias_audit', suggestions) if has_matching_audit else suggestions,
+        rows, st.session_state.get('_detected_raw_response') if has_matching_audit else None)
+    audit_staged = audit.document_id not in firestore.get_existing_ids(
+        'alias_review_audits', [audit.document_id])
+    if audit_staged:
+        acknowledgements.append(audit.register_batched(batch, create_only=True))
     new_book_refs = []
     planned_aliases = []  # (character_ref, alias_name)
 
@@ -1023,13 +1049,12 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
         if character.document_id in existing_char_ids:
             skipped.append(name)
             continue
-        character.register_batched(batch)
+        acknowledgements.append(character.register_batched(batch, create_only=True))
         character_ref = character.get_ref()
         new_book_refs.append(character_ref)
         # Keep the session lookup dicts in sync (mirrors the manual flow) so the
         # new character is immediately selectable for alias entry etc.
-        st.session_state['character_dict'][name] = character_ref
-        st.session_state.setdefault('book_character_dict', {})[name] = character_ref
+        pending_character_lookup[name] = character_ref
         created_count += 1
         for alias_name in alias_names:
             planned_aliases.append((character_ref, alias_name))
@@ -1037,18 +1062,12 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
     # Aliases merged into already-existing book characters.
     for target_ref, target_name, extra in merge_into_existing:
         for alias_name in extra:
-            if not alias_name or alias_name.lower() == target_name.lower():
+            if not alias_name:
                 continue
             planned_aliases.append((target_ref, alias_name))
 
-    # Build the alias entities, de-duplicating by document id (which is book+name
-    # scoped), then ONE existence read across all candidate alias ids.
-    # Alias ``document_id`` is ``<book_id>_<name>`` with no character component
-    # (data_structures/alias.py), so a stripped alias can collide with a
-    # different character's alias for the same book. When that happens the alias
-    # is skipped — surface which ones so the user is not left wondering why an
-    # alias silently failed to appear (#237). Collisions come in two shapes:
-    # a duplicate within THIS run, and one already stored from a prior run.
+    # IDs include identity and exact raw bytes. Same text under different
+    # characters must survive; only an identical entry can be reused.
     alias_objs = []
     seen_alias_ids = set()
     skipped_aliases = []
@@ -1056,6 +1075,8 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
         alias = Alias(book=book_ref)
         alias.character = character_ref  # a reference, stored directly
         alias.name = alias_name
+        alias.source = 'reviewed_detection'
+        alias.provenance = [{'review_audit_id': audit.document_id}]
         aid = alias.document_id
         if aid in seen_alias_ids:
             skipped_aliases.append(alias_name)
@@ -1068,9 +1089,10 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
     )
     for alias in alias_objs:
         if alias.document_id in existing_alias_ids:
+            alias.check_collision_payload(alias.get_ref().get())
             skipped_aliases.append(alias.name)
             continue
-        alias.register_batched(batch)
+        acknowledgements.append(alias.register_batched(batch))
         alias_count += 1
 
     # Link every newly created character to the book in ONE batched update rather
@@ -1083,9 +1105,6 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
         additions = [r for r in new_book_refs if r.path not in existing_paths]
         if additions:
             updated = book.characters + additions
-            book.reading_from_db = True
-            book.characters = updated
-            book.reading_from_db = False
             # Stage an atomic ArrayUnion rather than a whole-list overwrite so a
             # concurrent session's cast edit on the same book is not clobbered by
             # this batch (#225). The in-memory list is updated above under the
@@ -1096,8 +1115,18 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
 
     # Commit only when something was actually staged (all-skip / all-existing runs
     # stage nothing).
-    if created_count or alias_count or book_updated:
+    if created_count or alias_count or book_updated or audit_staged:
         batch.commit()
+        for acknowledge in acknowledgements:
+            acknowledge()
+        st.session_state.setdefault('character_dict', {}).update(pending_character_lookup)
+        st.session_state.setdefault('book_character_dict', {}).update(pending_character_lookup)
+        if book_updated:
+            book.reading_from_db = True
+            try:
+                book.characters = updated
+            finally:
+                book.reading_from_db = False
 
     messages = [EnterText.review_created.format(characters=created_count, aliases=alias_count)]
     if skipped:
@@ -1128,6 +1157,9 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
     st.session_state['_detected_characters_result'] = messages
     st.session_state.pop('_detected_characters', None)
     st.session_state.pop('_detected_characters_source', None)
+    st.session_state.pop('_detected_alias_audit', None)
+    st.session_state.pop('_detected_raw_response', None)
+    st.session_state.pop('_detected_alias_audit_book_id', None)
     st.session_state['now_entering'] = 'text'
     st.rerun()
 
@@ -1181,7 +1213,8 @@ def character_review_form(element):
         _skipped_existing_info(element)
         _render_saved_cast(element)
         element.button(
-            EnterText.back_to_text_button, width="stretch", on_click=adding_text, key="detect_back_none"
+            EnterText.back_to_text_button, width="stretch", on_click=commit_detected_characters,
+            args=([],), key="detect_back_none"
         )
         return
 
@@ -1223,11 +1256,17 @@ def character_review_form(element):
                 EnterText.review_protagonist_label, value=suggestion['protagonist'], key=f"rev_prot_{i}"
             )
             plural = st.checkbox(EnterText.review_plural_label, value=suggestion['plural'], key=f"rev_plural_{i}")
-            aliases = st.text_input(
-                EnterText.review_aliases_label,
-                value=", ".join(suggestion['aliases']),
-                key=f"rev_alias_{i}",
+            aliases = []
+            for alias_index, raw_alias in enumerate(recorded_aliases(suggestion.get('aliases', []))):
+                aliases.append(st.text_input(
+                    EnterText.review_aliases_label, value=raw_alias,
+                    key=f"rev_alias_{i}" if alias_index == 0 else f"rev_alias_{i}_{alias_index}",
+                ))
+            extra_aliases = st.text_area(
+                EnterText.review_extra_aliases_label, value='',
+                key=f"rev_alias_extra_{i}",
             )
+            aliases.extend(line for line in extra_aliases.splitlines() if line.strip())
 
             other_names = [n for j, n in enumerate(names) if j != i]
             merge_target_names = other_names + existing_names

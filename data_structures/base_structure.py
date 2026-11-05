@@ -2,6 +2,7 @@ import streamlit as st
 from datetime import datetime, timezone
 import numpy as np
 from abc import ABC, abstractmethod
+from google.cloud.firestore_v1 import LastUpdateOption
 
 
 class Field:
@@ -20,12 +21,19 @@ class Field:
         self._name = name
 
     def __get__(self, instance, owner):
+        if instance is None:
+            return self
         return instance.__dict__[self._name]
 
     def __set__(self, instance, value):
 
-        if self._name in self.ref_field_setters.keys() and isinstance(value, str):
-            value = st.session_state[self.ref_field_setters[self._name]].get(value, None)
+        if (not instance.reading_from_db and self._name in self.ref_field_setters
+                and isinstance(value, str)):
+            value = st.session_state.get(self.ref_field_setters[self._name], {}).get(value)
+
+        hook = getattr(instance, "_assign_field_bundle", None)
+        if not instance.reading_from_db and hook is not None and hook(self._name, value):
+            return
 
         instance.__dict__[self._name] = value
 
@@ -48,6 +56,7 @@ class DataStructureBase(ABC):
 
     def __init__(self, collection, db_object=None):
         self.belongs_to_collection = collection
+        self._update_time = db_object.get("_update_time") if db_object else None
         self.reading_from_db = False
 
         if db_object is None:
@@ -107,7 +116,8 @@ class DataStructureBase(ABC):
             if getattr(self, field) is None:
                 return None
             else:
-                return getattr(self, field).get().id
+                reference = getattr(self, field)
+                return reference.rsplit('/', 1)[-1] if isinstance(reference, str) else reference.id
         else:
             return getattr(self, field)
 
@@ -165,7 +175,8 @@ class DataStructureBase(ABC):
             'datetime_created': created_at,
             'is_registered': True,
         }
-        self.save_to_db(data=payload, create_only=create_only)
+        result = self.save_to_db(data=payload, create_only=create_only)
+        self._update_time = getattr(result, "update_time", None)
 
         previous_guard = self.reading_from_db
         self.reading_from_db = True
@@ -176,29 +187,71 @@ class DataStructureBase(ABC):
         finally:
             self.reading_from_db = previous_guard
 
-    def register_batched(self, batch):
-        """Like :meth:`register`, but stage the initial full write into ``batch``
-        instead of committing it immediately (#184).
+    def register_batched(self, batch, *, create_only=False):
+        """Stage a write, returning an acknowledgement to run after commit.
 
-        Preserves the write-through ``Field`` semantics: the object must be built
-        UNREGISTERED (so field assignments never hit Firestore), and this single
-        batched ``set`` replaces ``register``'s ``save_to_db``. The caller commits
-        ``batch`` once for many entities, turning N per-entity round-trips into one.
-        Sets the same ``entered_by``/``datetime_created``/``is_registered`` fields
-        as ``register`` so the persisted document is identical.
+        A failed batch must leave the entity unregistered. The caller invokes
+        the returned callback only after the entire batch commits successfully.
         """
-        if not self.is_registered:
-            self.entered_by = st.session_state['firestore'].username_to_doc_ref(
-                st.session_state['username']
-            )
-            self.datetime_created = datetime.now(timezone.utc)
-            self.is_registered = True
-            batch.set(self.get_ref(), self.to_dict(), merge=True)
+        if self.is_registered:
+            return lambda: None
+        payload = {
+            **self.to_dict(),
+            'entered_by': st.session_state['firestore'].username_to_doc_ref(
+                st.session_state['username']),
+            'datetime_created': datetime.now(timezone.utc),
+            'is_registered': True,
+        }
+        if create_only:
+            batch.create(self.get_ref(), payload)
+        else:
+            batch.set(self.get_ref(), payload, merge=True)
+
+        def acknowledge():
+            self._adopt_fields(payload)
+        return acknowledge
+
+    def _adopt_fields(self, values):
+        """Load an acknowledged atomic write through descriptors without I/O."""
+        previous_guard = self.reading_from_db
+        self.reading_from_db = True
+        try:
+            for key, value in values.items():
+                if key in self.fields:
+                    setattr(self, key, value)
+        finally:
+            self.reading_from_db = previous_guard
+
+    def update_fields_conditionally(self, updates, *, expected_update_time,
+                                    expected_raw_hash=None, firestore_client=None):
+        """One compare-and-swap write through the shared entity layer.
+
+        The server update-time precondition rejects concurrent raw edits *and*
+        overrides. A source hash check alone would leave a read/write race.
+        No client, snapshot read, or retry is implicit when one is injected.
+        """
+        if expected_update_time is None:
+            raise ValueError("A snapshot update_time is required for conditional updates")
+        if any(key not in self.fields for key in updates):
+            raise ValueError("Conditional update includes an undeclared entity field")
+        if expected_raw_hash is not None:
+            from alias_schema import raw_surface_hash
+            if raw_surface_hash(getattr(self, 'name', '')) != expected_raw_hash:
+                raise ValueError("Raw surface changed after the proposed projection")
+        validate = getattr(self, '_validate_bundle_update', None)
+        if validate is not None:
+            validate(updates)
+        ref = (firestore_client.collection(self.belongs_to_collection).document(self.document_id)
+               if firestore_client is not None else self.get_ref())
+        result = ref.update(dict(updates), option=LastUpdateOption(expected_update_time))
+        self._adopt_fields(updates)
+        self._update_time = getattr(result, 'update_time', None)
+        return result
 
     def save_to_db(self, *, data=None, create_only=False):
         payload = self.to_dict() if data is None else data
         ref = self.get_ref()
         if create_only:
-            ref.create(payload)
+            return ref.create(payload)
         else:
-            ref.set(payload, merge=True)
+            return ref.set(payload, merge=True)

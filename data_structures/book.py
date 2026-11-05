@@ -569,8 +569,12 @@ class Book(DataStructureBase):
         snaps = st.session_state['firestore'].get_all_by_references(refs)
         for ref, doc in zip(refs, snaps):
             if doc.exists:
-                character_dict[doc.to_dict()['name']] = ref
-                existing_refs.append(ref)
+                record = doc.to_dict() or {}
+                if record.get('entry_status') not in ('rejected', 'superseded', 'withdrawn'):
+                    name = record.get('name')
+                    if name:
+                        character_dict[name] = ref
+                        existing_refs.append(ref)
 
         # Persist the resolved list so the repair is paid for once. Membership
         # repairs go through atomic transforms (#225) so a concurrent session's
