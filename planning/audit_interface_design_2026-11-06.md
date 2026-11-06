@@ -1,0 +1,113 @@
+# Human audit interface design — 6 November 2026
+
+**Design only.** This specifies a future interface; no implementation, annotation, service calls or spending is authorised by this document. It accompanies [the autonomy design](autonomy_validation_design_2026-11-06.md) and [the relation protocol](relation_validation_protocol_2026-11-06.md). Their frozen sampling frames, exposure rules and corrected cohort counts govern the queue. All 161 imported books are development material; the eligible human-entered proof cohort is a separate population. Repairing historical relation labels does not by itself create proof on that new population.
+
+## 1. Make a decision easy without suggesting its answer
+
+The design target is **one keypress per ordinary judgement**, with evidence already visible. Reading source evidence is necessary work; repeatedly finding the book, searching the passage, opening forms and saving individual fields is avoidable work. An incomplete queue is a methodological failure: denominators, unresolved cases and audit delay must remain visible even when nobody finishes the audit.
+
+There are three distinct modes:
+
+| Mode | What arrives on screen | Required action | Evidential status |
+|---|---|---|---|
+| Historical correction/alignment repair | Source image, verified speech span, adjacent context and neutral identities; no old/new answers or correctness flags | Independently choose speaker and recipient, then lock | New blind source labels; historical accepted labels keep their original anchored provenance |
+| Proof disagreement adjudication and the random Run audit lane | Source-only task, with sampled agreement controls mixed into disagreements where prescribed | Commit an initial source judgement before any comparison is revealed | Independent source judgement, subject to prior-exposure record and the sampling design |
+| Run risk/recommendation lane | Agent recommendation, concise reason, source evidence and proposed change together | Confirm, reject or defer | Exposed operational review; never relabelled as independent truth |
+
+In the chapter quotation supplied and verified by the owner, the bespoke interface let a team member “easily review the output of the AI model”. The local `fair-tales-language-analysis/manual_validation_gpt4o.ipynb` supplies concrete evidence of its interaction: one speech passage, bold highlighting, roughly 200 surrounding characters on each side, raw and matched speaker/recipient together, fixed error/ambiguity buttons and a Next action that saved the previous verdict. These features plausibly reduced navigation and transcription; neither the chapter excerpt nor notebook establishes measured keystrokes or speed. Carry over co-located evidence, stable controls and automatic progress. The notebook's “Assume correct unless otherwise indicated” instruction, zero-initialised flags and delayed save are unsuitable for a blind initial label. Each decision here must be explicit and durably acknowledged before advancing.
+
+## 2. A dedicated audit screen, linked from Validation
+
+**Use a separate audit renderer/route in the existing app, reached from Validation.** Share authentication, team/admin permissions, source-image access, save/retry utilities and lease patterns. Keep ordinary book validation at `pages/validation.py`.
+
+The present page seeds controls with persisted Book/Page/Character/Alias values, shows `entered_by`, writes corrections through on submit and sets a book's `validated` stamp on approval. These are appropriate for editing but would disclose answers and conflate an experimental judgement with catalogue approval. An audit task needs independent assignments, source snapshots and label versions; it must not approve a book, overwrite its human reference or alter a pipeline output. An explicitly approved catalogue correction may subsequently enter the existing validation workflow and its edit log, with a link back to the audit decision.
+
+The blind renderer receives a **source-only bundle**. Predictions, old flags, disagreement direction, model/provider identity, confidence, rationale and reference annotator identity are withheld from its data payload, not merely hidden behind a collapsed panel or CSS. The queue service can know sampling strata without exposing them. Exposure records survive navigation, refresh and changing roles. A reviewer who has already seen this case's predictions cannot regain independent status by opening blind mode.
+
+The screen has a fixed arrangement:
+
+- **Left:** page image at readable size, speech region highlighted after its source alignment is verified; one-key zoom and previous/next source-page access. Full-book context is available without leaving the task. Source images remain accessible when a transcript is legitimately shown; identify whether it is human-typed, historical PDF text or machine OCR. In blind text/completeness adjudication, show neither compared transcription or inventory: source images and independent source-only coding come first. Historical speech correction may show a source-verified span while withholding endpoint answers.
+- **Right, top:** stable source/task ID, one current question, blank answer area and a fixed identity palette. The selected source span is already in view. No correctness colours, recommendations or preselected identity appear in blind mode.
+- **Right, bottom:** the two draft answers, a persistent key legend, explicit lock, saved-state indicator and progress. Progress shows completed/pending/unresolved counts, never running model accuracy or which stratum this case belongs to.
+
+A cropped image must retain an immediate full-page view; context must not be cropped to the words that happen to support one answer. Source alignment errors use a separate state, with the original span retained. A speech correction queue necessarily concerns proposed/known speech; it cannot estimate detection recall. For blind detection or reference-empty-page audits, show the preselected source passage/page without model-derived speech highlighting.
+
+## 3. Historical correction pass: ordinary case in three keys
+
+The starting workload is the **17-section union** of rejected matched speaker/recipient cases: 6 speaker and 11 recipient errors, disjoint in the surviving verdicts. The 3 raw speaker and 7 raw recipient errors lie within this union. The reusable accepted answers need no replacement annotation merely to recreate historical truth. Alignment can require more work; see the conditional budget below.
+
+For each correction section, show the same two questions regardless of which historical endpoint failed. Do not show the accepted counterpart or tell the reviewer which answer was rejected. After source loading, the ordinary interaction is:
+
+1. Press the identity key for **speaker**. This records a draft and focuses recipient.
+2. Press the identity key for **recipient**. This records a draft and shows both choices.
+3. Press **Enter to lock both initial labels**. Wait for durable acknowledgement, then advance automatically.
+
+Thus each identity judgement costs one keypress; each ordinary two-endpoint section costs **three keys including its explicit lock**. The lock is intentionally additional: automatically revealing AI after the second identity key would turn a mis-key into an irreversible exposure before the reviewer could check it. No answer is assumed when a task opens or a reviewer moves on. Backspace returns to the prior draft answer; Escape suspends the task without scoring it.
+
+The palette uses short, neutral entity IDs and human-readable names/aliases from an independently established source inventory. Order and key assignment are fixed within a book and frozen with its palette version; never reorder by model confidence, current question or frequency of model selection. Ordinary identities use `1`–`9`; a larger inventory uses an explicit searchable overflow, with the extra interaction counted. There is no fuzzy auto-selection. An incomplete human inventory is a navigation aid, not a constraint on the truth: an **add source identity** action records a new neutral ID, name and source evidence without consulting a machine inventory. This exceptional action legitimately takes typing.
+
+Reserved keys make common non-name outcomes explicit:
+
+| Key/action | Meaning |
+|---|---|
+| `N` | Narrator, where permitted by the frozen codebook |
+| `R` | Reader/audience, where supported by the source |
+| `0` | No recipient / not applicable; unavailable for questions where it is invalid |
+| `U` | Source does not establish an answer; retain unknown-truth status |
+| `M` | Multiple: enter a set of independently supported identities, then confirm that set |
+| `A` | Add a missing source identity |
+| `B` | Boundary/source problem: preserve the task and send it to alignment repair |
+
+Collective identities have stable IDs like other entities; a collective is not automatically the same as a set of individually identified speakers. Multiple plausible alternatives must be marked **ambiguous admissible set**, separately from genuinely joint speech/address. These less common cases require an extra choice because conflating them would corrupt the strict and set-valued scores. Existing source evidence is attached automatically; require additional evidence or a short reason only for new entities, ambiguity, boundary changes and later revisions. Unknown is a valid submitted judgement, not a skip that vanishes from the denominator.
+
+Keyboard actions and visible buttons invoke the same operation. Shortcuts are inactive while typing or using an input method; an auto-repeat key cannot answer the next question, and held Enter cannot submit the next task. Queue advance resets blank controls by task ID. No keyboard-only requirement is imposed on users who need pointer or assistive access.
+
+## 4. Directional measurement and Run review
+
+For proof disagreements, the scheduler follows the main design's strata, inclusion probabilities and stated oversampling factors. It mixes selected agreement controls into the source-only queue so the screen itself does not announce that one candidate must be wrong. Oversampling improves the number of rare disagreements reviewed; it does not increase their population prevalence. Store the actual sampling probabilities and use the prescribed weights when aggregating. Mixed controls do not erase any prior exposure or make the case frame representative by themselves.
+
+The adjudicator first establishes and locks what the source supports. For text/alias/inventory-completeness tasks, the compared human transcription/list is an answer and must also be withheld; independently source-established identities or open source coding replace a reference-seeded palette. Full transcription or discovering a missing identity legitimately takes more than one key. **Only then** may an anonymised, order-randomised comparison be displayed to map the locked source judgement onto AI-correct/reference-wrong, reference-correct/AI-wrong, both correct under the codebook, both wrong or unresolved. Reference annotator identity and model identity remain hidden during this mapping. The source-only stage must permit omissions by either or both systems; neither proposed answer is forced into the answer palette. Disputed source/codebook interpretation goes to a second independent reviewer before the later resolution stage. Preserve both initial labels and any final adjudication with its reason. Showing a pair of candidate answers first would be faster, but would sacrifice the independent initial judgement; choose rigour.
+
+The **Run risk queue** optimises a different task. The recommendation card shows the proposed field/action, the agent's short reason, the relevant image region and enough context, and the current versus proposed value where appropriate. The reason is identified as model-generated. A reviewer can press `Y` to confirm, `N` to reject or `U` to defer; the decision is saved and the next card loads after acknowledgement. Rejecting does not require repairing the record in the same screen: it creates a linked correction task. Corrections and nonstandard reasons may take extra keys, but should not be mandatory prose for an ordinary confirm/reject. A confirmed recommendation enters the authorised correction workflow; acknowledgement alone must not silently broaden an editing permission or mark a whole book validated.
+
+The **random Run audit lane** uses the source-first lock flow before exposing that same recommendation card. Random audit selection happens independently of confidence and risk flags. This lane supports measured error/drift; risk-queue confirmations are intervention records. Both lanes retain selected, opened, locked, confirmed, rejected, deferred and unresolved counts, dates and age of oldest pending item. Show random-lane completion separately from risk-lane backlog so clearing many easy risk cards cannot conceal an unfinished probability sample. A proof or drift claim waits for its required audit coverage; incomplete/unresolved cases remain in sensitivity bounds. A reminder can be shown inside the app; this design does not authorise messages to people.
+
+## 5. Immutable labels, write-through conventions and recovery
+
+Persisted audit entities must subclass `DataStructureBase` and declare write-through `Field` descriptors, `fields`, `form_fields`, `ref_fields`, `to_form()` and a stable `document_id`. The existing `AliasReviewAudit` supplies a closer precedent than the ordinary seeded entity editors. `DECISIONS.md` #005 deliberately allows the existing raw-dict `EditLog`; that exception is **not** extended to the new audit entities.
+
+Keep mutable queue/draft state separate from immutable label snapshots. Draft autosave, if offered, writes only a draft entity and is visibly unsubmitted. On lock, populate a new unregistered label snapshot and save the complete record with create-only semantics through the shared entity layer (`register(create_only=True)` / the existing batched equivalent). Do not write one endpoint into an already locked snapshot through a `Field`. Enforce immutability in the entity's update path and persistence permissions. A correction creates a new revision linked to its predecessor; the original remains exportable and contributes to the appropriate initial-label analysis.
+
+Atomic lock/acknowledgement must bind task ownership, source/codebook/palette versions, the complete answer pair, exposure state and label creation. A stale source version or expired lease rejects the commit visibly. Prediction reveal is allowed only after the server confirms the requisite initial labels are locked, including any independent second pass required by the protocol. Duplicate clicks or retries use a deterministic assignment/annotator/revision ID and cannot create two scored decisions. If a save fails, preserve the draft, retain the task, offer retry and reveal nothing. Do not claim successful save because a local widget changed.
+
+The exportable record includes:
+
+- Frozen frame and sample IDs, inclusion probability/stratum/inflation, work/edition/book/page IDs, source file and text hashes, source span/coordinates, original and repaired crosswalk, and alignment status/reason.
+- Endpoint answers, raw versus matched scoring role, strict/admissible-set status, uncertainty, evidence, codebook/palette versions, annotator ID/type/family, initial-versus-adjudicated status, prior exposure, lock and first-reveal timestamps, and predecessor/revision reason.
+- Historical flags and accepted labels with their original provenance; immutable extractor outputs and run/policy hashes stored separately; task completion/failure/abstention, selection and decision timing, and keyboard/pointer interaction counts.
+
+All UI strings, shortcut descriptions, help, prompts, errors and component-accessibility labels belong in `text_content`, never inline in a page or keyboard component. Every interactive widget gets an explicit stable `key=`. Page controls use fixed context keys; repeated task controls include stable task/revision IDs. Any value-seeded entity form captures **`key_suffix = self.document_id` at its start** and uses it for every field key, following CLAUDE.md #80; new-entity state is cleared at each new-entity entry point. Random session/lease tokens must never become widget keys. Guard obsolete identity keys and option lookups without substituting the first identity as an answer.
+
+Use `st.image(width="stretch")`, `filter=FieldFilter(...)` queries and narrow, visible/logged error handling. Follow #129: image/storage access uses `utilities.get_s3_filesystem()` and shared image helpers; any later AI preparation uses `get_anthropic_client` and `vision_json` rather than copied client/vision recipes. No generation call is part of the decision keystroke; frozen evidence bundles are prepared separately. A keyboard bridge, if needed, must share the same stable action IDs and server checks as the visible controls; merely naming Streamlit buttons does not implement hotkeys. These are implementation requirements, not changes made in this round.
+
+## 6. Workload and acceptance criteria
+
+The relation protocol's starting correction union is **17 sections**, plus alignment and any genuinely new unsupported sections. Let `A` be the number of the 199 historical sections that align and retain reusable source/endpoint meaning, `U` the casualties that actually need new answers, `X` additional unsupported source units, and `D` the overlaps with already counted correction tasks. The corrected-label workload is **`K = 17 + U + X − D`**, counting unique source tasks; alignment review time over the full 199 is separate. Not every failure to match new OCR invalidates the old source label, and a split may create several new endpoint units: report both old-section and resulting-unit counts. The simple planning scenario `min(199, 17 + 199 − A)` assumes one replacement task per failed old section and maximal non-overlap; it is not a forecast. Restoring the published 200th case adds its previously unrecorded judgement only if selected. Prospective proof truth, independent overlap and directional audits have their own budgets. None is paid for by silently relabelling historical accepted answers as fresh blind labels.
+
+Measure usability on development fixtures before exposing proof material. Record ordinary/exceptional tasks separately, and exclude neither long investigations nor save failures from overall workload. Proposed acceptance targets are:
+
+| Measure | Target / interpretation |
+|---|---|
+| Ordinary correction decision | One identity key per endpoint; three keys for two endpoints plus lock; no required free text or navigation |
+| Ordinary Run recommendation decision | One explicit confirm/reject/defer key; no default response |
+| Initial evidence availability | Source page, highlighted span when legitimate, context and controls visible on first task render; no book lookup |
+| Navigation latency | Prefetch next authorised source bundle; aim for next task ready within one second of durable acknowledgement; report measured median and p90 |
+| Human time | Record source-reading, alignment, labelling and adjudication time separately; derive the budget from observed seconds/task and `K`, not an assumed fixed 50/150/200-stage programme |
+| Safety of the measurement | No answer leakage before lock; no cross-task state bleed; retry/refresh cannot lose or duplicate a scored label; revisions retain originals |
+| Denominator visibility | Every selected unit has a terminal result or an explicit pending/unresolved reason; raw counts and sampling weights are exportable |
+
+A compact usability check should include an ordinary two-identity case, a missing identity, an ambiguous set, an alignment failure, a stale save and a reveal attempt before lock, using development fixtures. This checks whether the proposed speed is real without using protected proof cases for interface tuning. If meeting a keystroke target would require an assumed answer, inadequate context or premature AI reveal, keep the extra action and report the cost.
+
+## Open questions for Chris
+
+- **Who owns independent source judgements and dispute resolution?** Use a source-familiar team member plus a different adjudicator for disputed cases (recommended), or appoint external reviewers. Record prior case exposure and avoid assigning an annotator their own reference where feasible; a second name alone does not establish independence. Queue design and preparation can proceed before that staffing decision.
