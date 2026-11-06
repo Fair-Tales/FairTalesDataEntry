@@ -20,7 +20,13 @@ NONSENSE_QUERY = "zzqxnomatch12345"
 
 
 def _open_picker(page):
+    # Since #163 the picker is reached from the dashboard, not from landing:
+    # 'View results' opens the dashboard scoped to ALL books, and its
+    # 'Choose / change books' button opens the picker.
     page.locator(f"{h.key(h.LANDING_VIEW_RESULTS)} button").click()
+    change = page.locator(f"{h.key(h.RESULTS_DASHBOARD_CHANGE_SELECTION)} button")
+    change.wait_for(state="visible", timeout=h.RERUN_TIMEOUT)
+    change.click()
     page.locator(h.key(h.COLLECTION_METHOD_MENU)).wait_for(
         state="visible", timeout=h.RERUN_TIMEOUT
     )

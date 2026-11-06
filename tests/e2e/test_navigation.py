@@ -13,15 +13,20 @@ def test_landing_enter_data_opens_user_home(logged_in_page):
     )
 
 
-def test_landing_view_results_opens_collection_picker(logged_in_page):
-    """Landing -> 'View results' now routes to the collection picker (#75)."""
+def test_landing_view_results_opens_dashboard(logged_in_page):
+    """Landing -> 'View results' routes straight to the dashboard (#163).
+
+    It seeds an empty selection, which scopes the dashboard to ALL books. The
+    collection picker is no longer the landing target; reaching it from the
+    dashboard is covered in test_collection_picker.py.
+    """
     page = logged_in_page
     page.locator(f"{h.key(h.LANDING_VIEW_RESULTS)} button").click()
-    # The picker page title + its method option_menu mount.
-    page.get_by_text(h.COLLECTION_PAGE_TITLE, exact=False).first.wait_for(
+    page.get_by_text(h.RESULTS_PAGE_TITLE, exact=False).first.wait_for(
         state="visible", timeout=h.RERUN_TIMEOUT
     )
-    page.locator(h.key(h.COLLECTION_METHOD_MENU)).wait_for(
+    # The dashboard offers the route onward to the picker.
+    page.locator(f"{h.key(h.RESULTS_DASHBOARD_CHANGE_SELECTION)} button").wait_for(
         state="visible", timeout=h.RERUN_TIMEOUT
     )
 

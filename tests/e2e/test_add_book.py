@@ -14,6 +14,8 @@ def _open_add_book_form(page):
         state="visible", timeout=h.RERUN_TIMEOUT
     )
     # 'Add a Book' navigates to add_book.py, which renders Book.to_form().
+    # Hidden while the pilot entry flow is photo-only (#157).
+    h.require_menu_item(page, h.MENU_ADD_BOOK, h.USER_OPTION_MENU)
     h.click_option_menu(page, h.MENU_ADD_BOOK, wrapper_key=h.USER_OPTION_MENU)
     page.locator(f"{h.key(h.NEW_BOOK_TITLE)} input").wait_for(
         state="visible", timeout=h.RERUN_TIMEOUT

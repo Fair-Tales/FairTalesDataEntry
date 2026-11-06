@@ -15,11 +15,17 @@ real element:
 * ``streamlit-keyup`` / ``st_keyup`` (the live search boxes) — typed into via
   :func:`fill_keyup`.
 
-The ``st-key-<key>`` wrapper class is still applied to the element container of a
-custom component, so we anchor on that wrapper and then descend into its iframe.
+``streamlit-option-menu`` still carries the plain ``st-key-<key>`` wrapper class,
+so we anchor on that wrapper and descend into its iframe. ``st_keyup`` does NOT:
+it builds its wrapper class from the component's full argument signature, so
+``key="book_search_keyup"`` renders as
+``st-key-st_keyup_book_search_keyup__False__visible__300__default__``. :func:`key`
+handles that difference, so callers need not care which kind they are addressing.
 """
 
 from __future__ import annotations
+
+import pytest
 
 # --------------------------------------------------------------------------- #
 # Widget keys (read directly from the page .py files — keep in sync with #80). #
@@ -58,7 +64,9 @@ REVIEW_BOOKS_EDIT = "review_books_edit_button"
 BOOK_EDIT_OPTION_MENU = "book_edit_option_menu"
 ENTER_TEXT_MANAGE_CHARACTERS_BUTTON = "enter_text_manage_characters_button"
 
-# pages/collection_picker.py (#75) — landing "View results" now routes HERE first.
+# pages/collection_picker.py (#75). NOTE: landing "View results" no longer routes
+# here. Since #163 it goes straight to the dashboard scoped to ALL books, and the
+# picker is reached from the dashboard's "Choose / change books" button below.
 COLLECTION_METHOD_MENU = "collection_method_menu"
 COLLECTION_SEARCH_KEYUP = "collection_search_keyup"
 # Single "View results" button (#163). It is always enabled: it scopes to the
@@ -68,6 +76,9 @@ COLLECTION_VIEW_RESULTS_BUTTON = "collection_view_results_button"
 # Left-hand quick add/remove dropdown + the "All books" predefined option (#163).
 COLLECTION_SEARCH_MULTISELECT = "collection_search_multiselect"
 COLLECTION_PREDEFINED_ALL_BOOKS_BUTTON = "collection_predefined_all_books_button"
+
+# pages/results_dashboard.py — opens the collection picker from the dashboard (#163).
+RESULTS_DASHBOARD_CHANGE_SELECTION = "results_dashboard_change_selection_button"
 
 # pages/validation.py (#47/#83) — gated to team/admin.
 VALIDATION_SUBMITTED_TOGGLE = "validation_submitted_only_toggle"
@@ -143,7 +154,22 @@ RERUN_TIMEOUT = 15000
 
 
 def key(name: str) -> str:
-    """Return the CSS selector for a Streamlit widget's ``st-key-`` wrapper."""
+    """Return the CSS selector for a Streamlit widget's ``st-key-`` wrapper.
+
+    Most widgets get a plain ``st-key-<key>`` class. ``st_keyup`` is the
+    exception: it derives its wrapper class from the component's *full*
+    argument signature, so ``key="book_search_keyup"`` actually renders as
+    ``st-key-st_keyup_book_search_keyup__False__visible__300__default__``. A
+    ``.st-key-book_search_keyup`` selector cannot match that, because class
+    names are whitespace-separated tokens and the mangled name is a single
+    token. Match those by prefix instead, anchored on the ``st_keyup_`` prefix
+    and the ``__`` argument separator so it cannot collide with an ordinary
+    key. The returned selector is always a single compound selector, never a
+    comma-separated list, so callers may safely append a descendant (e.g.
+    ``f"{key(name)} input"``).
+    """
+    if name.endswith("_keyup"):
+        return f'[class*="st-key-st_keyup_{name}__"]'
     return f".st-key-{name}"
 
 
@@ -180,6 +206,38 @@ def fill_keyup(page, wrapper_key: str, text: str) -> None:
     field.press_sequentially(text, delay=40)
     # Let the 300ms debounce expire and the Streamlit rerun settle.
     page.wait_for_timeout(1200)
+
+
+def require_menu_item(page, label: str, wrapper_key: str, issue: str = "#157") -> None:
+    """Skip the calling test when a nav menu does not currently offer ``label``.
+
+    The pilot entry flow is photo-only: ``Batch Upload`` and the manual
+    ``Add a Book`` items are deliberately hidden from the user-home menu (#157)
+    while both pages still exist and are expected to return afterwards. A
+    missing entry point is therefore a deliberate configuration rather than a
+    defect, so the journey skips with a reason instead of failing and masking
+    real regressions elsewhere in the suite.
+    """
+    frame = page.locator(key(wrapper_key)).frame_locator("iframe")
+    if frame.get_by_text(label, exact=True).count() == 0:
+        pytest.skip(
+            f"'{label}' is hidden from the current entry flow ({issue}); "
+            "the page is unreachable by design, not broken."
+        )
+
+
+def click_toggle(page, wrapper_key: str) -> None:
+    """Click an ``st.toggle`` / ``st.checkbox`` by its visible label.
+
+    Streamlit renders the real ``<input>`` at ``opacity: 0; width: 0px`` behind
+    a styled label, so waiting for *the input* to be visible can never succeed —
+    Playwright requires a non-zero box and non-zero opacity. The label is the
+    visible, clickable surface, and clicking it toggles the control.
+    """
+    target = page.locator(key(wrapper_key)).locator("label").first
+    target.wait_for(state="visible", timeout=RERUN_TIMEOUT)
+    target.click()
+    page.wait_for_timeout(800)
 
 
 def click_option_menu(page, label: str, wrapper_key: str | None = None) -> None:

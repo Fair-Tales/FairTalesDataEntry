@@ -16,6 +16,8 @@ def _open_batch(page):
         state="visible", timeout=h.RERUN_TIMEOUT
     )
     # 'Batch Upload' (BatchBookEntry.menu_label) -> add_books_batch.py.
+    # Hidden while the pilot entry flow is photo-only (#157).
+    h.require_menu_item(page, h.MENU_BATCH_UPLOAD, h.USER_OPTION_MENU)
     h.click_option_menu(page, h.MENU_BATCH_UPLOAD, wrapper_key=h.USER_OPTION_MENU)
 
 

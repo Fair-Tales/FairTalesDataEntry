@@ -57,9 +57,6 @@ def test_validation_submitted_only_toggle(logged_in_page, test_user_role):
     page = logged_in_page
     _open_validation(page)
 
-    toggle = page.locator(f"{h.key(h.VALIDATION_SUBMITTED_TOGGLE)} input")
-    toggle.wait_for(state="visible", timeout=h.RERUN_TIMEOUT)
-    toggle.click()
-    page.wait_for_timeout(800)
+    h.click_toggle(page, h.VALIDATION_SUBMITTED_TOGGLE)
     # Still on the validation list after toggling (no crash / no redirect).
     assert page.get_by_text(h.VALIDATION_LIST_HEADER, exact=False).first.is_visible()
