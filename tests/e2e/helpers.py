@@ -25,7 +25,10 @@ handles that difference, so callers need not care which kind they are addressing
 
 from __future__ import annotations
 
+import time
+
 import pytest
+from playwright.sync_api import Error
 
 # --------------------------------------------------------------------------- #
 # Widget keys (read directly from the page .py files — keep in sync with #80). #
@@ -80,6 +83,19 @@ COLLECTION_PREDEFINED_ALL_BOOKS_BUTTON = "collection_predefined_all_books_button
 # pages/results_dashboard.py — opens the collection picker from the dashboard (#163).
 RESULTS_DASHBOARD_CHANGE_SELECTION = "results_dashboard_change_selection_button"
 
+# photo_upload.py (#114) — the direct-to-S3 uploader's own markup, inside the
+# component iframe rather than the Streamlit DOM, so these are plain CSS ids and
+# not st-key- wrappers.
+PHOTO_UPLOAD_INPUT = "#ftu-input"
+PHOTO_UPLOAD_SUMMARY = "#ftu-summary"
+PHOTO_UPLOAD_LIST = "#ftu-list"
+# pages/add_book_photos.py — the button that starts extraction. Clicking it calls
+# Claude vision and creates a book, so the e2e suite stops short of it. The
+# wrapper also holds a help-tooltip icon button, so match on the label rather
+# than on "the button inside the wrapper", which is ambiguous.
+ADD_BOOK_PHOTOS_READ_BUTTON = "add_book_photos_read_button"
+ADD_BOOK_PHOTOS_READ_LABEL = "Go"  # BookPhotoEntry.read_button
+
 # pages/validation.py (#47/#83) — gated to team/admin.
 VALIDATION_SUBMITTED_TOGGLE = "validation_submitted_only_toggle"
 VALIDATION_SELECT_BOOK = "validation_select_book"
@@ -103,7 +119,9 @@ LANDING_VIEW_RESULTS_LABEL = "View results"
 MENU_SEARCH_BOOKS = "Search Books"
 MENU_SEARCH_AUTHORS = "Search Authors"
 MENU_ADD_BOOK = "Add a Book"
-MENU_ADD_FROM_PHOTOS = "Add from Photos"
+# BookPhotoEntry.menu_label — the photo-first entry flow. This is the item the
+# pilot actually exposes; the manual "Add a Book" above is hidden (#157).
+MENU_ADD_FROM_PHOTOS = "Add book"
 MENU_BATCH_UPLOAD = "Batch Upload"
 MENU_EDIT_BOOKS = "Edit my Books"
 
@@ -208,6 +226,77 @@ def fill_keyup(page, wrapper_key: str, text: str) -> None:
     page.wait_for_timeout(1200)
 
 
+def photo_uploader_frame(page, timeout: int = RERUN_TIMEOUT):
+    """Return the component frame that owns the direct-to-S3 photo uploader.
+
+    The uploader (#114) is an ``st.components.v1.html`` island, so its markup
+    lives in a same-origin child frame rather than the Streamlit DOM. Several
+    components render as ``iframe[title='st.iframe']``, so rather than guess an
+    index we find the frame that actually contains the file input. The frame
+    mounts a beat after the Streamlit rerun, hence the poll.
+    """
+    deadline = time.time() + timeout / 1000
+    while time.time() < deadline:
+        for frame in page.frames:
+            try:
+                if frame.query_selector(PHOTO_UPLOAD_INPUT) is not None:
+                    return frame
+            except Error:
+                # A frame can detach mid-iteration during a rerun; try the next.
+                continue
+        page.wait_for_timeout(250)
+    raise AssertionError(
+        f"No frame exposing {PHOTO_UPLOAD_INPUT} appeared within {timeout}ms. "
+        "The photo uploader component did not mount."
+    )
+
+
+def upload_photos(page, paths, timeout: int = 60000) -> str:
+    """Upload page photos through the real uploader and return its summary text.
+
+    The uploader's ``<input type="file">`` is ``display:none`` behind a styled
+    ``<label>``: it cannot be clicked, and the accessibility tree does not
+    expose it, which is why a screenshot-driven agent cannot operate this flow.
+    Playwright can, because ``set_input_files`` does not require the input to be
+    visible and the component frame is same-origin. Setting the files fires the
+    component's change handler, which PUTs each file to its presigned URL.
+
+    Uploads land in the disposable ``uploads/{flow_key}/{session_id}/`` prefix
+    that the app itself treats as a scratch buffer, and this helper deliberately
+    stops before extraction: it never clicks Go, so no book is created and no
+    vision call is billed.
+    """
+    frame = photo_uploader_frame(page)
+    frame.set_input_files(PHOTO_UPLOAD_INPUT, [str(p) for p in paths])
+
+    expected = len(paths)
+    deadline = time.time() + timeout / 1000
+    summary = ""
+    while time.time() < deadline:
+        summary = frame.text_content(PHOTO_UPLOAD_SUMMARY) or ""
+        # BookPhotoEntry.upload_progress: "Uploaded {done} of {total} photo(s)."
+        if f"{expected} of {expected}" in summary:
+            return summary
+        if f"Uploaded 0 of {expected}" in summary and "failed" in summary:
+            # Every PUT failed before a single byte landed. The presigned URLs
+            # are minted server-side and are origin-agnostic, so the usual cause
+            # is the browser refusing the cross-origin PUT: the bucket's CORS
+            # AllowedOrigins lists only the deployed app. A partial failure is a
+            # different animal and falls through to the assertion below.
+            pytest.skip(
+                "Every upload PUT was rejected, which is what a CORS block looks "
+                "like. The bucket allows the deployed origin only, so browser "
+                "uploads cannot succeed from localhost on any port. Point "
+                "APP_BASE_URL at an allowed origin, or add this one to the "
+                "bucket's CORS AllowedOrigins, to exercise this flow."
+            )
+        page.wait_for_timeout(500)
+    raise AssertionError(
+        f"Uploader did not report {expected} of {expected} within {timeout}ms. "
+        f"Last summary: {summary!r}"
+    )
+
+
 def require_menu_item(page, label: str, wrapper_key: str, issue: str = "#157") -> None:
     """Skip the calling test when a nav menu does not currently offer ``label``.
 
@@ -219,6 +308,12 @@ def require_menu_item(page, label: str, wrapper_key: str, issue: str = "#157") -
     real regressions elsewhere in the suite.
     """
     frame = page.locator(key(wrapper_key)).frame_locator("iframe")
+    # Wait for the menu to actually populate first. Without this, a menu that
+    # has not finished mounting is indistinguishable from one that genuinely
+    # omits the item, and every caller skips for the wrong reason.
+    frame.get_by_text(MENU_SEARCH_BOOKS, exact=True).wait_for(
+        state="visible", timeout=RERUN_TIMEOUT
+    )
     if frame.get_by_text(label, exact=True).count() == 0:
         pytest.skip(
             f"'{label}' is hidden from the current entry flow ({issue}); "
