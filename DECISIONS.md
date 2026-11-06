@@ -403,3 +403,144 @@ Credits expire at the end of each billing cycle and do not roll over.
 
 See `planning/pipeline_improvement_design_2026-11-05.md` and
 `planning/alias_duplication_findings_2026-11-05.md`.
+
+## 015 — Autonomy validation: resolvable gates, proof on the human-typed cohort, adjudicated rather than assumed AI superiority (2026-11-06)
+
+**Objective.** The pipeline should be good enough that routine human review is not
+required. Validation exists to tune it and then to prove it can run on its own — not to
+sit permanently in the loop. Everything below was designed by Astra (ultra effort) across
+six rounds, adversarially reviewed by Fable, and independently verified in-session.
+
+1. **Almost every gate first proposed was unestablishable by construction.** The
+   zero-error one-sided 95% bound is `C(n)=0.05^(1/n)`, so a 1% error ceiling needs 299
+   perfect books, 0.5% needs 598 and 0.1% needs 2,995. Against 161 books, twelve of
+   roughly seventeen proposed gates could never be met however good the pipeline was, and
+   a family-wise alpha made even alias recall fail at 0.9193 on flawless output. **Gates
+   are now set at each field's own attainable ceiling**, never a flat floor, with the
+   observed point estimate reported beside every proven bound and an explicit
+   establishable-from column. Unreachable ceilings (99.9% identifiers, the ≤0.5% rates)
+   are retained as *reported, not gated*. Improving the pipeline cannot raise a ceiling;
+   only more evidence can. Gates are never lowered after seeing results.
+
+2. **The imported page text is machine-generated, so it is not a human reference.** The
+   importer takes the PDF text layer at `TEXT_LAYER_MIN_CHARS = 20`, else vision OCR, else
+   suppresses OCR on interior image-only pages via a neighbour-continuity judge, then
+   stamps every book `validated=True, validated_by="pilot_import"`
+   (`scripts/import_pilot_data.py:236,766`). The ~0.99 OCR F1 is therefore agreement with
+   machine text, and empty/empty on skipped pages is Claude agreeing with Claude — now
+   named as a correlated-error stratum, with F1 reported by provenance tier.
+
+3. **The continuity judge was confidently wrong seven times out of seven.** All seven
+   recovered strings sit on `text_source="skipped_wordless"` pages whose verdict was
+   `confidence: "high"`, `flows_continuously: true`, `text_appears_missing: false`, each
+   with a fluent narrative justification. Four are shorter than the 20-character rule, so
+   they are import misses, not entry errors: `planning/wordless_adjudication_2026-11-05.md`
+   attributes them wrongly, and 010's "~zero data loss" cannot be generalised. Rates are
+   7/108 reference-empty story pages (6.48%), 7/772 pages (0.91%), 7/20 books (35%) —
+   descriptive dev20 figures. Empty-page gates are unavailable without adjudication.
+
+4. **Proof moved to the human-entered pilot cohort, reversing its earlier deferral.** It
+   is the only genuinely human-typed page text in the corpus. Excluding two `databot`
+   books leaves **57 completed works, 734 story pages, 32 empty, 702 non-empty typed
+   pages**; ceilings `C(57)=0.9488005` and `C(702)=0.9957417`. The "undergraduate entry"
+   objection barely applies: nine annotator strata of 33/13/2/2/2/2/1/1/1, the two largest
+   supplying 80.7%, and only one book (*Billy and the Dragon*) entered from a student
+   account. Chris entered 2 of the 57. Unlike the uniform `pilot_import` stamp, annotator
+   identity is recorded here, so heterogeneity is stratified rather than assumed away.
+
+5. **80 imported books are held out of all tuning, leaving 81.** Their characters, aliases
+   and attributes are genuine human coding from the original study's `character_database.db`
+   (1,297 characters and 178 aliases usable), so books withheld before tuning are valid
+   proof works *for those fields only*; they add nothing to any text or empty-page
+   denominator. The eligible complement is `121 = 63 alias-positive + 58 zero-alias`, the
+   other 40 being locked in the protected paired experiment and usable only for tuning. The
+   holdout is `80 = 42 + 38`, weighted ceiling `0.05^[58/(121×38)] = 0.9629164`. Sequence:
+   freeze all 80 before any tuning, make targeted improvements on the 41 available now, and
+   defer final policy selection until the protected experiment locks and all 81 are usable.
+
+6. **The two cohorts are never pooled.** They differ in annotator, entry procedure,
+   completeness and provenance with no established transportability, so 57 + 80 protected
+   works is not a 137-work gate. Each carries its own gates and a pass on one cannot
+   compensate for a failure on the other. The imported holdout buys an independent test of
+   whether results transfer to the original study's entry process; it does not strengthen
+   the pilot ceiling.
+
+7. **AI superiority is measured, not assumed.** The expectation that the pipeline is more
+   thorough than the reference is well evidenced, but building it into the scoring rule
+   would make the design unfalsifiable, since every disagreement would score as a human
+   omission. Instead, disagreements are sampled under a frozen stratified design and
+   adjudicated blind against the source image, resolving five ways — AI-win, human-win,
+   both wrong, both defensible, unresolved — with uncertainty never collapsed into an AI
+   win. Conditional superiority requires a one-sided 95% lower bound above 0.5, net
+   superiority above 0. The primary framing is **non-inferiority in completeness plus
+   measured directional superiority where supported**. Agreement with a sparse reference is
+   not the objective, and neither party is deemed correct by identity.
+
+8. **Ratified research conventions.** The app's four gender options
+   (`Female/Male/Non-specific/Transgender`, `text_content/forms.py:630`) and the
+   `gender_help` pronoun rule are the codebook — the `# TODO: confirm taxonomy with team`
+   governs ethnicity, not gender. `Transgender` has zero source observations (the DB holds
+   only F/M/NGS) and is never silently certified; `plural` is hard-coded `False`
+   (`import_pilot_data.py:854`) and is unsupported. The **completeness non-inferiority
+   margin is 1 percentage point**, applied separately to text, characters and aliases, and
+   does not license a point of invented text.
+
+9. **The published relation evidence is reusable, cutting the work from 200 sections to
+   17.** `CM_SPEECH_DETECTION_VALIDATION_NEWRUN_190924.json` holds 650 genuine human binary
+   labels, not error flags, and reproduces table 23.2 exactly (TP 260, FP 3, FN 12, TN 375
+   → 95.588% / 98.859% / 97.692%), so speech detection needs no new annotation. The
+   attribution pickle holds only 0/1 flags, leaving 193 accepted speaker and 188 accepted
+   recipient answers reusable and **17 rejected sections** needing corrected answers — a
+   disjoint union, verified. The published run generated attribution from text alone
+   (`openai_api/tasks.py:run_task_1`) and matched to the human character list separately
+   (`run_task_3`), and scored *better* before matching (196/199 = 98.4925% and 192/199 =
+   96.4824%) than after (193 and 188). The matching step is the lossy one, so the
+   autonomous pipeline's machine inventory is the real risk. Alignment, not annotation, is
+   the binding constraint: the flags are keyed to old sections over pdfplumber text.
+
+10. **Human agreement cannot be computed from existing files.**
+    `sample_15pc_Sophie_Kate_combined_FINAL.xlsx` has 2,125 sentences with one
+    `direct_speech` column, one `speaker_char` column, no coder-identity column and no
+    recipient column, so it cannot hold two independent codings; its two unheadered columns
+    are a UDPipe parse review, not a second coder. Only recovering pre-reconciliation
+    originals could settle it. The published figures are a single anchored annotator and
+    must never be presented as inter-annotator agreement.
+
+11. **Two adjudicator roles, individuals unnamed.** A primary blind source adjudicator plus
+    a separate second reviewer for unresolved cases and a frozen 20% random reliability
+    subset — which is what finally yields a human-agreement estimate. Chris's 2 qualified
+    works route to the second reviewer. A second name alone does not establish
+    independence; prior exposure is recorded.
+
+12. **The audit interface is a first-class requirement, not a nicety.** A clunky screen is
+    the difference between the audit happening and quietly not happening, which would leave
+    no denominators and undetectable drift. An ordinary two-endpoint judgement costs three
+    keys including an explicit lock, with evidence already on screen, no prefilled answers
+    and no default-correct checkboxes. Where speed and blinding conflict, rigour wins and
+    the cost is stated. See `planning/audit_interface_design_2026-11-06.md`.
+
+13. **Run-phase audit carries a random component without a fixed percentage.** An agent
+    recommends books for audit, done if and when there is time, but a random share within
+    whatever volume is actually audited keeps rates estimable. The frozen canary set stays
+    for drift.
+
+14. **What is explicitly NOT available.** No book-level 0.95 text claim exists for this
+    corpus; the strong text evidence is the page-level `C(702)=0.9957417`. The
+    source-completeness audit (nine books) remains diagnostic and its certificate is
+    withheld rather than dressed up. Relation claims are conditional on the measured
+    cohort, not a future-book guarantee. The *Oi Puppies!* and *The Magic Paintbrush*
+    reservations were dropped because completing them would have moved the text bound by
+    0.169 points: all 17 unfinished records stay untouched in the database, excluded from
+    tuning so their future proof eligibility survives, completable later by a human or an
+    agent.
+
+15. **Credits are not a decision.** Chris buys them as needed; no purchase amount is
+    proposed. Accounting qualification still comes first: `ai_pricing.py` and
+    `utilities.record_api_usage` (`utilities.py:521`) must handle OpenAI before any such
+    spend is recorded, and `gateway.py:126` remains the only provider abstraction.
+    Abstention is permitted within coverage floors, and calibration and proof precede new
+    cataloguing.
+
+See `planning/autonomy_validation_design_2026-11-06.md`,
+`planning/relation_validation_protocol_2026-11-06.md` and
+`planning/audit_interface_design_2026-11-06.md`.
