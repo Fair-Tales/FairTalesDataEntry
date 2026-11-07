@@ -544,3 +544,23 @@ six rounds, adversarially reviewed by Fable, and independently verified in-sessi
 See `planning/autonomy_validation_design_2026-11-06.md`,
 `planning/relation_validation_protocol_2026-11-06.md` and
 `planning/audit_interface_design_2026-11-06.md`.
+
+## 016 — Enforce tuning exclusions before deserializing content (2026-11-07)
+
+**Status:** implemented; offline synthetic tests, no tuning run performed.
+
+The harness had no shared tuning loader: it decoded the entire reference manifest
+before selection and independently read caches and prompt examples. New tuning
+uses one source-aware load gate, with a small selective JSON reader for the
+existing monolithic files. This avoids new exports, services or dependencies.
+`extract` and `score` default to tuning checks; the original paired experiment
+requires explicit `--original-experiment` and retains its previous loading rules.
+
+The actual seal's exclusion file is a flat imported80 list; protected40 and the
+tuning lists are in `freeze.json`. Both are checked without modifying the seal.
+Unknown sources fail closed because the grouped crosswalk described in §1D is
+not present. Release of protected40 is a trusted results/configuration lock
+recorded immutably in an ordinary run record. Admitted IDs, refusals and detected
+breaches use that same record; a detected exposure invalidates proof without a
+redraw. This prevents accidental excluded inputs and catches missing provenance;
+it adds no custody roles, approval gates or adversarial protection.

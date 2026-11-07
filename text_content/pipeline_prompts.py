@@ -243,7 +243,10 @@ photographs, alongside publisher, publisher_role, year, scope and quote.""",
 
 
 def load_example_pack(*, held_out_book_ids=(), held_out_groups=()):
-    pack = json.loads(Path(__file__).with_name("pipeline_examples.json").read_text())
+    from scripts.extraction_eval.tuning import current_loader
+    path = Path(__file__).with_name("pipeline_examples.json")
+    loader = current_loader()
+    pack = loader.examples(path) if loader else json.loads(path.read_text())
     development = set(pack.get("development_book_ids", []))
     development_groups = set(pack.get("development_holdout_groups", []))
     held_books, held_groups = set(held_out_book_ids), set(held_out_groups)

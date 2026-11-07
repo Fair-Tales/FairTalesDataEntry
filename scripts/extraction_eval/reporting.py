@@ -137,7 +137,10 @@ def write_reports(manifest, predictions, out, protocol=None, selection=None, cal
     summary["comparison_protocol"] = identity
     summary["book_scores"] = [book_comparison_record(score, protocol_identity=identity) for score in scores]
     cohort_path = Path(__file__).parent / "evidence" / "dev20-v1" / "empty_reference_cohort.json"
-    cohort = json.loads(cohort_path.read_text(encoding="utf-8")) if cohort_path.exists() else None
+    from .tuning import current_loader
+    loader = current_loader()
+    cohort = (loader.source_json(cohort_path, 'historical_labels', snapshot_id=manifest.get('snapshot_id'))
+              if loader else json.loads(cohort_path.read_text(encoding="utf-8"))) if cohort_path.exists() else None
     if cohort and cohort.get("snapshot_id") == manifest.get("snapshot_id"):
         from .monitoring import monitor_empty_reference
         summary["empty_reference_monitoring"] = monitor_empty_reference(manifest, predictions, cohort, selected_ids=ids)

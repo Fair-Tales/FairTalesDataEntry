@@ -7,8 +7,11 @@ from pathlib import Path
 import shlex
 import sqlite3
 import sys
+from contextlib import nullcontext
 
 from .store import atomic_json, read_json, run_lock
+from .tuning import DEFAULT_FREEZE_DIR, TuningLoader, TuningRefused, TuningExposure
+from text_content.tuning import TuningErrors, TuningHelp
 
 PACKAGE = Path(__file__).resolve().parent
 
@@ -42,6 +45,9 @@ def build_parser():
     extract.add_argument("--monthly-cap-usd", type=float, default=200)
     extract.add_argument("--ledger", type=Path, help="Shared evaluator ledger; defaults to snapshot parent's spend.sqlite")
     extract.add_argument("--secrets", default=".streamlit/secrets.toml", help="Read only AFTER paid-call confirmation")
+    extract.add_argument("--freeze-dir", type=Path, default=DEFAULT_FREEZE_DIR, help=TuningHelp.freeze_dir)
+    extract.add_argument("--paired-experiment-lock", type=Path, help=TuningHelp.lock)
+    extract.add_argument("--original-experiment", action="store_true", help=TuningHelp.original)
     group = extract.add_mutually_exclusive_group()
     group.add_argument("--execute", action="store_true")
     group.add_argument("--dry-run", action="store_true", help="Default: local preprocessing/cache replay, zero network calls")
@@ -54,11 +60,16 @@ def build_parser():
     score.add_argument("--adjudications", type=Path, help="Reviewed versioned reference overlay; original scores retained")
     score.add_argument("--equivalences", type=Path, help="Reviewed versioned name/imprint equivalences")
     score.add_argument("--compare-run", type=Path, help="Paired book-cluster comparison against another local run")
+    score.add_argument("--freeze-dir", type=Path, help=TuningHelp.freeze_dir)
+    score.add_argument("--original-experiment", action="store_true", help=TuningHelp.original)
+    audit = commands.add_parser("audit-tuning", help=TuningHelp.audit)
+    audit.add_argument("--run", type=Path, required=True)
+    audit.add_argument("--freeze-dir", type=Path, help=TuningHelp.freeze_dir)
     return parser
 
 
-def _load_snapshot(path):
-    manifest = read_json(path / "manifest.json")
+def _load_snapshot(path, *, loader=None, book_ids=None, additional_ids=None):
+    manifest = loader.snapshot(path, book_ids, additional_ids=additional_ids) if loader else read_json(path / "manifest.json")
     if manifest.get("complete") is not True:
         raise ValueError("Snapshot has not completed")
     consistency = manifest.get("source_consistent")
@@ -136,11 +147,33 @@ def _live_anthropic(secrets_path, config):
 
 
 def _extract(args):
+    with run_lock(args.out):
+        if args.original_experiment:
+            if args.paired_experiment_lock or ((args.out / 'run.json').exists()
+                    and read_json(args.out / 'run.json').get('tuning')):
+                raise ValueError(TuningErrors.mixed_modes)
+            loader = None
+        else:
+            lock = read_json(args.paired_experiment_lock) if args.paired_experiment_lock else None
+            loader = TuningLoader(args.out, args.freeze_dir, paired_experiment_lock=lock)
+        with loader.activate() if loader else nullcontext():
+            try:
+                return _extract_loaded(args, loader)
+            finally:
+                if loader:
+                    loader.audit()
+
+
+def _extract_loaded(args, loader):
     from .gateway import Gateway, validate_prices
     from .runner import estimate, freeze_run, run_extract, validate_inputs
     from .sampling import select_books
     from .store import Ledger
-    manifest = _load_snapshot(args.snapshot)
+    requested = args.books
+    if loader and not requested:
+        requested = loader.state.get('snapshot_book_ids')
+    manifest = _load_snapshot(args.snapshot, loader=loader, book_ids=requested,
+                              additional_ids=args.challenge_books)
     config = read_json(args.config)
     required = read_json(PACKAGE / "baseline.json").get("settings", {})
     settings = config.get("settings", {})
@@ -155,69 +188,87 @@ def _extract(args):
         raise ValueError("Invalid extraction_max_tokens")
     validate_prices(config, executing=args.execute)
     ledger_path = args.ledger or args.snapshot.parent / "spend.sqlite"
-    with run_lock(args.out):
-        saved_selection = args.out / "selection.json"
-        if saved_selection.exists() and args.limit is None and args.books is None and args.challenge_books is None:
-            selection = read_json(saved_selection)
-        else:
-            selection = select_books(manifest, limit=args.limit, books=args.books, seed=args.seed, challenge_books=args.challenge_books)
-        if not selection.get("book_ids"):
-            raise ValueError("No eligible books selected")
-        if any(row.get("issue") == "ambiguous_book_folder" for row in manifest.get("audit", []) if set(row.get("book_ids", [])) & set(selection.get("book_ids", []))):
-            raise ValueError("Selected books share an ambiguous source folder; resolve before extracting")
-        validate_inputs(args.snapshot, manifest, selection)
-        previous_path = args.out / "predictions.json"
-        if not previous_path.exists():
-            previous_path = args.out / "dry_run_predictions.json"
-        previous = read_json(previous_path) if previous_path.exists() else None
-        plan = estimate(manifest, selection, previous)
-        print(json.dumps(plan, indent=2))
-        print(f"Run cap: ${args.max_spend_usd:.2f}; shared monthly cap: ${args.monthly_cap_usd:.2f}. Ledger: {ledger_path}")
-        # No credentials, SDK client, lookups or paid requests before this point.
+    saved_selection = args.out / "selection.json"
+    if saved_selection.exists() and args.limit is None and args.books is None and args.challenge_books is None:
+        selection = read_json(saved_selection)
+    else:
+        selection = select_books(manifest, limit=args.limit, books=args.books, seed=args.seed, challenge_books=args.challenge_books)
+    if not selection.get("book_ids"):
+        raise ValueError("No eligible books selected")
+    if any(row.get("issue") == "ambiguous_book_folder" for row in manifest.get("audit", []) if set(row.get("book_ids", [])) & set(selection.get("book_ids", []))):
+        raise ValueError("Selected books share an ambiguous source folder; resolve before extracting")
+    validate_inputs(args.snapshot, manifest, selection, loader=loader)
+    previous_path = args.out / "predictions.json"
+    if not previous_path.exists():
+        previous_path = args.out / "dry_run_predictions.json"
+    previous = (loader.predictions(previous_path) if loader else read_json(previous_path)) if previous_path.exists() else None
+    plan = estimate(manifest, selection, previous)
+    print(json.dumps(plan, indent=2))
+    print(f"Run cap: ${args.max_spend_usd:.2f}; shared monthly cap: ${args.monthly_cap_usd:.2f}. Ledger: {ledger_path}")
+    # No credentials, SDK client, lookups or paid requests before this point.
+    if args.execute:
+        answer = input("Type AFFIRMATIVE to allow metered paid calls up to this run cap: ")
+        if answer != "AFFIRMATIVE":
+            print("No paid calls authorized.")
+            return 1
+        from .billing import validate_billing
+        validate_billing(config)
+    frozen = freeze_run(args.out, manifest, selection, config, args.replicate, args.max_spend_usd, args.monthly_cap_usd, ledger_path)
+    ledger = Ledger(ledger_path, frozen.get("run_id"), args.max_spend_usd, args.monthly_cap_usd)
+    client = None
+    try:
+        ledger.recover()
         if args.execute:
-            answer = input("Type AFFIRMATIVE to allow metered paid calls up to this run cap: ")
-            if answer != "AFFIRMATIVE":
-                print("No paid calls authorized.")
-                return 1
-            from .billing import validate_billing
-            validate_billing(config)
-        frozen = freeze_run(args.out, manifest, selection, config, args.replicate, args.max_spend_usd, args.monthly_cap_usd, ledger_path)
-        ledger = Ledger(ledger_path, frozen.get("run_id"), args.max_spend_usd, args.monthly_cap_usd)
-        client = None
-        try:
-            ledger.recover()
-            if args.execute:
-                client = _live_anthropic(args.secrets, config)
-            gateway = Gateway(client, ledger, config, replicate=args.replicate, dry_run=not args.execute)
-            result = run_extract(args.snapshot, manifest, selection, args.out, gateway, config, dry_run=not args.execute)
-            atomic_json(args.out / "calls.json", ledger.rows())
-            if result.get('stop_reason'):
-                from text_content.pipeline_runtime import RUN_STOPPED
-                reason, detail = result.get('stop_reason')
-                print(RUN_STOPPED.format(reason=reason, detail=detail), file=sys.stderr)
-            if not args.execute:
-                print("Estimate after local processing and response-cache replay:")
-                print(json.dumps(estimate(manifest, selection, result), indent=2))
-            print(f"Completed local stages; {gateway.paid_calls} paid calls, {gateway.cache_hits} response-cache hits. Incomplete: {result.get('incomplete')}")
-            return 2 if args.execute and result.get("incomplete") else 0
-        finally:
-            if client is not None:
-                client.close()
-            ledger.close()
+            client = _live_anthropic(args.secrets, config)
+        gateway = Gateway(client, ledger, config, replicate=args.replicate, dry_run=not args.execute)
+        result = run_extract(args.snapshot, manifest, selection, args.out, gateway, config, loader=loader, dry_run=not args.execute)
+        atomic_json(args.out / "calls.json", ledger.rows())
+        if result.get('stop_reason'):
+            from text_content.pipeline_runtime import RUN_STOPPED
+            reason, detail = result.get('stop_reason')
+            print(RUN_STOPPED.format(reason=reason, detail=detail), file=sys.stderr)
+        if not args.execute:
+            print("Estimate after local processing and response-cache replay:")
+            print(json.dumps(estimate(manifest, selection, result), indent=2))
+        print(f"Completed local stages; {gateway.paid_calls} paid calls, {gateway.cache_hits} response-cache hits. Incomplete: {result.get('incomplete')}")
+        return 2 if args.execute and result.get("incomplete") else 0
+    finally:
+        if client is not None:
+            client.close()
+        ledger.close()
 
 
 def _score(args):
+    record = read_json(args.run / 'run.json')
+    if args.original_experiment:
+        if record.get('tuning'):
+            raise ValueError(TuningErrors.mixed_modes)
+        return _score_loaded(args, None)
+    if record.get('tuning'):
+        with run_lock(args.run):
+            loader = TuningLoader(args.run, args.freeze_dir or record['tuning']['freeze_dir'])
+            with loader.activate():
+                try:
+                    return _score_loaded(args, loader)
+                finally:
+                    loader.audit()
+    raise ValueError(TuningErrors.missing_record)
+
+
+def _score_loaded(args, loader):
     from .reporting import snapshot_audit_description, write_reports
-    manifest = _load_snapshot(args.snapshot)
+    manifest = _load_snapshot(args.snapshot, loader=loader,
+                              book_ids=loader.state.get('snapshot_book_ids') if loader else None)
     protocol = read_json(args.protocol)
     # Read/freeze overlays before even opening predictions.
-    overlay = read_json(args.adjudications) if args.adjudications else None
+    overlay = (loader.source_json(args.adjudications, 'historical_labels') if loader
+               else read_json(args.adjudications)) if args.adjudications else None
     if args.compare_run and overlay and overlay.get("schema_version") != "adjudication-v2":
         from text_content.evaluation import EvaluationErrors
         raise ValueError(EvaluationErrors.comparison_overlay_required)
     if args.equivalences:
         from .scoring import apply_equivalences
-        table = read_json(args.equivalences)
+        table = loader.source_json(args.equivalences, 'equivalences') if loader else read_json(args.equivalences)
         protocol = apply_equivalences(protocol, table)
     adjudicated = None
     if overlay:
@@ -228,7 +279,7 @@ def _score(args):
     contract = run_config.get("contract", {})
     if contract.get("snapshot_id") != manifest.get("snapshot_id") or contract.get("snapshot_hash") != digest(manifest):
         raise ValueError("Run and snapshot identities differ")
-    predictions = read_json(args.run / "predictions.json")
+    predictions = loader.predictions(args.run / 'predictions.json') if loader else read_json(args.run / "predictions.json")
     if predictions.get("snapshot_id") != manifest.get("snapshot_id"):
         raise ValueError("Prediction and snapshot identities differ")
     predictions["_run_dir"] = str(args.run.resolve())
@@ -254,7 +305,11 @@ def _score(args):
         other_contract = candidate_run.get("contract", {})
         if other_contract.get("snapshot_hash") != contract.get("snapshot_hash"):
             raise ValueError("Comparison runs must use the same frozen snapshot")
-        candidate = read_json(args.compare_run / "predictions.json")
+        if loader:
+            if not candidate_run.get('tuning'):
+                raise ValueError(TuningErrors.missing_record)
+            TuningLoader(args.compare_run, args.freeze_dir or candidate_run['tuning']['freeze_dir']).audit()
+        candidate = loader.predictions(args.compare_run / 'predictions.json') if loader else read_json(args.compare_run / "predictions.json")
         if candidate.get("snapshot_id") != manifest.get("snapshot_id"):
             raise ValueError("Candidate predictions use a different snapshot")
         candidate["_run_dir"] = str(args.compare_run.resolve())
@@ -278,6 +333,16 @@ def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        return {"snapshot": _snapshot, "extract": _extract, "score": _score}.get(args.command)(args)
-    except (OSError, ValueError, TypeError, sqlite3.Error, EOFError) as exc:
+        return {"snapshot": _snapshot, "extract": _extract, "score": _score,
+                "audit-tuning": _audit_tuning}.get(args.command)(args)
+    except (OSError, ValueError, TypeError, sqlite3.Error, EOFError, TuningRefused, TuningExposure) as exc:
         parser.exit(2, f"{type(exc).__name__}: {exc}\n")
+
+
+def _audit_tuning(args):
+    with run_lock(args.run):
+        record = read_json(args.run / 'run.json')
+        if not record.get('tuning'):
+            raise ValueError(TuningErrors.missing_record)
+        TuningLoader(args.run, args.freeze_dir or record['tuning']['freeze_dir']).audit()
+    return 0

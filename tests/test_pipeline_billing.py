@@ -86,7 +86,7 @@ def test_billing_stop_marks_run_incomplete_and_skips_later_work(tmp_path):
                                 extract_characters=lambda *a: pytest.fail('characters dispatched'))
     gateway = SimpleNamespace(record_usage=lambda *a: None, context={})
     result = run_extract(tmp_path, manifest, {'book_ids': ['book']}, tmp_path,
-                         gateway, configuration(), core=fake_core, isbn_lookup=lambda _: None,
+                         gateway, configuration(), loader=None, core=fake_core, isbn_lookup=lambda _: None,
                          progress=lambda _: None)
     assert result['incomplete'] is True
     assert result['stop_reason'][0] == 'billing_stopped'

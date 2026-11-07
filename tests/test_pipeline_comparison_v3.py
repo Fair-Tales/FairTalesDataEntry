@@ -530,6 +530,7 @@ def test_cli_comparison_routes_the_same_corrected_manifest_to_both_runs(tmp_path
         json.dumps({"convention_version": CONVENTION_VERSION})
     )
     args = Namespace(
+        original_experiment=True,
         snapshot=snapshot,
         run=tmp_path / "baseline",
         protocol=tmp_path / "protocol.json",

@@ -4,7 +4,6 @@ from text_content.donate import Donate
 from text_content.terms import Terms
 from text_content.forms import *
 from text_content.old_books import old_books
-from text_content.ai_prompts import AIPrompts
 from text_content.forms import (
     ReportFeedback, Login, Nav, AddCharacterPage, BookEditHome, Admin, AdminSettings,
     RegisterUser, PhotoUpload, ReviewBooks, Confirm, UserHome, Uploader, BookDataEntry,
@@ -13,3 +12,12 @@ from text_content.forms import (
 )
 from text_content.priority_books import PriorityBooks
 from text_content.page_recovery import PageRecovery
+
+
+def __getattr__(name):
+    # Importing messages must not load book-derived prompt examples before the
+    # evaluator has installed its tuning exclusion check.
+    if name == 'AIPrompts':
+        from text_content.ai_prompts import AIPrompts
+        return AIPrompts
+    raise AttributeError(name)

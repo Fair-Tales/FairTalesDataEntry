@@ -15,7 +15,7 @@ from scripts.extraction_eval.runner import (
     cached_isbn_lookup, estimate, freeze_run, run_extract, validate_inputs,
 )
 from scripts.extraction_eval.store import (
-    BudgetStopped, CachedFailure, Ledger, OutcomeUnknown, atomic_json, digest,
+    BudgetStopped, CachedFailure, Ledger, OutcomeUnknown, atomic_json, digest, read_json,
 )
 
 
@@ -290,8 +290,9 @@ def test_runner_subset_resume_and_predicted_character_inputs(snapshot_fixture, t
     out.mkdir()
     core = FakeCore()
     gateway = SimpleNamespace(record_usage=lambda *args: None)
-    run = lambda: run_extract(snapshot, manifest, selection, out, gateway, config,
-                              core=core, isbn_lookup=lambda isbn: None, progress=lambda *args: None)
+    def run():
+        return run_extract(snapshot, manifest, selection, out, gateway, config,
+                           loader=None, core=core, isbn_lookup=lambda isbn: None, progress=lambda *args: None)
     result = run()
     assert list(result['books']) == ['selected']
     assert result['incomplete'] is False
@@ -316,7 +317,7 @@ def test_runner_dry_run_no_provider_calls(snapshot_fixture, tmp_path, config, le
     ledger = ledger_factory()
     gateway = Gateway(provider, ledger, config, dry_run=True)
     result = run_extract(snapshot, manifest, selection, out, gateway, config,
-                         dry_run=True, core=core, isbn_lookup=lambda isbn: None,
+                         dry_run=True, loader=None, core=core, isbn_lookup=lambda isbn: None,
                          progress=lambda *args: None)
     assert result['incomplete'] is True
     assert provider.calls == []
@@ -333,7 +334,7 @@ def test_runner_budget_stop_preserves_incomplete_denominator(snapshot_fixture, t
     provider = FakeProvider()
     gateway = Gateway(provider, ledger_factory(cap=0), config)
     result = run_extract(snapshot, manifest, selection, out, gateway, config,
-                         core=core, isbn_lookup=lambda isbn: None, progress=lambda *args: None)
+                         loader=None, core=core, isbn_lookup=lambda isbn: None, progress=lambda *args: None)
     book = result['books']['selected']
     assert result['incomplete'] is True
     assert len(book['pages']) == 2
@@ -344,11 +345,11 @@ def test_runner_budget_stop_preserves_incomplete_denominator(snapshot_fixture, t
 
 def test_snapshot_integrity_is_verified_before_extraction(snapshot_fixture):
     snapshot, manifest, selection = snapshot_fixture
-    validate_inputs(snapshot, manifest, selection)
+    validate_inputs(snapshot, manifest, selection, loader=None)
     path = snapshot / manifest['books'][0]['pages'][0]['image']['path']
     path.write_bytes(b'tampered')
     with pytest.raises(ValueError, match='hash mismatch'):
-        validate_inputs(snapshot, manifest, selection)
+        validate_inputs(snapshot, manifest, selection, loader=None)
 
 
 def test_isbn_genuine_absence_is_cached_and_dry_run_never_looks_up(tmp_path):
@@ -456,7 +457,7 @@ def test_resume_retries_isbn_failure_without_repeating_vision(snapshot_fixture, 
         return {'authors': ['Recovered author'], 'publisher': 'Recovered publisher'}
     result = run_extract(snapshot, manifest, selection, out,
                          SimpleNamespace(record_usage=lambda *args: None), config,
-                         core=core, isbn_lookup=provider, progress=lambda *args: None)
+                         loader=None, core=core, isbn_lookup=provider, progress=lambda *args: None)
     metadata = result['books']['selected']['metadata']['value']
     assert calls == ['123']
     assert all(operation != 'metadata' for operation, _ in core.calls)
@@ -465,6 +466,17 @@ def test_resume_retries_isbn_failure_without_repeating_vision(snapshot_fixture, 
     assert metadata['publisher'] == 'Recovered publisher'
     assert metadata['isbn_lookup']['status'] == 'found'
     assert metadata['lookup_failed_fields'] == []
+
+
+def test_run_contract_preserves_initial_tuning_record(snapshot_fixture, tmp_path, config):
+    _, manifest, selection = snapshot_fixture
+    out = tmp_path / 'frozen'
+    tuning = {'loaded_work_ids': ['selected'], 'refused_attempts': []}
+    atomic_json(out / 'run.json', {'tuning': tuning})
+    record = freeze_run(out, manifest, selection, config, '1', 16, 200,
+                        tmp_path / 'shared.sqlite')
+    assert record['tuning'] == tuning
+    assert read_json(out / 'run.json')['tuning'] == tuning
 
 
 def test_run_contract_rejects_changed_inputs(snapshot_fixture, tmp_path, config):
@@ -501,7 +513,7 @@ def test_cli_dry_run_does_not_construct_clients_or_read_secrets(snapshot_fixture
     monkeypatch.setattr(utilities, 'get_s3_filesystem', forbidden)
     monkeypatch.setattr(utilities, 'FirestoreWrapper', forbidden)
     monkeypatch.setattr('builtins.input', forbidden)
-    assert cli.main(['extract', '--snapshot', str(snapshot), '--out', str(tmp_path / 'cli-run'),
+    assert cli.main(['extract', '--original-experiment', '--snapshot', str(snapshot), '--out', str(tmp_path / 'cli-run'),
                      '--config', str(config_path), '--limit', '1', '--dry-run']) == 0
     assert len(fake.calls) == 3  # metadata and two OCR requests; all cache misses
 
@@ -517,6 +529,6 @@ def test_cli_refused_confirmation_never_constructs_client(snapshot_fixture, tmp_
     out = tmp_path / 'refused'
     monkeypatch.setattr('builtins.input', lambda prompt: 'yes')
     monkeypatch.setattr(cli, '_live_anthropic', lambda *args: pytest.fail('Unauthorized client'))
-    assert cli.main(['extract', '--snapshot', str(snapshot), '--out', str(out),
+    assert cli.main(['extract', '--original-experiment', '--snapshot', str(snapshot), '--out', str(out),
                      '--config', str(config_path), '--limit', '1', '--execute']) == 1
     assert not (out / 'run.json').exists()

@@ -158,7 +158,7 @@ def test_runner_applies_context_before_characters_and_reconciles_after_ocr(tmp_p
     gateway = SimpleNamespace(record_usage=lambda *a: None, context={})
     config = {'settings': {'story_context_enabled': True, 'metadata_reconciliation_enabled': True}}
     result = run_extract(tmp_path, manifest, {'book_ids': ['book']}, tmp_path,
-                         gateway, config, core=fake, isbn_lookup=lambda _: None, progress=lambda _: None)
+                         gateway, config, loader=None, core=fake, isbn_lookup=lambda _: None, progress=lambda _: None)
     assert events == ['metadata', 'page', 'page', 'context', 'reconcile', 'characters']
     book = result['books']['book']
     assert book['metadata']['value']['title'] == 'reconciled'

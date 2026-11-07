@@ -275,7 +275,7 @@ def test_default_snapshot_then_score_retains_explicit_unaudited_provenance(tmp_p
     atomic_json(run / "predictions.json", {"snapshot_id": manifest.get("snapshot_id"), "books": {}})
     monkeypatch.setattr(snapshot, "create_live_backend", forbidden)
     monkeypatch.setattr(cli, "_live_anthropic", forbidden)
-    assert cli.main(["score", "--snapshot", str(output), "--run", str(run)]) == 0
+    assert cli.main(["score", "--original-experiment", "--snapshot", str(output), "--run", str(run)]) == 0
     summary = read_json(run / "reports" / "summary.json")
     assert summary.get("snapshot_audit_status") == "not_audited"
     assert summary.get("snapshot_source_consistent") is None

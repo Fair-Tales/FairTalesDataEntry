@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import socket
 import sys
 from types import SimpleNamespace
@@ -126,7 +125,7 @@ def test_dry_run_limit_twenty_no_credentials_no_paid_calls_no_isbn(offline_input
     monkeypatch.setattr(utilities, "lookup_isbn", forbidden)
     snapshot, config = offline_inputs
     out = tmp_path / "dry-run"
-    assert cli.main(["extract", "--snapshot", str(snapshot), "--out", str(out), "--config", str(config),
+    assert cli.main(["extract", "--original-experiment", "--snapshot", str(snapshot), "--out", str(out), "--config", str(config),
                      "--limit", "20", "--dry-run"]) == 0
     assert len(read_json(out / "selection.json").get("book_ids")) == 20
     predicted = read_json(out / "dry_run_predictions.json")
@@ -158,7 +157,7 @@ def test_paid_fake_exact_books_confirmation_cost_resume_and_offline_score(offlin
 
     monkeypatch.setattr("builtins.input", approve)
     monkeypatch.setattr(cli, "_live_anthropic", create_provider)
-    args = ["extract", "--snapshot", str(snapshot), "--out", str(out), "--config", str(config),
+    args = ["extract", "--original-experiment", "--snapshot", str(snapshot), "--out", str(out), "--config", str(config),
             "--books", "book-02", "Book 7", "--execute"]
     assert cli.main(args) == 0
     assert read_json(out / "selection.json").get("book_ids") == ["book-02", "book-07"]
@@ -169,12 +168,12 @@ def test_paid_fake_exact_books_confirmation_cost_resume_and_offline_score(offlin
     assert all(call.get("state") == "completed" and call.get("cost_usd", 0) > 0 for call in calls)
     assert all(call.get("label") for call in calls)
     # Resume without subset flags restores the exact saved selection and is free.
-    assert cli.main(["extract", "--snapshot", str(snapshot), "--out", str(out), "--config", str(config), "--execute"]) == 0
+    assert cli.main(["extract", "--original-experiment", "--snapshot", str(snapshot), "--out", str(out), "--config", str(config), "--execute"]) == 0
     assert len(provider.calls) == 6
     monkeypatch.setattr(cli, "_live_anthropic", forbidden)
     import utilities
     monkeypatch.setattr(utilities, "lookup_isbn", forbidden)
-    assert cli.main(["score", "--snapshot", str(snapshot), "--run", str(out)]) == 0
+    assert cli.main(["score", "--original-experiment", "--snapshot", str(snapshot), "--run", str(out)]) == 0
     assert all((out / "reports" / name).is_file() for name in (
         "summary.json", "books.csv", "pages.csv", "calls.csv", "inspection.html"))
     summary = read_json(out / "reports" / "summary.json")
@@ -184,6 +183,82 @@ def test_paid_fake_exact_books_confirmation_cost_resume_and_offline_score(offlin
 def test_unconfirmed_paid_run_never_constructs_provider(offline_inputs, fake_core, tmp_path, monkeypatch):
     snapshot, config = offline_inputs
     monkeypatch.setattr("builtins.input", lambda prompt: "yes")
-    assert cli.main(["extract", "--snapshot", str(snapshot), "--out", str(tmp_path / "refused"),
+    assert cli.main(["extract", "--original-experiment", "--snapshot", str(snapshot), "--out", str(tmp_path / "refused"),
                      "--config", str(config), "--limit", "20", "--execute"]) == 1
     assert fake_core == []
+
+
+@pytest.fixture
+def tuning_freeze(tmp_path):
+    """A small seal with the same schema as the real freeze; no real IDs/files."""
+    from scripts.extraction_eval.store import digest
+    path = tmp_path / 'freeze'
+    atomic_json(path / 'holdout_ids.json', ['book-00'])
+    allowed = [f'book-{i:02}' for i in range(2, 25)]
+    atomic_json(path / 'freeze.json', {
+        'imported80_ids': ['book-00'], 'protected40_ids': ['book-01'],
+        'tune41_ids': allowed, 'tune81_ids': ['book-01', *allowed],
+        'imported80_ids_sha256': digest(['book-00']),
+        'holdout_ids_file_sha256': hashlib.sha256((path / 'holdout_ids.json').read_bytes()).hexdigest(),
+    })
+    return path
+
+
+def test_default_extract_and_score_use_tuning_gate(offline_inputs, fake_core, tuning_freeze,
+                                                 tmp_path, monkeypatch):
+    snapshot, config = offline_inputs
+    out = tmp_path / 'tuning'
+    provider = FakePaidProvider()
+    monkeypatch.setattr('builtins.input', lambda prompt: 'AFFIRMATIVE')
+    monkeypatch.setattr(cli, '_live_anthropic', lambda *args: provider)
+    args = ['extract', '--snapshot', str(snapshot), '--out', str(out), '--config', str(config),
+            '--freeze-dir', str(tuning_freeze), '--books', 'book-02', '--execute']
+    assert cli.main(args) == 0
+    record = read_json(out / 'run.json')['tuning']
+    assert record['loaded_ids'] == ['book-02']
+    assert record['refused_attempts'] == []
+    assert len(provider.calls) == 3
+    assert cli.main(args) == 0
+    assert len(provider.calls) == 3
+    monkeypatch.setattr(cli, '_live_anthropic', forbidden)
+    assert cli.main(['score', '--snapshot', str(snapshot), '--run', str(out)]) == 0
+    assert cli.main(['audit-tuning', '--run', str(out)]) == 0
+    assert read_json(out / 'run.json')['tuning']['breaches'] == []
+    with pytest.raises(SystemExit) as exc:
+        cli.main(['extract', '--original-experiment', '--snapshot', str(snapshot), '--out', str(out)])
+    assert exc.value.code == 2
+
+
+def test_default_extract_refuses_before_image_or_paid_setup(offline_inputs, tuning_freeze,
+                                                           tmp_path, monkeypatch):
+    from scripts.extraction_eval import runner
+    snapshot, config = offline_inputs
+    out = tmp_path / 'denied-tuning'
+    monkeypatch.setattr(runner, 'local_image', forbidden)
+    monkeypatch.setattr('builtins.input', forbidden)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(['extract', '--snapshot', str(snapshot), '--out', str(out), '--config', str(config),
+                  '--freeze-dir', str(tuning_freeze), '--books', 'book-00', '--execute'])
+    assert exc.value.code == 2
+    record = read_json(out / 'run.json')['tuning']
+    assert record['loaded_ids'] == []
+    assert record['refused_attempts'][0]['source_ids'] == ['book-00']
+    assert record['breaches'] == []
+
+
+def test_default_extract_missing_freeze_stops_before_snapshot(offline_inputs, tmp_path, monkeypatch):
+    snapshot, config = offline_inputs
+    monkeypatch.setattr(cli, '_load_snapshot', forbidden)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(['extract', '--snapshot', str(snapshot), '--out', str(tmp_path / 'missing-seal'),
+                  '--config', str(config), '--freeze-dir', str(tmp_path / 'missing')])
+    assert exc.value.code == 2
+
+
+def test_challenge_selection_keeps_other_tuning_candidates(offline_inputs, fake_core, tuning_freeze,
+                                                         tmp_path):
+    snapshot, config = offline_inputs
+    out = tmp_path / 'challenge-tuning'
+    assert cli.main(['extract', '--snapshot', str(snapshot), '--out', str(out), '--config', str(config),
+                     '--freeze-dir', str(tuning_freeze), '--challenge-books', 'book-02', '--limit', '3']) == 0
+    assert len(read_json(out / 'selection.json')['book_ids']) == 3
