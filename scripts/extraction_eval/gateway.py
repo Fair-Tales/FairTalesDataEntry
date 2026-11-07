@@ -6,6 +6,8 @@ import json
 import sqlite3
 from types import SimpleNamespace
 
+from ai_pricing import normalize_usage
+
 from .store import CachedFailure, OutcomeUnknown, canonical, digest
 from .billing import BILLING_EXHAUSTED, BillingStopped, billing_rejection
 
@@ -83,16 +85,24 @@ def request_ceiling(request, prices):
     return (Decimal(str(rate.get("max_input_tokens"))) * max(Decimal(str(rate.get(key))) for key in ("input", "cache_read", "cache_write")) + output * Decimal(str(rate.get("output")))) / 1_000_000
 
 
-def usage_charge(response, rate):
+def usage_charge(response, rate, provider="anthropic-messages"):
+    """Settle normalized tokens using the evaluation's pinned per-model rates."""
     usage = response.get("usage")
     if not isinstance(usage, dict):
         raise OutcomeUnknown("Missing usage; retaining the request reservation")
+    try:
+        counts = normalize_usage(usage, provider)
+    except ValueError as exc:
+        raise OutcomeUnknown(f"Invalid usage; retaining reservation: {exc}") from exc
     cost = Decimal(0)
-    for field, price in (("input_tokens", "input"), ("output_tokens", "output"), ("cache_read_input_tokens", "cache_read"), ("cache_creation_input_tokens", "cache_write")):
-        count = usage.get(field, 0 if field.startswith("cache_") else None)
-        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
-            raise OutcomeUnknown(f"Missing/invalid {field}; retaining reservation")
-        cost += count * Decimal(str(rate.get(price))) / 1_000_000
+    for field, count in counts.items():
+        if count is None:
+            raise OutcomeUnknown(f"Missing {field} usage; retaining reservation")
+        if count:
+            price = rate.get(field)
+            if price is None:
+                raise OutcomeUnknown(f"Missing {field} price; retaining reservation")
+            cost += count * Decimal(str(price)) / 1_000_000
     # Any unexpected server-side billable tool use must be reconciled manually.
     if usage.get("server_tool_use"):
         raise OutcomeUnknown("Unexpected billable server tools; reconcile usage")
@@ -107,6 +117,9 @@ class Gateway:
     429 rejections may retry; each attempt gets its own reservation and record.
     """
     def __init__(self, client, ledger, config, *, replicate="1", dry_run=False):
+        self.provider = config.get("provider", "anthropic-messages")
+        if self.provider not in ("anthropic", "anthropic-messages"):
+            raise ValueError("Only Anthropic Messages dispatch is implemented in the evaluation gateway")
         self.client = client
         self.ledger = ledger
         self.config = config
@@ -123,7 +136,7 @@ class Gateway:
         if self.billing_stopped:
             raise BillingStopped(BILLING_EXHAUSTED)
         ceiling = request_ceiling(request, self.prices)
-        identity = {"request_version": self.config.get("request_version", "1"), "replicate": self.replicate, "provider": self.config.get("provider", "anthropic-messages"), "request": request}
+        identity = {"request_version": self.config.get("request_version", "1"), "replicate": self.replicate, "provider": self.provider, "request": request}
         attempts = self.config.get("max_attempts", 1)
         if not isinstance(attempts, int) or not 1 <= attempts <= 5:
             raise ValueError("max_attempts must be between 1 and 5")
@@ -172,7 +185,7 @@ class Gateway:
                 self.ledger.fail(key, f"Response serialization failed after dispatch: {exc}")
                 raise OutcomeUnknown("Provider returned but its response could not be persisted; reservation retained") from exc
             try:
-                charge = usage_charge(raw, self.prices.get(request.get("model"), {}))
+                charge = usage_charge(raw, self.prices.get(request.get("model"), {}), self.provider)
             except OutcomeUnknown as exc:
                 self.ledger.fail(key, exc, response=raw)
                 raise
@@ -190,7 +203,7 @@ class Gateway:
         result._eval_cached = cached
         return result
 
-    def record_usage(self, response, model, label=""):
+    def record_usage(self, response, model, label="", *, provider=None):
         """Injected into utilities.record_api_usage; pricing settled on dispatch.
 
         Annotating a cache hit is idempotent and cannot charge a second time.

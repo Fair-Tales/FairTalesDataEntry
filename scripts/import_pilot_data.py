@@ -2539,7 +2539,9 @@ def plan_and_run(args) -> int:
         # it goes, not only at the end (#73 cost tracking).
         if totals.books and totals.books % 10 == 0 and usage.total_calls:
             print(f"    ...running AI spend after {totals.books} books: "
-                  f"${usage.total_cost:.2f} ({usage.total_calls} calls)")
+                  f"${usage.total_cost:.2f} ({usage.total_calls} calls)"
+                  + (f" (incomplete: {usage.total_unpriced_calls} unpriced calls)"
+                     if usage.total_unpriced_calls else ""))
             print()
     except AICircuitBreakerError as exc:
         aborted = True

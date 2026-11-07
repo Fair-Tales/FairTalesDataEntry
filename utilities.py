@@ -23,7 +23,7 @@ from email.mime.text import MIMEText
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone, timedelta
 
-from ai_pricing import usage_cost
+from ai_pricing import usage_field, usage_metrics
 from ai_runtime import current_runtime
 
 logger = logging.getLogger(__name__)
@@ -106,7 +106,7 @@ LOCATE_MAX_EDGE = 784
 AI_SETTINGS_COLLECTION = 'settings'
 AI_SETTINGS_DOCUMENT = 'ai_pipeline'
 
-#: Collection holding daily Claude API usage/cost rollups (one doc per UTC day,
+#: Collection holding daily API usage/cost rollups (one doc per UTC day,
 #: id ``YYYY-MM-DD``). Written cheaply with atomic ``firestore.Increment`` on
 #: every AI call (see ``record_api_usage``) and surfaced read-only in the admin
 #: AI-settings page. See ``record_api_usage`` for the document schema.
@@ -475,8 +475,7 @@ def _log_usage(response, model, label=""):
     """
     usage = getattr(response, "usage", None)
     if usage is None:
-        if current_runtime() is not None:
-            record_api_usage(response, model, label)
+        record_api_usage(response, model, label)
         return
     logger.info(
         "ai_usage flow=%s model=%s input=%s output=%s cache_read=%s "
@@ -493,20 +492,6 @@ def _log_usage(response, model, label=""):
     record_api_usage(response, model, label)
 
 
-def _usage_token_counts(usage):
-    """Read the four token counts off an SDK ``usage`` object (all guarded).
-
-    Returns ``(input, output, cache_read, cache_write)`` as ints; any missing
-    attribute counts as 0 so an SDK usage-shape change can't crash accounting.
-    """
-    return (
-        int(getattr(usage, "input_tokens", 0) or 0),
-        int(getattr(usage, "output_tokens", 0) or 0),
-        int(getattr(usage, "cache_read_input_tokens", 0) or 0),
-        int(getattr(usage, "cache_creation_input_tokens", 0) or 0),
-    )
-
-
 def _usage_flow_key(label):
     """Sanitise a flow label into a Firestore-safe map key.
 
@@ -518,8 +503,29 @@ def _usage_flow_key(label):
     return key.replace(".", "_")
 
 
-def record_api_usage(response, model, label=""):
-    """Accumulate one Claude call's tokens + USD cost into the daily usage doc.
+def api_usage_update(response, model, label="", *, provider=None):
+    """Build the same atomic daily rollup for live and background callers.
+
+    Missing metrics are omitted, never zero-filled. Gap counters make existing
+    numeric totals explicitly partial without resetting concurrent increments.
+    """
+    provider, metrics = usage_metrics(usage_field(response, "usage"), model, provider)
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    def bucket():
+        return {key: firestore.Increment(value) for key, value in metrics.items()}
+
+    return {
+        "date": day,
+        **{f"total_{key}": value for key, value in bucket().items()},
+        "by_model": {model: bucket()},
+        "by_flow": {_usage_flow_key(label): bucket()},
+        "by_provider": {provider: bucket()},
+    }
+
+
+def record_api_usage(response, model, label="", *, provider=None):
+    """Accumulate one provider call's tokens + USD cost into the daily usage doc.
 
     Cost is computed from the shared ``ai_pricing`` table (#129 — never duplicate
     the pricing recipe). The per-day document (``api_usage/YYYY-MM-DD``) is updated
@@ -535,61 +541,41 @@ def record_api_usage(response, model, label=""):
                                    output_tokens, cache_read_tokens,
                                    cache_write_tokens } }
           by_flow:  { "<label>": { ...same shape... } }
+          by_provider: { "anthropic|openai": { ...same shape... } }
+          total_unpriced_calls, total_unknown_usage_calls
 
-    Fully guarded per the error-handling convention: a missing usage is a no-op,
-    and any Firestore/other failure is LOGGED (never raised) so usage tracking can
-    never break a user's real request.
+    Each bucket also counts unpriced_calls and unknown_usage_calls when present.
+    Costs/tokens are known subtotals whenever these counters are nonzero. Missing
+    usage counts as unknown; malformed counts produce a logged no-op. GPT model
+    IDs infer OpenAI; other providers can be passed explicitly by keyword.
+
+    Live recording failures are logged without breaking the user's request.
+    Explicit evaluation sinks retain their existing fail-closed behavior.
     """
     runtime = current_runtime()
     if runtime is not None:
         # Use the existing record_api_usage entry point, with a local sink.
-        # This intentionally precedes even the missing-usage early return:
-        # an evaluator must retain unknown-cost calls for reconciliation.
-        runtime.usage_sink(response, model, label)
-        return
-    usage = getattr(response, "usage", None)
-    if usage is None:
+        # An evaluator must retain unknown-cost calls for reconciliation.
+        if provider is None:
+            runtime.usage_sink(response, model, label)
+        else:
+            runtime.usage_sink(response, model, label, provider=provider)
         return
     try:
-        input_tokens, output_tokens, cache_read, cache_write = _usage_token_counts(usage)
-        cost = usage_cost(model, input_tokens, output_tokens, cache_read, cache_write)
-        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-        def _bucket():
-            # Fresh Increment sentinels per bucket (a sentinel is single-use).
-            return {
-                "calls": firestore.Increment(1),
-                "cost_usd": firestore.Increment(cost),
-                "input_tokens": firestore.Increment(input_tokens),
-                "output_tokens": firestore.Increment(output_tokens),
-                "cache_read_tokens": firestore.Increment(cache_read),
-                "cache_write_tokens": firestore.Increment(cache_write),
-            }
-
-        data = {
-            "date": day,
-            "total_calls": firestore.Increment(1),
-            "total_cost_usd": firestore.Increment(cost),
-            "total_input_tokens": firestore.Increment(input_tokens),
-            "total_output_tokens": firestore.Increment(output_tokens),
-            "total_cache_read_tokens": firestore.Increment(cache_read),
-            "total_cache_write_tokens": firestore.Increment(cache_write),
-            "by_model": {model: _bucket()},
-            "by_flow": {_usage_flow_key(label): _bucket()},
-        }
+        data = api_usage_update(response, model, label, provider=provider)
         # set(merge=True) creates the day doc on first write and applies the
         # Increment transforms to nested maps without a prior read.
         FirestoreWrapper(auth=False).set_document(
-            AI_USAGE_COLLECTION, day, data, merge=True
+            AI_USAGE_COLLECTION, data["date"], data, merge=True
         )
-    except (GoogleAPIError, ValueError, TypeError) as exc:
+    except (GoogleAPIError, OSError, ValueError, TypeError, AttributeError, KeyError) as exc:
         logger.warning("record_api_usage: could not record usage (flow=%s "
                        "model=%s): %s", label or "-", model, exc)
 
 
 _USAGE_METRIC_KEYS = (
     "calls", "cost_usd", "input_tokens", "output_tokens",
-    "cache_read_tokens", "cache_write_tokens",
+    "cache_read_tokens", "cache_write_tokens", "unpriced_calls", "unknown_usage_calls",
 )
 
 
@@ -612,14 +598,7 @@ def _add_usage_breakdown(target, source):
 
 def _day_usage_totals(doc):
     """Extract the flat per-day totals from a stored usage doc as a metrics dict."""
-    return {
-        "calls": doc.get("total_calls", 0) or 0,
-        "cost_usd": doc.get("total_cost_usd", 0) or 0,
-        "input_tokens": doc.get("total_input_tokens", 0) or 0,
-        "output_tokens": doc.get("total_output_tokens", 0) or 0,
-        "cache_read_tokens": doc.get("total_cache_read_tokens", 0) or 0,
-        "cache_write_tokens": doc.get("total_cache_write_tokens", 0) or 0,
-    }
+    return {key: doc.get(f"total_{key}", 0) or 0 for key in _USAGE_METRIC_KEYS}
 
 
 def get_api_usage_summary(days=AI_USAGE_SUMMARY_DAYS):
@@ -631,7 +610,8 @@ def get_api_usage_summary(days=AI_USAGE_SUMMARY_DAYS):
         {
           "today":       <metrics dict or None>,   # today's flat totals
           "window_days": days,
-          "window":      {"totals": <metrics>, "by_model": {...}, "by_flow": {...}},
+          "window":      {"totals": <metrics>, "by_model": {...}, "by_flow": {...},
+                          "by_provider": {...}},
           "daily":       [ {"date": ..., <metrics>}, ... ]  # newest first
         }
 
@@ -641,6 +621,7 @@ def get_api_usage_summary(days=AI_USAGE_SUMMARY_DAYS):
     window_totals = _empty_usage_bucket()
     by_model: dict = {}
     by_flow: dict = {}
+    by_provider: dict = {}
     daily: list = []
     today_metrics = None
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -664,6 +645,7 @@ def get_api_usage_summary(days=AI_USAGE_SUMMARY_DAYS):
             window_totals[key] += totals[key]
         _add_usage_breakdown(by_model, doc.get("by_model"))
         _add_usage_breakdown(by_flow, doc.get("by_flow"))
+        _add_usage_breakdown(by_provider, doc.get("by_provider"))
         daily.append(dict(date=day, **totals))
         if day == today:
             today_metrics = totals
@@ -671,7 +653,8 @@ def get_api_usage_summary(days=AI_USAGE_SUMMARY_DAYS):
     return {
         "today": today_metrics,
         "window_days": days,
-        "window": {"totals": window_totals, "by_model": by_model, "by_flow": by_flow},
+        "window": {"totals": window_totals, "by_model": by_model, "by_flow": by_flow,
+                   "by_provider": by_provider},
         "daily": daily,
     }
 

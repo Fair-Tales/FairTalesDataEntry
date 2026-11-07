@@ -17,7 +17,7 @@ from typing import Any, Callable, Mapping
 class ExtractionRuntime:
     client: Any
     settings: Mapping[str, Any]
-    usage_sink: Callable[[Any, str, str], None]
+    usage_sink: Callable[..., None]
 
 
 _runtime: ContextVar[ExtractionRuntime | None] = ContextVar(
@@ -36,6 +36,7 @@ def extraction_runtime(*, client, settings, usage_sink):
 
     ``usage_sink(response, model, label)`` must persist locally. Exceptions from
     it propagate; an accounting failure must never fall back to Firestore.
+    Provider-aware sinks also accept the optional ``provider=`` keyword.
     The caller validates and freezes settings before entering this boundary.
     """
     if client is None:

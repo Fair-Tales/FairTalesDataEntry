@@ -5,13 +5,9 @@ that context keeps their settings/usage lookups away from Streamlit without
 patching globals (including those used by concurrent offline evaluations).
 """
 from contextlib import contextmanager
-from datetime import datetime, timezone
 import logging
 
 from google.api_core.exceptions import GoogleAPIError
-from google.cloud import firestore
-
-from ai_pricing import UsageAccumulator
 from ai_runtime import extraction_runtime
 
 logger = logging.getLogger(__name__)
@@ -19,38 +15,22 @@ API_TIMEOUT_SECONDS = 90
 
 
 def usage_recorder(db, job_id, batch_id=None):
-    """Adapt the shared cost accumulator to raw-client atomic rollup writes."""
-    def record(response, model, label):
-        usage = getattr(response, 'usage', None)
-        if usage is None:
-            logger.warning('pipeline job %s: response lacks usage (flow=%s)', job_id, label)
-            return
-        totals = UsageAccumulator()
-        totals.record(label, model, usage)
-        row = next(totals.rows())[2]
-        metrics = {
-            'calls': row['calls'], 'cost_usd': row['cost'],
-            'input_tokens': row['input'], 'output_tokens': row['output'],
-            'cache_read_tokens': row['cache_read'],
-            'cache_write_tokens': row['cache_write'],
-        }
-        def bucket():
-            return {key: firestore.Increment(value) for key, value in metrics.items()}
-        day = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        data = {'date': day, **{f'total_{k}': v for k, v in bucket().items()},
-                'by_model': {model: bucket()},
-                'by_flow': {(label or 'unlabelled').replace('.', '_'): bucket()}}
+    """Use the shared daily rollup with the worker's explicit database client."""
+    from utilities import api_usage_update
+
+    def record(response, model, label, *, provider=None):
         try:
-            db.collection('api_usage').document(day).set(data, merge=True)
+            data = api_usage_update(response, model, label, provider=provider)
+            db.collection('api_usage').document(data['date']).set(data, merge=True)
             if job_id:
                 db.collection('pipeline_jobs').document(job_id).set(
-                    {'usage': bucket()}, merge=True,
+                    {'usage': data['by_model'][model]}, merge=True,
                 )
             if batch_id:
                 db.collection('photo_batches').document(batch_id).set(
-                    {'usage': bucket()}, merge=True,
+                    {'usage': data['by_model'][model]}, merge=True,
                 )
-        except (GoogleAPIError, OSError, ValueError, TypeError) as exc:
+        except (GoogleAPIError, OSError, ValueError, TypeError, AttributeError) as exc:
             logger.warning('pipeline job %s: usage persistence failed: %s', job_id, exc)
     return record
 
