@@ -146,6 +146,21 @@ def _live_anthropic(secrets_path, config):
     return get_anthropic_client(api_key=key, max_retries=0)
 
 
+def _live_provider(secrets_path, config):
+    from .openai_client import OPENAI_PROVIDERS, create_openai_client
+    from .billing import validate_billing
+    from text_content.pipeline_runtime import EVALUATION_PROVIDER_UNSUPPORTED
+    provider = config.get('provider', 'anthropic-messages')
+    if provider in {'anthropic', 'anthropic-messages'}:
+        return _live_anthropic(secrets_path, config)
+    if provider not in OPENAI_PROVIDERS:
+        raise ValueError(EVALUATION_PROVIDER_UNSUPPORTED.format(provider=provider))
+    from scripts.data_cleanup import load_secrets
+    validate_billing(config)
+    key = validate_billing(config, load_secrets(secrets_path))
+    return create_openai_client(key)
+
+
 def _extract(args):
     with run_lock(args.out):
         if args.original_experiment:
@@ -219,7 +234,7 @@ def _extract_loaded(args, loader):
     try:
         ledger.recover()
         if args.execute:
-            client = _live_anthropic(args.secrets, config)
+            client = _live_provider(args.secrets, config)
         gateway = Gateway(client, ledger, config, replicate=args.replicate, dry_run=not args.execute)
         result = run_extract(args.snapshot, manifest, selection, args.out, gateway, config, loader=loader, dry_run=not args.execute)
         atomic_json(args.out / "calls.json", ledger.rows())

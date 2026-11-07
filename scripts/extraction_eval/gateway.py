@@ -7,9 +7,12 @@ import sqlite3
 from types import SimpleNamespace
 
 from ai_pricing import normalize_usage
+from text_content.pipeline_runtime import EVALUATION_CLIENT_MISSING
 
 from .store import CachedFailure, OutcomeUnknown, canonical, digest
 from .billing import BILLING_EXHAUSTED, BillingStopped, billing_rejection
+from .openai_client import OPENAI_PROVIDERS
+from .openai_adapter import prepare_request, response_content
 
 
 class RequestLimitError(ValueError):
@@ -18,6 +21,12 @@ class RequestLimitError(ValueError):
 
 class DryRunMiss(RuntimeError):
     pass
+
+
+class ProviderHTTPError(RuntimeError):
+    def __init__(self, status_code, body):
+        self.status_code = status_code
+        super().__init__(f"OpenAI HTTP {status_code}: {body}")
 
 
 def _namespace(value):
@@ -59,6 +68,8 @@ def validate_prices(config, *, executing=False):
             raise ValueError(f"Unknown price for {model}; refusing a zero-price fallback")
         for field in ("input", "output", "cache_read", "cache_write", "max_input_tokens", "max_output_tokens", "max_images", "max_request_bytes"):
             value = row.get(field)
+            if field == "cache_write" and value is None and config.get("provider") in OPENAI_PROVIDERS:
+                continue  # No write tariff; explicit write usage remains unsettled.
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not Decimal(str(value)).is_finite() or value <= 0:
                 raise ValueError(f"Invalid {field} price/limit for {model}")
     return rates
@@ -82,7 +93,7 @@ def request_ceiling(request, prices):
         raise RequestLimitError(f"{images} images exceed pinned provider request limit; chunking requires a named pipeline variant")
     if len(json.dumps(request, ensure_ascii=False).encode()) > rate.get("max_request_bytes", 0):
         raise RequestLimitError("Request exceeds pinned byte limit; no automatic chunking")
-    return (Decimal(str(rate.get("max_input_tokens"))) * max(Decimal(str(rate.get(key))) for key in ("input", "cache_read", "cache_write")) + output * Decimal(str(rate.get("output")))) / 1_000_000
+    return (Decimal(str(rate.get("max_input_tokens"))) * max(Decimal(str(rate[key])) for key in ("input", "cache_read", "cache_write") if rate.get(key) is not None) + output * Decimal(str(rate.get("output")))) / 1_000_000
 
 
 def usage_charge(response, rate, provider="anthropic-messages"):
@@ -118,8 +129,11 @@ class Gateway:
     """
     def __init__(self, client, ledger, config, *, replicate="1", dry_run=False):
         self.provider = config.get("provider", "anthropic-messages")
-        if self.provider not in ("anthropic", "anthropic-messages"):
-            raise ValueError("Only Anthropic Messages dispatch is implemented in the evaluation gateway")
+        if self.provider not in ("anthropic", "anthropic-messages", *OPENAI_PROVIDERS):
+            raise ValueError(f"Unsupported evaluation provider: {self.provider}")
+        if client is None and not dry_run:
+            provider_name = "OpenAI" if self.provider in OPENAI_PROVIDERS else "Anthropic"
+            raise ValueError(EVALUATION_CLIENT_MISSING.format(provider=provider_name))
         self.client = client
         self.ledger = ledger
         self.config = config
@@ -158,20 +172,37 @@ class Gateway:
                 raise CachedFailure(f"Request {key} permanently failed: {cached.get('error')}")
             if self.dry_run:
                 raise DryRunMiss(f"Uncached request for {request.get('model')}; no paid call dispatched")
-            self.ledger.reserve(key, {**identity, "context": self.context}, ceiling)
+            # Preserve the original request identity; conversion is only for
+            # dispatch, and unsupported content fails before reserving money.
             try:
-                response = self.client.messages.create(**request)
+                endpoint, payload = prepare_request(request, self.provider) if self.provider in OPENAI_PROVIDERS else (None, request)
+            except ValueError as exc:
+                raise RequestLimitError(str(exc)) from exc
+            if endpoint and len(json.dumps(payload, ensure_ascii=False).encode()) > self.prices[request["model"]]["max_request_bytes"]:
+                raise RequestLimitError("Converted request exceeds pinned byte limit; no automatic chunking")
+            self.ledger.reserve(key, {**identity, "context": self.context}, ceiling)
+            raw = None
+            try:
+                if endpoint:
+                    response = self.client.post(endpoint, json=payload)
+                    raw = {"_request_id": response.headers.get("x-request-id"),
+                           "_http_status": response.status_code, "_body": response.text}
+                    self.ledger.capture_response(key, raw)
+                    if not 200 <= response.status_code < 300:
+                        raise ProviderHTTPError(response.status_code, response.text)
+                else:
+                    response = self.client.messages.create(**request)
             except BaseException as exc:
                 # Always preserve a dispatch outcome, including cancellation.
                 # No exception is swallowed: only definite 429 rejections retry.
                 code = getattr(exc, "status_code", None)
                 if billing_rejection(exc):
                     self.ledger.fail(key, 'billing_stopped: ' + BILLING_EXHAUSTED,
-                                     rejected=True, retryable=False)
+                                     rejected=True, retryable=False, response=raw)
                     self.billing_stopped = True
                     raise BillingStopped(BILLING_EXHAUSTED) from exc
                 rejected = code in {400, 401, 403, 404, 413, 422, 429}
-                self.ledger.fail(key, f"{type(exc).__name__}: {exc}", rejected=rejected, retryable=code == 429)
+                self.ledger.fail(key, f"{type(exc).__name__}: {exc}", rejected=rejected, retryable=code == 429, response=raw)
                 if code == 429 and attempt + 1 < attempts:
                     continue
                 if not rejected:
@@ -179,11 +210,18 @@ class Gateway:
                 raise CachedFailure(f"Request {key} rejected: {exc}") from exc
             self.paid_calls += 1
             try:
-                raw = response_dict(response)
-                canonical(raw)
+                parsed = response_dict(response.json() if endpoint else response)
+                if endpoint:
+                    parsed["_request_id"] = raw["_request_id"]
+                canonical(parsed)
             except (TypeError, ValueError, AttributeError) as exc:
-                self.ledger.fail(key, f"Response serialization failed after dispatch: {exc}")
+                self.ledger.fail(key, f"Response serialization failed after dispatch: {exc}", response=raw)
                 raise OutcomeUnknown("Provider returned but its response could not be persisted; reservation retained") from exc
+            raw = parsed
+            try:
+                self.ledger.capture_response(key, raw)
+            except (sqlite3.Error, OSError) as exc:
+                raise OutcomeUnknown("Provider returned but persistence failed; reservation retained") from exc
             try:
                 charge = usage_charge(raw, self.prices.get(request.get("model"), {}), self.provider)
             except OutcomeUnknown as exc:
@@ -196,8 +234,10 @@ class Gateway:
             return self._response(key, raw, False)
         raise CachedFailure("Retry allowance exhausted")
 
-    @staticmethod
-    def _response(key, raw, cached):
+    def _response(self, key, raw, cached):
+        if self.provider in OPENAI_PROVIDERS:
+            content, stop_reason = response_content(raw, self.provider)
+            raw = {**raw, "content": content, "stop_reason": stop_reason}
         result = _namespace(raw)
         result._eval_key = key
         result._eval_cached = cached

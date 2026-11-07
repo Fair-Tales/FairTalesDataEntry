@@ -1,13 +1,13 @@
 """Messages used by the offline pipeline runner and structured parsers."""
 
 BILLING_UNVERIFIED = (
-    "Paid extraction requires confirmed subscription-credit billing, organisation, "
+    "Paid extraction requires confirmed credit billing, organisation, "
     "project, and the SHA-256 fingerprint of the dedicated evaluation key."
 )
-BILLING_KEY_MISSING = "The dedicated evaluation key is absent; no alternate key will be used."
+BILLING_KEY_MISSING = "The dedicated evaluation key {secret_name} is absent; no alternate key will be used."
 BILLING_KEY_MISMATCH = "The evaluation key does not match the confirmed billing account; dispatch refused."
 BILLING_EXHAUSTED = (
-    "Subscription credits are exhausted or billing access was rejected. "
+    "Evaluation credits are exhausted or billing access was rejected. "
     "The run has stopped; completed work is preserved and remaining work is pending. "
     "No key switch or automatic billing retry is permitted."
 )
@@ -19,3 +19,6 @@ PAGE_REPLY_INVALID = "Model reply could not be parsed as usable JSON: {snippet}"
 PAGE_REPLY_EMPTY = "Model returned no usable reply."
 CONTEXT_TARGET = "\nTarget ordered images and OCR (image_position is one-based):\n{pages_json}"
 RUN_STOPPED = "Run stopped ({reason}): {detail}"
+OPENAI_KEY_MISSING = "OpenAI evaluation requires EVAL_OPENAI_API_KEY; the key is absent or blank."
+EVALUATION_PROVIDER_UNSUPPORTED = "Unsupported evaluation provider: {provider}"
+EVALUATION_CLIENT_MISSING = "No {provider} client is configured; supply the dedicated evaluation API key."

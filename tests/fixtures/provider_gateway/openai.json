@@ -1,0 +1,64 @@
+{
+  "provenance": "Synthetic recorded-format HTTP fixtures, authored offline on 2026-11-07. These are not captured live provider responses and do not verify live model availability or API compatibility.",
+  "responses": {
+    "status": 200,
+    "headers": {"x-request-id": "req-fixture-responses"},
+    "body": {
+      "id": "resp_fixture",
+      "object": "response",
+      "model": "fixture-openai",
+      "status": "completed",
+      "error": null,
+      "incomplete_details": null,
+      "output": [
+        {"id": "rs_fixture", "type": "reasoning", "summary": []},
+        {
+          "id": "msg_fixture",
+          "type": "message",
+          "role": "assistant",
+          "status": "completed",
+          "content": [
+            {"type": "output_text", "text": "{\"pages\":", "annotations": []},
+            {"type": "output_text", "text": " []}", "annotations": []}
+          ]
+        }
+      ],
+      "usage": {
+        "input_tokens": 100,
+        "input_tokens_details": {"cached_tokens": 20},
+        "output_tokens": 10,
+        "output_tokens_details": {"reasoning_tokens": 4},
+        "total_tokens": 110
+      }
+    }
+  },
+  "chat": {
+    "status": 200,
+    "headers": {"x-request-id": "req-fixture-chat"},
+    "body": {
+      "id": "chatcmpl_fixture",
+      "object": "chat.completion",
+      "model": "fixture-openai",
+      "choices": [{"index": 0, "finish_reason": "stop", "message": {
+        "role": "assistant", "content": "{\"pages\": []}", "refusal": null
+      }}],
+      "usage": {
+        "prompt_tokens": 100,
+        "prompt_tokens_details": {"cached_tokens": 20},
+        "completion_tokens": 10,
+        "completion_tokens_details": {"reasoning_tokens": 4},
+        "total_tokens": 110
+      }
+    }
+  },
+  "rate_limit": {
+    "status": 429,
+    "headers": {"x-request-id": "req-fixture-rate-limit"},
+    "body": {"error": {"message": "Fixture request rate exceeded.", "type": "rate_limit_error", "code": "rate_limit_exceeded"}}
+  },
+  "invalid_json": {
+    "status": 200,
+    "headers": {"x-request-id": "req-fixture-invalid-json"},
+    "raw_body": "upstream returned invalid JSON"
+  }
+}

@@ -219,7 +219,7 @@ Status: `accepted` | `superseded` | `deprecated`.
 
 **Consequences / follow-up:**
 - Not adopted: Batch API (−50%) — refactor not worth ~$10–15 on a one-time import; N/A to the interactive app. Prompt caching ≈ $0 (prefixes below the cache minimum).
-- Sonnet 5 intro pricing ends ~Sep 1 2026 (+~30% app baseline); front-load heavy entry before then.
+- Sonnet 5 was expected to rise from $2/$10 to $3/$15 per MTok around Sep 1 2026 (+~30% app baseline), prompting advice to front-load heavy entry. The rise was cancelled and did not occur: $2/$10 is permanent (confirmed against Anthropic's published pricing, 2026-11-07).
 - App-side changes need live-Streamlit-server testing before the `main` deploy.
 ---
 

@@ -11,6 +11,9 @@ from pathlib import Path
 import sqlite3
 import tempfile
 
+from ai_pricing import usage_provider
+from .openai_adapter import response_content
+
 
 def canonical(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
@@ -134,6 +137,11 @@ class Ledger:
                     raise BudgetStopped(f"{table} cap cannot admit ${float(ceiling):.4f} reservation; remaining ${(cap-used)/1e9:.4f}")
             self.db.execute("INSERT INTO calls(key,run_id,month,state,reservation,request,created) VALUES (?,?,?,'dispatched',?,?,?)", (key,self.run_id,self.month,reservation,canonical(request),datetime.now(timezone.utc).isoformat()))
 
+    def capture_response(self, key, response):
+        """Keep the reservation until usage is settled; crashes stay unknown."""
+        with self.transaction():
+            self.db.execute("UPDATE calls SET response=? WHERE key=?", (canonical(response), key))
+
     def settle(self, key, response, cost):
         with self.transaction():
             row = self.get(key)
@@ -177,9 +185,16 @@ def call_rows(db, run_id):
         result = dict(row)
         request = json.loads(result.pop("request") or "{}")
         response = json.loads(result.pop("response") or "{}")
+        stop_reason = response.get("stop_reason")
+        provider = request.get("provider", "anthropic-messages")
+        if usage_provider(provider=provider) == "openai" and "usage" in response:
+            try:
+                _, stop_reason = response_content(response, provider)
+            except (ValueError, TypeError):
+                stop_reason = "invalid_response"
         result.update(model=request.get("request", {}).get("model"),
                       usage=response.get("usage"), request_id=response.get("_request_id") or response.get("id"),
-                      stop_reason=response.get("stop_reason"))
+                      stop_reason=stop_reason)
         result.update(request.get("context", {}))
         rows.append(result)
     return rows

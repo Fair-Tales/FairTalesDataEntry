@@ -13,7 +13,7 @@ Like ``s3_constants`` / ``ai_continuity`` it imports NOTHING Streamlit-coupled
 Prices are US dollars per million tokens. Unknown costs are None, never free;
 aggregates retain known subtotals and count calls whose cost is incomplete.
 This table does not select models or enable dispatch: the app and importer call
-Anthropic, and the evaluation gateway currently rejects OpenAI providers.
+Anthropic, while the evaluation gateway dispatches either provider explicitly.
 """
 
 from __future__ import annotations

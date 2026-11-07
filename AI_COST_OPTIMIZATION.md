@@ -8,8 +8,9 @@ per-page results, prompts, caches) are under the session scratchpad
 
 Verified model facts (checked via `models.list` + live calls on this account):
 `claude-opus-4-8`, `claude-sonnet-5`, `claude-sonnet-4-6`, `claude-haiku-4-5` are
-all real GA ids. Pricing used: Sonnet 5 **$2/$10** per MTok (intro; standard
-$3/$15 from ~Sep 1 2026), Sonnet 4.6 $3/$15, Opus 4.8 $5/$25, Haiku 4.5 $1/$5.
+all real GA ids. Pricing used: Sonnet 5 **$2/$10** per MTok (permanent, confirmed
+against Anthropic's published pricing 2026-11-07; the anticipated $3/$15 rise around Sep 1 2026 was cancelled
+and did not occur), Sonnet 4.6 $3/$15, Opus 4.8 $5/$25, Haiku 4.5 $1/$5.
 Image tokens ≈ ⌈w/28⌉×⌈h/28⌉.
 
 ## Cost baseline (before changes)

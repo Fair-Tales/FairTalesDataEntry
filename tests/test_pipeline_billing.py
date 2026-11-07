@@ -38,9 +38,35 @@ def test_billing_requires_explicit_binding_and_never_falls_back():
             validate_billing(missing)
 
 
+@pytest.mark.parametrize('provider', ['openai', 'openai-responses', 'openai-chat-completions'])
+@pytest.mark.parametrize('funding', ['subscription_credits', 'prepaid_credits'])
+def test_openai_billing_binds_only_dedicated_key(provider, funding):
+    config = configuration()
+    config['provider'] = provider
+    config['billing'].update(secret_name='EVAL_OPENAI_API_KEY', funding=funding)
+    assert validate_billing(config, {'EVAL_OPENAI_API_KEY': 'fixture-only'}) == 'fixture-only'
+    for missing in ({'OPENAI_API_KEY': 'fixture-only'},
+                    {'EVAL_ANTHROPIC_API_KEY': 'fixture-only'},
+                    {'EVAL_OPENAI_API_KEY': '  '}):
+        with pytest.raises(ValueError, match='EVAL_OPENAI_API_KEY.*absent'):
+            validate_billing(config, missing)
+    with pytest.raises(ValueError, match='does not match'):
+        validate_billing(config, {'EVAL_OPENAI_API_KEY': 'different-fixture'})
+    config['billing']['secret_name'] = 'EVAL_ANTHROPIC_API_KEY'
+    with pytest.raises(ValueError, match='confirmed credit billing'):
+        validate_billing(config)
+
+
+def test_anthropic_billing_keeps_subscription_credit_requirement():
+    config = configuration()
+    config['billing']['funding'] = 'prepaid_credits'
+    with pytest.raises(ValueError, match='confirmed credit billing'):
+        validate_billing(config)
+
+
 @pytest.mark.parametrize('code,message', [(400, 'Your credit balance is too low'),
     (402, 'payment required'), (401, 'invalid key'), (403, 'forbidden'),
-    (429, 'billing usage limit')])
+    (429, 'billing usage limit'), (429, 'insufficient_quota')])
 def test_billing_rejection_halts_gateway_without_retry_or_key_switch(tmp_path, code, message):
     class Rejected(RuntimeError):
         status_code = code
@@ -54,7 +80,7 @@ def test_billing_rejection_halts_gateway_without_retry_or_key_switch(tmp_path, c
         gateway = Gateway(provider, ledger, configuration())
         request = {'model': 'fixture-model', 'max_tokens': 10,
                    'messages': [{'role': 'user', 'content': 'fixture'}]}
-        with pytest.raises(BillingStopped, match='Subscription credits'):
+        with pytest.raises(BillingStopped, match='Evaluation credits'):
             gateway.create(**request)
         with pytest.raises(BillingStopped):
             gateway.create(**{**request, 'max_tokens': 20})

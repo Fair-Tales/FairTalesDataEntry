@@ -120,10 +120,14 @@ def test_snapshot_completed_resume_constructs_no_clients(offline_inputs, capsys)
     assert "25 books" in capsys.readouterr().out
 
 
-def test_dry_run_limit_twenty_no_credentials_no_paid_calls_no_isbn(offline_inputs, fake_core, tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize('provider', ['anthropic-messages', 'openai-responses'])
+def test_dry_run_limit_twenty_no_credentials_no_paid_calls_no_isbn(offline_inputs, fake_core, tmp_path, monkeypatch, capsys, provider):
     import utilities
+    from scripts.extraction_eval import openai_client
     monkeypatch.setattr(utilities, "lookup_isbn", forbidden)
+    monkeypatch.setattr(openai_client, 'create_openai_client', forbidden)
     snapshot, config = offline_inputs
+    atomic_json(config, {**read_json(config), 'provider': provider})
     out = tmp_path / "dry-run"
     assert cli.main(["extract", "--original-experiment", "--snapshot", str(snapshot), "--out", str(out), "--config", str(config),
                      "--limit", "20", "--dry-run"]) == 0
@@ -137,6 +141,55 @@ def test_dry_run_limit_twenty_no_credentials_no_paid_calls_no_isbn(offline_input
     output = capsys.readouterr().out
     assert '"books": 20' in output and '"estimated_usd":' in output
     assert "0 paid calls" in output
+
+
+def test_openai_cli_executes_and_replays_with_confirmed_key(offline_inputs, fake_core,
+                                                          tmp_path, monkeypatch):
+    import httpx
+    from scripts import data_cleanup
+    from scripts.extraction_eval import openai_client
+    snapshot, config_path = offline_inputs
+    config = read_json(config_path)
+    config['provider'] = 'openai-responses'
+    config['billing'].update(secret_name='EVAL_OPENAI_API_KEY', funding='prepaid_credits')
+    atomic_json(config_path, config)
+    requests = []
+    clients = []
+
+    def respond(request):
+        assert str(request.url) == 'https://api.openai.com/v1/responses'
+        requests.append(request)
+        return httpx.Response(200, headers={'x-request-id': f'req-{len(requests)}'}, json={
+            'id': f'resp-{len(requests)}', 'model': 'fixture', 'status': 'completed',
+            'output': [{'type': 'message', 'role': 'assistant', 'content': [
+                {'type': 'output_text', 'text': '{}'}]}],
+            'usage': {'input_tokens': 5, 'output_tokens': 3,
+                      'input_tokens_details': {'cached_tokens': 2}},
+        })
+
+    def create_client(key):
+        assert key == 'fake-never-used'
+        client = httpx.Client(base_url='https://api.openai.com/v1/',
+                              transport=httpx.MockTransport(respond))
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr('builtins.input', lambda prompt: 'AFFIRMATIVE')
+    monkeypatch.setattr(data_cleanup, 'load_secrets',
+                        lambda path: {'EVAL_OPENAI_API_KEY': 'fake-never-used'})
+    monkeypatch.setattr(openai_client, 'create_openai_client', create_client)
+    out = tmp_path / 'openai-paid-fixture'
+    args = ['extract', '--original-experiment', '--snapshot', str(snapshot),
+            '--out', str(out), '--config', str(config_path), '--books', 'book-02', '--execute']
+    assert cli.main(args) == 0
+    assert len(requests) == 3
+    calls = read_json(out / 'calls.json')
+    assert len(calls) == 3
+    assert all(call['state'] == 'completed' and call['cost_usd'] == pytest.approx(11 / 1e6)
+               for call in calls)
+    assert cli.main(args) == 0
+    assert len(requests) == 3
+    assert all(client.is_closed for client in clients)
 
 
 def test_paid_fake_exact_books_confirmation_cost_resume_and_offline_score(offline_inputs, fake_core, tmp_path, monkeypatch, capsys):
