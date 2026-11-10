@@ -1,5 +1,7 @@
 # Binding extraction analysis plan — 10 November 2026
 
+**Status: ratified by Chris as written, 10 November 2026 (DECISIONS 017).**
+
 Chris's 10 November ruling is **“Measure now, judge later.”** Report agreement with the human record, without automatic pass/fail. Running without review is Chris's reading of these figures. Nothing extra is asked of him now.
 
 **Cohorts.** Keep `freeze.json`'s imported80 and protected40 ids unchanged. Imported80 supplies the five primary analyses; tune41 remains development. Recommend protected40 as one reserved rehearsal of this analysis on scans, then development: restoring the old prompts buys a comparison that does not answer the present question. Lock rehearsal outputs before further tuning; never pool them into proof. The 57 phone-photo books provide separate descriptive agreement and operational results against Claude-prefilled, human-reviewed records, not independent transcription truth or evidence of human-level accuracy; freeze their snapshot and check completeness, duplicates and exposures first.

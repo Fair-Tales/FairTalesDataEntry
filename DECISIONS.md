@@ -624,7 +624,27 @@ were wrong. Chris ruled on each point the same day.
    uploads behind one another across users, and turn deletes into records that
    the snapshot and dashboard still count (review §2).
 
-**Not yet decided.** The analysis plan
-(`planning/analysis_plan_2026-11-10.md`) is in draft and awaits Chris's
-ratification. Until it is ratified, committed with its tested analysis code and
-tagged, no proof output is to be produced.
+7. **The analysis plan is ratified as written**
+   (`planning/analysis_plan_2026-11-10.md`). Five figures on the 80 held-out
+   original books, run from the colour scans: text accuracy, the share of
+   recorded characters found, and the share found with the same gender, human
+   and protagonist code. Each is reported with a 95% range from resampling whole
+   books. The protected 40 are used once as a rehearsal of the analysis and then
+   join tuning, which replaces the old-versus-new comparison of 014 item 11.
+   Tuning has 75 books now (41 unused and 34 already exposed) and 115 after the
+   rehearsal. No proof output is produced until the plan, the tested analysis
+   code and the held-out ids are committed and tagged.
+
+8. **How the pipeline is to be improved during tuning** (Chris, in his words:
+   "one way we can improve performance, if needed, is by expanding/improving the
+   in context learning. And we can also do outside prompt development, looking
+   at edge cases that fail and tweaking the prompt to pick them up while
+   ensuring nothing else breaks"). Two levers, then: more and better worked
+   examples in the prompt, and direct prompt development driven by failing edge
+   cases with a check that nothing else regresses.
+
+   What that requires in practice — the orchestrating session's reading, not
+   Chris's wording: examples come only from tuning or already-exposed books,
+   never the held-out 80; a book that supplies an example is left out when the
+   example-based prompt is scored on it; and every prompt change is re-scored on
+   the whole tuning set, not only on the cases it was written for.
