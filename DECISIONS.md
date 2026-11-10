@@ -564,3 +564,67 @@ recorded immutably in an ordinary run record. Admitted IDs, refusals and detecte
 breaches use that same record; a detected exposure invalidates proof without a
 redraw. This prevents accidental excluded inputs and catches missing provenance;
 it adds no custody roles, approval gates or adversarial protection.
+
+## 017 — Measure agreement, judge later; corrected provenance of both cohorts; book text leaves the repository (2026-11-10)
+
+**Context.** A Fable 5.2 review of the work since 4 November
+(`planning/fable_review_2026-11-10.md`) found that the validation design in 015
+could not pass whatever the pipeline did, and that two of its factual premises
+were wrong. Chris ruled on each point the same day.
+
+1. **The zero-error gates of 015 item 1 are withdrawn.** Set "at the ceiling",
+   every gate needed a perfect score: on the realised holdout (652 character
+   rows) a pipeline with 99% character recall would pass 0.1% of the time. The
+   non-inferiority test returned −0.32 (57 books) and −0.27 (80) at exact parity
+   under the design's own formula.
+
+2. **Measure now, judge later.** The proof reports, for each field, how often
+   the pipeline agrees with the human record, with a 95% range. There is no
+   automatic pass or fail: whether to run without review is Chris's reading of
+   those figures. "No more than one point worse than the human record" cannot
+   be tested without someone ruling on the disagreements, because every human
+   slip counts against the pipeline, so that rule is not applied to agreement.
+   An optional second step, in which Chris rules on the disagreements only, is
+   specified in advance and not commissioned.
+
+3. **No new annotation for now** (Chris: "The 200 original books have text
+   entered by a human. We don't want to do any more for now"). This stands with
+   014 item 1.
+
+4. **Corrected provenance — supersedes 015 items 2 and 4.**
+   - *Original study books.* Their text is human-entered: all 197 text PDFs are
+     Word exports of documents the team made from the scans in 2021–22. It is
+     not machine output. About two thirds of the stored page text was then
+     altered by a Claude cleaning pass at import; the unaltered text is
+     re-readable from the PDFs.
+   - *Their stored page images are renders of those Word pages* — typeset text
+     on white, pictures reduced to grey crops or absent. A pipeline reading
+     them reads the reference itself, so the 0.99 OCR agreement of 014 is not
+     evidence about book pages, and the images cannot show whether a character
+     is a person or an animal.
+   - *The original colour scans survive* on the storage disk (197 books, one
+     image per page, no text layer). Tuning and proof are to run from these.
+   - *Pilot books.* The 57 "human-typed" books are AI-drafted and
+     human-reviewed: 55 were created after the photo flow became the only menu
+     route (#157), and that flow writes Claude's transcription into the page
+     for the person to check. Nothing records what was changed. They can show
+     agreement on phone photographs, not independent accuracy.
+
+5. **Book text leaves the public repository.** A test fixture holding
+   near-complete text of the 20 development books had been public since the
+   7 November push. Chris chose to remove it from the branch and its history
+   rather than make the repository private, on condition that no data is lost.
+   The file is byte-identical to the baseline run's own output and is kept in
+   the evidence folder beside the freeze; the two tests that used it read it
+   from there. Evidence is kept in that local folder only; no second copy was
+   requested.
+
+6. **`claude-dev` is not to be merged to `main` as it stands.** It would
+   replace the live prompts with a candidate never run against a model, queue
+   uploads behind one another across users, and turn deletes into records that
+   the snapshot and dashboard still count (review §2).
+
+**Not yet decided.** The analysis plan
+(`planning/analysis_plan_2026-11-10.md`) is in draft and awaits Chris's
+ratification. Until it is ratified, committed with its tested analysis code and
+tagged, no proof output is to be produced.
