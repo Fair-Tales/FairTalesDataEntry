@@ -154,8 +154,11 @@ are the likely deposit, not photographs or full text; that is their call, not ou
   with no producer; the legacy overlay branch; `protocol.json`.
 - **Housekeeping:** `CLAUDE.md` says Python 3.10 and the environment is 3.12.3;
   `requirements.txt` is unpinned; two `CONVENTION_VERSION` constants disagree. The pipeline
-  pins `claude-sonnet-5`, which the spend track's search found labelled Legacy; the tuning
-  phase should compare current models before a proof freezes one (not re-checked by me).
+  pins `claude-sonnet-5`, `claude-sonnet-4-6` and `claude-haiku-4-5`. All three are
+  previous-generation but still active, with no retirement announced (Anthropic's API
+  reference, cached 3 November; an earlier draft said "Legacy" from a search summary). Each
+  has a successor at the same price or less, so the tuning phase should compare models
+  before a proof freezes one.
 
 ## What is sound, so it is not re-litigated
 
