@@ -1,0 +1,47 @@
+# Binding extraction analysis plan — 10 November 2026
+
+Chris's 10 November ruling is **“Measure now, judge later.”** Report agreement with the human record, without automatic pass/fail. Running without review is Chris's reading of these figures. Nothing extra is asked of him now.
+
+**Cohorts.** Keep `freeze.json`'s imported80 and protected40 ids unchanged. Imported80 supplies the five primary analyses; tune41 remains development. Recommend protected40 as one reserved rehearsal of this analysis on scans, then development: restoring the old prompts buys a comparison that does not answer the present question. Lock rehearsal outputs before further tuning; never pool them into proof. The 57 phone-photo books provide separate descriptive agreement and operational results against Claude-prefilled, human-reviewed records, not independent transcription truth or evidence of human-level accuracy; freeze their snapshot and check completeness, duplicates and exposures first.
+
+**Inputs and reference.** Metadata checks reproduced 197 Word exports, 197 BookChanger scans and the 192-book crosswalk's 175 equal page counts, 11 unequal and six missing same-named text PDFs. An exposed scan/render comparison confirms reference-page rendering, invalidating the 0.99 figure as book-page OCR evidence. Cleaning affected 2,652/4,069 text-layer pages (65.2%), not two thirds of all pages.
+
+Both tuning and proof must read original colour scans from `/media/storage/Gender in Children's Literature/Books/`. Re-extract the human reference from `../fair-tales-language-analysis/text_pdfs/`, without import cleaning, short-text thresholds or wordless suppression; `data/book_dataframe.json` in that repository preserves the published book text. Freeze filename/edition and ordered page-group mapping rules on exposed books: equal counts alone do not prove correspondence. Resolve the 17 awkward books through existing files, allowing split/merged pages; concatenate whole books for primary text scoring. Use the published text only where no Word reference can be mapped, decided before predictions. Unresolved input/reference cases remain in the 80, score zero conservatively and have their unavailable count reported; no replacements or new labels.
+
+**Five primaries.** Each is the equal-book mean of scores in [0,1], describing the frozen 42:38 alias-stratum mixture, not all original books. Count-only checks found 80 character-positive books, 652 characters with supported gender/human/protagonist codes, and 71 aliases across 42 books; 27 have one alias.
+
+- **Text:** per-book token edit accuracy, `max(0,1−Levenshtein(reference,prediction)/reference_tokens)`, using all pages in order. Empty/empty scores 1; empty/nonempty scores 0. Freeze existing NFKC/casefold/apostrophe and Unicode-token normalization. Insertions therefore count, unlike recall alone.
+- **Characters:** maximum one-to-one matching cardinality divided by recorded characters, with edges from shared normalized names/aliases. Preserve possessives; only a/an/the are optional. Do not use the current forced-edge matcher.
+- **Gender, human, protagonist:** separately, the same maximum matching restricted to equal source-coded field values, divided by all reference characters. Missing characters/fields score zero; retain the existing codebook. Overall gender agreement does not validate the absent Transgender category.
+
+Failures and abstentions remain misses. Report omissions, additions, confusion tables and ambiguous identity matches descriptively; extras are not automatically inventions. Aliases are descriptive recall only, using one-to-one surface-and-owner matching; zero-reference books have no recall denominator.
+
+**95% ranges.** Report each field's equal-book mean, book/item denominators and two-sided percentile bootstrap range: 20,000 resamples within the frozen alias strata (42/38 books), equal weights, seed 20261110, sorted ids, linear 2.5th/97.5th percentiles, as in `statistics.bootstrap_books`. Share book draws across fields; never resample rows. Sensitivities retain remaining stratum counts. These approximate sampling ranges assume comparable independent books. Zero spread gives a point range: perfect results report 100% [100%,100%], explicitly **unable to quantify unseen errors**. Drop the KL bound.
+
+**Expected precision.** Exposed `dev20-run/predictions.json` / `dev20-snap/manifest.json` give 20 text and 18 character-positive book scores. Text uses matched reference-story pages (other cached references are blank): a spread proxy, not the all-page Word-reference proof metric. Dev20's typeset renders and cleaned references flatter what scans will give. SD and widths are percentage points.
+
+| Primary | Observed mean (%) | Book SD | Projected 95% width |
+|---|---:|---:|---:|
+| Text proxy | 97.0 | 3.4 | 1.4 |
+| Characters | 85.4 | 20.4 | 8.5 |
+| Gender | 78.6 | 22.3 | 9.3 |
+| Human | 61.8 | 38.2 | 16.0 |
+| Protagonist | 81.6 | 24.4 | 10.2 |
+
+Full widths average 1,000 simulated 80-book samples per empirical dev distribution, assuming it in both strata; each gets 2,000 stratified percentile resamples. NumPy `default_rng(20261110)`, table order: draw 80, split 42/38, draw each stratum's indices. These projections neither predict scan performance nor measure coverage.
+
+**Optional comparison — specified, not commissioned.** Only if Chris later chooses, census every text edit, one-sided/ambiguous character and missing/different attribute, including failures/abstentions. Sort by book id/page/field/item. Show colour source/context first, then unlabelled A/B in random order (seed 20261110); record cases where answer form reveals origin. Aliases remain descriptive.
+
+Text slots use minimum-edit token/blank alignment, resolving ties from the start as match, substitution, deletion, insertion. Chris resolves character identities once: one slot per union entity plus surplus duplicate, blank for absence, reused across attributes. Unresolved identities stay separate candidate-versus-blank slots. Four rulings: **A alone correct; B alone correct; equal correctness; unresolved.** Both wrong and both defensible tie; no fifth button. Absence is correct for invented/duplicate records, wrong for real characters, including attribute claims.
+
+Per book/field, sum AI-only-correct minus human-only-correct slots; ties=0, unresolved=−1 conservatively. Divide by frozen human token/character count (minimum 1), without clipping. Keep all 80, including zero-disagreement books. This is net disputed correctness per human opportunity, distinct from primary text accuracy; shared errors remain unmeasured. Missing references/unfinished reviews preclude the test.
+
+**One approximate intersection–union paired-bootstrap test** uses the same book draws and fifth-percentile lower bounds. Null: at least one field is worse by ≥1 percentage point. Claim “no worse than the recorded human within one point on these five discrepancy measures, under Chris's rulings” only if all five bounds exceed −0.01. No multiplicity adjustment for this all-fields claim. Zero within-stratum variation in any field withholds comparative inference. Absolute accuracy and human–human agreement remain unmeasured.
+
+**Freeze and reporting.** Before rehearsal or proof output, commit and tag this plan, tested scoring/interval code, ids-only freeze, source/reference hashes and mapping, normalization/codebook, model/prompts/configuration and failure policy. Tests must cover self-reference, missing output, duplicate names and interval boundaries. Pre-register ids sharing authors with final tuning/example books and the nine books quoted in the 5 November alias note; repeat all primaries and alias recall excluding each group separately, retaining the full-set primary. Report reduced denominators and bounds; no redraw. List every proof attempt append-only with tag, configuration, input/output hashes, dates, failures and rerun reason; fixes do not create fresh proof.
+
+**Supersedes:** the [autonomy design](autonomy_validation_design_2026-11-06.md) §§2/5 and conflicting sequencing in §§1/4/6/7; [relation protocol](relation_validation_protocol_2026-11-06.md) §1's independent-truth claims and §§3–7; [audit-interface](audit_interface_design_2026-11-06.md) §§1–6 as requirements; DECISIONS 015 items 1–2,4 and conflicting clauses of 5–9,11–14. Retain exclusions, separate cohorts, codebook, optional comparison's margin and accounting. Cut automatic agreement gates, compulsory adjudication, new relation corrections and mandatory audit roles/interfaces.
+
+## Open questions for Chris
+
+None now: the ruling resolves the conflict between human-level proof and no new judgements. Optional adjudication and routine-use decisions await the figures; neither is requested now.
