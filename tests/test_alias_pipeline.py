@@ -1,18 +1,16 @@
 """Frozen dictionary retrieval, lossless entries, and source-span contracts."""
-import json
 from collections import Counter
-from pathlib import Path
 
 import pytest
 
+from conftest import load_dev20_predictions
 from alias_pipeline import (build_alias_index, dictionary_diagnostics, match_page,
                             mention_pattern_tokens, tokens_with_raw_offsets)
 from scripts.extraction_eval.normalization import tokenize
 
 
 def test_dev20_frozen_dictionary_regression():
-    fixture = Path(__file__).parent / "fixtures" / "alias_dev20_predictions.json"
-    predictions = json.loads(fixture.read_text())
+    predictions = load_dev20_predictions()
     optional, exact = Counter(), Counter()
     characters = aliases = pages_count = 0
     ambiguous_books = {}

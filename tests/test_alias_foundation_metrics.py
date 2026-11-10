@@ -1,11 +1,10 @@
 """Offline output-consistency diagnostics and frozen dev20 census regressions."""
 
-import json
 from copy import deepcopy
-from pathlib import Path
 
 import pytest
 
+from conftest import load_dev20_predictions
 from alias_pipeline import dictionary_diagnostics
 from scripts.extraction_eval.alias_metrics import (
     HISTORICAL_DELETION_VERSION,
@@ -311,8 +310,7 @@ def test_reports_expose_additive_version_conventions_and_metric_qualifications(t
 
 
 def test_dev20_grounding_structural_and_dictionary_regressions():
-    path = Path(__file__).parent / "fixtures" / "alias_dev20_predictions.json"
-    predictions = json.loads(path.read_text(encoding="utf-8"))
+    predictions = load_dev20_predictions()
     records = [score_alias_foundation({"id": book_id}, actual) for book_id, actual in predictions["books"].items()]
     result = aggregate_foundations(*records)
     assert (result["M1"]["aliases"], result["M1"]["exact"], result["M1"]["determiner_stripped"], result["M1"]["ungrounded"]) == (112, 95, 9, 8)

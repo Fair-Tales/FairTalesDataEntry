@@ -55,15 +55,15 @@ there is deliberately no second verification scan. Retaining the exact raw input
 preserves matching inputs. Ignoring the added projection fields is a lossless
 rollback. There are no model or S3 calls and no inference cost.
 
-The frozen mention/grounding regression fixture at
-`tests/fixtures/alias_dev20_predictions.json` is an exact, unmodified copy of
-the cached dev20 prediction artifact at
-`/tmp/claude-1000/-home-expert-Documents-uob-fair-tales-FairTalesDataEntry/94cd65ba-b47b-4f8e-aa72-0afc7c7bbd43/scratchpad/dev20-run/predictions.json`.
-Both files are 384,458 bytes with SHA-256
+The frozen mention/grounding regression evidence lives outside the repository at
+`<freeze dir>/evidence/dev20-run/predictions.json`, where `<freeze dir>` is
+`scripts.extraction_eval.tuning.DEFAULT_FREEZE_DIR`. It contains near-complete
+text of 20 in-copyright picture books, so it is not kept in this public repository.
+The unchanged file is 384,458 bytes with SHA-256
 `7976646dec39ab8798684894d0db64a3cf2e30affdd4e185ec6e4a2e807199cf`.
-The fixture retains full raw predictions and recorded source-path references;
-tests read only the repository fixture and never follow those paths or depend
-on the temporary source remaining available. No inference was rerun to make it.
+Set `FAIRTALES_EVIDENCE_DIR` to override the evidence folder (the folder containing
+`dev20-run`). The two regression tests skip if the file is absent and fail if its
+hash differs. They never follow the recorded source paths. No inference was rerun.
 
 # scripts/data_cleanup.py — junk-data audit + guarded delete (issue #120)
 
