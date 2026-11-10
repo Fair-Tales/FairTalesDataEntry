@@ -77,7 +77,7 @@ interval were recomputed independently and agree.
 
 | # | Finding | Evidence |
 |---|---|---|
-| 4.1 | **The "human-typed" pilot text is not human-typed.** 55 of the 57 proof books (674 of 702 pages) were created between 8 July and 21 September 2026. #157 (on `main` by 7 July) left the photo flow as the only menu route for adding a book, and that flow writes Claude's transcription into `page.text` for the person to review; characters are auto-suggested the same way. The edit log records validator corrections only, and none of the 57 has been validated, so nothing shows what was changed. **No cohort holds independent human page text.** The claim was mine (6 November, "Verified…"); it checked who entered the books, not how the text got there. | R: `pages/uploader.py` at `700edf8`; census dates |
+| 4.1 | **The "human-typed" pilot text is not human-typed.** 55 of the 57 proof books (674 of 702 pages) were created between 8 July and 21 September 2026. #157 (on `main` by 7 July) left the photo flow as the only menu route for adding a book, and that flow writes Claude's transcription into `page.text` for the person to review; characters are auto-suggested the same way. The edit log records validator corrections only, and none of the 57 has been validated, so nothing shows what was changed. The pilot cohort therefore holds no independent human page text (the original books do: see 4.11). The claim was mine (6 November, "Verified…"); it checked who entered the books, not how the text got there. | R: `pages/uploader.py` at `700edf8`; census dates |
 | 4.2 | **Every quality gate needs a perfect score.** "Set at the ceiling" means only an error-free result passes (design lines 174 and 403). On the realised holdout (652 character rows, 71 alias rows) a pipeline with 99% character recall passes 0.1% of the time and one with 99.5% passes 4%. Dev20 character recall is 0.854. | R: design text; 0.99^652 |
 | 4.3 | **The non-inferiority test cannot pass under the design's own formula.** With the AI exactly matching the human on every book, the lower bound is −0.32 (57 books) or −0.27 (80), against a required −0.01. An AI 20 points better on every book still fails. The design calls this "a real power limitation" and keeps it as a release condition. | R: re-derived |
 | 4.4 | No single analysis is pre-specified. For one claim the design offers three interval methods without saying which decides, and none of the proof analysis is coded. `freeze.json` is not in git. | T |
@@ -85,8 +85,9 @@ interval were recomputed independently and agree.
 | 4.6 | The reused speech labels were not made blind. The original notebook shows GPT-4o's output while each sentence is labelled; `FOUND` is the labeller pressing "Is in GPT4o output?"; unpressed buttons default to 0; the file holds no book or text. "Beat 260/272" is not like-for-like, and overlap with the holdout cannot be established. | R: `speech_detection_validation_gpt4o.ipynb` cells 14–18 |
 | 4.7 | The pilot proof cohort is neither frozen nor clean. It lives in the editable production database and its ids are in no sealed file. Two pairs look like the same work, one "completed" record has 3 of 19 pages, another has one page, and four of the books had page images in the July rotation evaluation. Independent works are plausibly 54–55. | T (titles and counts only) |
 | 4.8 | The exposure record is incomplete. A planning note quotes reference aliases, 13 of the 71 held-out alias rows among them. `reports/pages_to_review.md` carries content notes on at least 36 held-out books. Untracked `scripts/rotation_prompt_eval/work/sample/` holds page photographs from 5 held-out and 2 protected books. 45 of the 80 held-out works share an author with tuning material. | T |
-| 4.9 | The imported page images are PDF renders of scans; production input is phone photographs. A pass on the imported cohort says little about photographed books. | T |
+| 4.9 | **The page images stored for the original books are renders of the reference text itself.** Each is a page of the Word document made from the scan in 2021–22: typeset text on white, with pictures reduced to grey crops or missing. A pipeline reading them is reading the reference, so the 0.99 OCR figure is not evidence about book pages. Nothing in them shows whether a character is a person or an animal, which fits the `human` result in 3.3. **The original colour scans survive** at `/media/storage/Gender in Children's Literature/Books/`: 197 books, one colour image per page, no text layer; 175 of 192 have the same page count as their text PDF. | R: sealed image and both PDFs for one exposed book; PDF metadata for all |
 | 4.10 | The seal is thinner than §1D: no `frame.json`, a flat list of 80 rather than the grouped exclusions, no realised counts. The relation protocol and audit-interface documents still describe a custodian, an undrawn sample and two reviewers; the single-adjudicator ruling is unlogged. `DECISIONS.md:527` calls page-level C(702) "the strong text evidence" where the design calls that pseudoreplication. | T; R (the DECISIONS line) |
+| 4.11 | **The original books' text is human-entered, not machine-made** as DECISIONS 015 item 2 and the design say. All 197 text PDFs are Word exports (`Microsoft Word for Microsoft 365`) of documents the original team made from the scans; Chris confirms a person entered the text. Two thirds of the stored page text was then altered by a Claude cleaning pass at import; the unaltered text can be re-read from the PDFs. Added the same day, after Chris corrected the first version of this review. | R (PDF metadata); Chris (who entered it) |
 
 ### Proposed replacement
 
@@ -102,9 +103,10 @@ of the design:
 - **Success means non-inferior to the human-entered record**, margin one point as already
   ratified, tested on paired book-level differences with the same bootstrap. For direction,
   adjudicate disagreements source-first and use an exact sign test over books.
-- **Text truth from a blind transcription** of about 100 randomly drawn page photographs
-  (two to three hours). It is the only way to an accuracy claim about text, and it measures
-  the stored human-reviewed text at the same time.
+- **Text: run the original books from their colour scans** and score against the original
+  study's human-entered text. That is an end-to-end test with no new annotation, which
+  Chris ruled out on 10 November. The pilot books then show agreement with human-reviewed
+  text on phone photographs, and are labelled as that.
 - **Protected 40.** Its old-versus-new comparison no longer exists at HEAD. Either restore
   the old prompts and run it as planned, or use the 40 as an untouched dress rehearsal of
   the frozen analysis. The plan should argue one.
@@ -139,7 +141,9 @@ are the likely deposit, not photographs or full text; that is their call, not ou
   human-typed (4.1), the 650 speech labels as plain human truth (4.6), and the `main` merge
   as clean (§2). Each time I confirmed that a number reproduced or a merge had no conflicts,
   not how the data came to exist or what the code would do. A claim a design rests on must
-  cite the code path or record that produced the data.
+  cite the code path or record that produced the data. The first version of this review
+  made the same slip once more: it said no cohort held independent human text without
+  opening the original study's files (4.11).
 - **Ninety thousand words of design in four days cannot be audited by anyone**, and the one
   fact that had to be right was wrong in the middle of it. The binding content should be the
   two-page plan; the rest is background.
