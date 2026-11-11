@@ -77,6 +77,10 @@ Output contains counts and the id-set hash, never titles or book content.
 Snapshot assembly remains in `snapshot.create_snapshot` (`backend=None` for an
 already cached snapshot); this module neither fetches nor copies the snapshot.
 
+Generate the versioned ids-only lists: `.venv/bin/python -m scripts.extraction_eval.freeze selections --manifest SNAPSHOT/manifest.json --freeze SEALED_DIRECTORY/freeze.json` (writes `scripts/extraction_eval/selections.json`).
+Add `--selections` to the `verify` command above to compare that file byte for byte with fresh regeneration; any difference exits nonzero.
+The harness can call `freeze.load_selections()` to validate counts, disjoint cohorts, membership and the held-out id hash without opening book content.
+
 ## First 20-book run
 
 The following are commands for a human operator. Keep evidence in
