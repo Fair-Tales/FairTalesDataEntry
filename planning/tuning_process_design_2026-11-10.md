@@ -128,19 +128,11 @@ Then the proof on the 80, once, every attempt listed.
 
 Automatic prompt optimisers; retrieval of examples; cross-validation folds; a model acting as judge; per-change significance tests beyond step 6; a separate regression framework; aliases as a tuning target; the 57 pilot books in the loop; OpenAI in the first lap.
 
-## Open questions for Chris
+## Open questions for Chris — answered 11 November (DECISIONS 018)
 
-**Q1. Gendered words without a pronoun.** Your written rule codes gender from pronouns only. The original coders also used the word itself: in the development books "cow" and "hen" are recorded Female though the text gives them no pronoun. Which should the pipeline follow?
-- *The written rule.* Such characters stay Non-specific. Agreement with the record is slightly lower (2 of 9 gender disagreements) and the corpus matches its codebook.
-- *The record's practice.* Words such as hen, queen and mum count. Agreement rises and the codebook is reworded to say so.
-
-**Q2. Pictures for human versus animal.** The pipeline decides whether a character is human from the text alone. In three of 18 development books almost every character was wrong because they are animals with ordinary names; mistakes of that kind are 18 of the 19 errors. The original coders plainly looked at the pictures. May the pipeline look at them for this one question, never for gender?
-- *Yes.* One small extra call per book, about 3 cents. It is the only way this figure improves.
-- *No.* Human/non-human stays near 77% and is reported as unreliable for books that never say what their characters are.
-
-**Q3. Fuller names.** The ratified plan counts a recorded character as found only when the pipeline uses the same name. In the development books 10 of the 14 "missed" characters had been found under a fuller name, such as "The Old Cat" for "cat": 85% strict, 96% counting those. Which is the headline?
-- *Strict, as ratified.* The figure measures naming as well as finding. The pipeline is taught to emit the short form too, and the tolerant figure is reported beside it.
-- *Tolerant.* A fuller or shorter name counts when it points to exactly one character, with strict reported beside it. This amends the plan, at no cost now because no scoring code is tagged.
+- **Q1, gendered words without a pronoun: gendered words count**, and other textual cues are to be looked for. Chris: "there may be more textual cues like this, aside from pronouns, that are used to gender a character. So keep a lookout for them!" Tally every such case by kind of cue in step 3 and bring each kind to him before it enters the prompt.
+- **Q2, pictures for human versus animal: yes**, for that one question and never for gender.
+- **Q3, fuller names: the tolerant match is the headline**, strict beside it, "provided the fuller or shorter names are correctly recorded as aliases." Whether the variant was recorded as an alias is reported beside the headline and is a tuning target. This amends the analysis plan's character measure.
 
 ## Sources
 

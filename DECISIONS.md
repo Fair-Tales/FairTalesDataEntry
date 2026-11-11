@@ -648,3 +648,49 @@ were wrong. Chris ruled on each point the same day.
    never the held-out 80; a book that supplies an example is left out when the
    example-based prompt is scored on it; and every prompt change is re-scored on
    the whole tuning set, not only on the cases it was written for.
+
+## 018 — Three conventions for tuning and scoring (2026-11-11)
+
+**Context.** The tuning design's error analysis of the 20 development books
+(`planning/tuning_process_design_2026-11-10.md` §1) raised three questions that
+only Chris could answer. His rulings:
+
+1. **Gender is coded from textual cues, not from pronouns alone.** The written
+   rule said pronouns only; the original coders also used the word itself
+   (`cow` and `hen` are recorded Female with no pronoun in the text). Gendered
+   words now count. Chris: "there may be more textual cues like this, aside
+   from pronouns, that are used to gender a character. So keep a lookout for
+   them!" This supersedes the instruction in the autonomy design to align the
+   prompt to a pronoun-only rule, and the `gender_help` text in
+   `text_content/forms.py` is to be reworded to match. Illustrations are still
+   never used for gender, and the prohibition on inferring gender from
+   stereotype stands.
+
+   How the lookout is kept — the orchestrating session's reading, not Chris's
+   wording: during error analysis, every case where the record gives a gender
+   and the text has no pronoun is tallied by the kind of cue that explains it
+   (title, kinship term, gendered noun, and so on). Each kind is brought to
+   Chris before it is written into the prompt, so the rule grows from what the
+   coders did rather than from a guess.
+
+2. **The pipeline may look at the pictures to decide human or non-human, and
+   for nothing else.** Eighteen of the nineteen errors on the development books
+   were animals with ordinary names, which only the illustrations reveal; the
+   original coders had the books in front of them. One small call per book.
+
+3. **A character found under a fuller or shorter name counts as found.** This
+   amends the character measure in the analysis plan ratified on 10 November:
+   the headline is the tolerant match, where a fuller or shorter name counts
+   when it points to exactly one character, with the strict figure reported
+   beside it. Chris's condition: "provided the fuller or shorter names are
+   correctly recorded as aliases."
+
+   Reading of that condition, again the session's: finding the character and
+   recording its names are two different things and are now measured
+   separately. The headline says whether the character was found. Whether the
+   variant name was recorded as an alias is reported beside it and is a tuning
+   target, because later steps find a character's mentions through those
+   aliases. On the development books ten characters were found but the short
+   form was not recorded.
+
+4. **The tuning design is reviewed by Astra before approval.**
