@@ -60,6 +60,23 @@ unattributed caches are refused. The gate cannot reconstruct missing historical
 provenance or identify editions absent from the existing identity metadata.
 It covers trusted harness use, not arbitrary scripts reading files directly.
 
+## Holdout freeze (offline)
+
+Reproduce the 7 November draw from a completed snapshot, or check the existing
+seal read-only (including its sibling `holdout_ids.json`):
+
+```bash
+.venv/bin/python -m scripts.extraction_eval.freeze write --manifest SNAPSHOT/manifest.json --out NEW_DIRECTORY
+.venv/bin/python -m scripts.extraction_eval.freeze verify --manifest SNAPSHOT/manifest.json --freeze SEALED_DIRECTORY/freeze.json
+```
+
+The fixed frame counts must match; mismatches stop without trimming. Writing
+refuses existing seal/exclusion files. Verification reports differing fields
+and exits nonzero on failure; only creation time and Python version are ignored.
+Output contains counts and the id-set hash, never titles or book content.
+Snapshot assembly remains in `snapshot.create_snapshot` (`backend=None` for an
+already cached snapshot); this module neither fetches nor copies the snapshot.
+
 ## First 20-book run
 
 The following are commands for a human operator. Replace `/secure/fairtales-eval`
