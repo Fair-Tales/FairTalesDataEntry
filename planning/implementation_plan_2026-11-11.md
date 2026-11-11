@@ -22,7 +22,7 @@
 | A4 | Restore explicit baseline variant: `P/{pipeline_prompts,ai_prompts}`, `E/{baseline.json,cli}` (R3.1). | Missing variant refused; baseline hashes match; dev20 dry replay near-total hits, misses explained. | A2a,A6b; M |
 | A5a | Whole-book text primary/insertions in `E/scoring` (A Text). | Self=1; empty/nonempty=0; failed/unavailable stays a miss; fabricated wordless-page text increases inserted tokens. | —; S |
 | A5b | Maximum cast matching: `E/{normalization,scoring}` (A Characters; D018.3). | Unique subsequence matches; changed possessor needs shared alias; tied candidates add nothing; duplicate-name self-reference=1. | —; M |
-| A5c | Gender/human/protagonist graphs in `E/scoring` (A primaries). | Maximum **strict**, equal-field matching/all reference characters → missing field=0; tolerant-only match earns no attribute credit; confusion counts reconcile. | A5b; S |
+| A5c | Gender/human/protagonist graphs in `E/scoring` (A primaries; D018.7). | Same matching as the Characters headline, equal-field, over all reference characters → missing field=0; a tolerant-matched character has its codes compared; strict version reported beside; confusion counts reconcile. | A5b; S |
 | A5d | Alias outputs: `E/{alias_metrics,reporting}` (A aliases; D018.3). | Explicit-only coverage/invariant owners; unresolved counts; one-to-one recall; empty denominator absent; deduplicated extras' grounding share/owner ambiguity reported, never errors. | A5b; M |
 | A5e | Five means/ranges/sensitivities in `E/{statistics,reporting}`, `P/evaluation` (A ranges/reporting). | Equal-book, shared stratified 20,000 draws, seed20261110, sorted ids, linear percentiles reproduce; perfect→[1,1] with unseen-error caveat; exclusions reduce denominators; no KL/pass-fail. | A5a,c,d,A6a; M |
 | A8a | Evaluator failure outcomes in `E/{runner,store,scoring}` (R3.11,5.1). | Blocked/refused/timed-out page → failed, never successful blank; counted in failed-pages denominator. | —; S |
@@ -64,7 +64,7 @@
 
 **Order/parallelism.** First A2a prevents loss; A2b recovers reproducibility; A6a fixes selections. A6b then unlocks A3a/b in parallel, followed by A3c: scans/references/mapping are the likely long pole. Provider, synthetic scoring and B work proceed alongside; serialize shared-file edits.
 
-**Branches.** After H, one `impl/<id>` off updated `claude-dev` per item: **34 A/B + five later C = 39 specific merge approvals**. Propose six requests listing exact merges: preservation/selections; inputs/prompts/examples; measures; providers/configuration; B; later C. This reduces interruptions, not specific approvals. No auto-push; Chris alone handles `main`.
+**Branches (Chris, 11 November; D018.8).** After H, six branches off updated `claude-dev`, one commit per item, each verified before the next: `impl/evidence-selections` (A2a–b, A6a–b, P1), `impl/inputs-prompts-examples` (A3a–c, A4, A7a–b), `impl/measures` (A5a–f, A8a), `impl/providers-config` (A1b, A8b, A9–A13), `impl/main-merge-fixes` (B1–B7) and, later, `impl/corpus` (C1–C5). Six merges, each needing Chris's specific approval. No auto-push; Chris alone handles `main`.
 
 **Cuts.** Retain all thirteen: each prevents observed failures or plausible accidental mischarging/exposure. Share helpers for 9/10 and 11–13; keep checks separate. Production status/strict parsing stays C; adjudication/old zero-margin gates stay cut. T§5.6: predeclare target; Iterate gain >2×its floor, no primary/guardrail loss >own floor; Check target/primaries lose no more than Check's floor. Cost increases need stated gains.
 

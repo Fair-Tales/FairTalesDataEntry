@@ -732,3 +732,18 @@ only Chris could answer. His rulings:
    the open AI API credits to use also in any given plan." The tuning design
    now brings OpenAI models in from the first billing cycle, with a separate
    envelope per provider.
+
+7. **Gender, human and protagonist are compared for every character counted
+   as found.** Astra's draft kept those three on the strict match, so a
+   character found under a fuller name would have had its codes counted as
+   missing. Chris ruled that they use the same matching as the character
+   figure, with the strict version reported beside each. Otherwise three of the
+   five headline figures would again depend on how a coder happened to name a
+   character.
+
+8. **The implementation is branched in six groups, one commit per change.**
+   The work list has 34 changes before production. Rather than a branch and a
+   merge approval for each, they are grouped into six branches off
+   `claude-dev`; every change is still its own commit with its own check,
+   verified before the next, and each of the six merges needs Chris's specific
+   approval (`planning/implementation_plan_2026-11-11.md`).
