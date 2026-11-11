@@ -1,6 +1,6 @@
 # Tuning process design — 10 November 2026
 
-**Status: design for Chris's approval; revised 11 November. No inference run or spend.** Implements DECISIONS 017–018 and the [analysis plan](analysis_plan_2026-11-10.md). Unresolved judgements are in the [independent review](tuning_design_review_2026-11-11.md).
+**Status: design for Chris's approval; revised 11 November. No inference run or spend.** Implements DECISIONS 017–018 and the [analysis plan](analysis_plan_2026-11-10.md). Reviewed independently by Astra ([note](tuning_design_review_2026-11-11.md)); its objections to the loop are adopted in §§2, 5 and 6.
 
 ## 1. What the baseline's errors actually are
 
@@ -27,9 +27,13 @@ These diagnoses concern renders; their frequency on scans is unmeasured.
 
 ## 2. What "better" means
 
-Report equal-book primaries and paired changes from the last accepted version. Characters uses tolerant recall, strict recall and explicit-alias coverage; coverage is a tuning target. Guardrails:
+Report equal-book primaries and paired changes from the last accepted version. Characters uses tolerant recall, strict recall and explicit-alias coverage; coverage is a tuning target.
 
-- **Alias groundedness** (names found in page text; 92.9% on dev20) must not fall.
+**Aliases beyond the coders' are welcome, not errors** (Chris, 11 November: "more thorough detection, which is good provided they are not duplicates"). Count them as distinct forms per character, ignoring case and a leading a/an/the; each must be found in the page text and belong to one character. Report their number beside coverage.
+
+Guardrails, each judged against its measured noise rather than against zero:
+
+- **Alias groundedness** (names found in page text; 92.9% on dev20) must not fall, so neither recall nor extra aliases can be bought with invented names.
 - **Inserted text** (added tokens per 100 reference tokens, including wordless pages) must not rise.
 - **Failed pages** per 100 (0.65 on dev20) must not rise.
 - **Cost per book** ($0.75 on dev20) may rise only for a stated gain.
@@ -60,10 +64,11 @@ Rerun with `--replicate`: characters twice more on 55 Iterate books ($1.15), tra
 3. **Error analysis.** Read every Iterate miss, classify and count. Tally gender cues beyond pronouns by kind and bring each kind to Chris before adding it to a prompt. Never infer gender from illustrations or stereotypes (DECISIONS 018).
 4. **One hypothesis, one change:** a rule, an example or a structural step, aimed at the largest category a lever can reach.
 5. **Re-score the whole Iterate set**, not just the cases the change was written for.
-6. **Accept only if** the category's count falls; the targeted primary rises by more than twice its floor, or the count falls by a third; no other primary falls by more than its floor; no guardrail worsens. Otherwise revert.
+6. **Accept only if** the measure the change was aimed at, named before the run (a primary, alias coverage or a guardrail), improves by more than twice its floor, and no primary or guardrail worsens by more than its own floor. A fall in the category's count is not enough by itself: counts and book means can move in opposite directions. Otherwise revert.
 7. **Log one row per attempt:** hypothesis, change, counts before and after, primaries, guardrails, cost, verdict. Reverted attempts stay.
-8. **Consult the Check set three times only:** after the baseline, when Iterate stops improving or after five accepted changes, and before freeze. Read its five figures and nothing else. If Iterate has gained and Check has not, beyond Check's own noise, remove recent changes newest first.
-9. **Stop** when no category has five cases a lever could reach, after 15 accepted changes, or when the cycle's budget is spent.
+8. **Score the Check set at three points fixed in advance:** after the baseline, after the fifth accepted change, and before freeze. Read its figures and nothing else. It is a diagnostic, not a clean test: if Iterate has gained and Check has not, stop adding changes of that kind and record it. Do not search for which change to remove, since each search is another look.
+9. **Stop** when no remaining category holds errors a lever could reach, after 15 accepted changes, or after 30 attempts in all. Running out of a cycle's budget pauses the loop; it is not a result.
+10. **Confirm once before freeze:** a fresh run of the final version against a fresh run of the baseline on every Iterate book, so the cumulative gain is not a product of selecting among noisy attempts.
 
 Work characters first, at about a cent/book; batch text changes ($25/re-pass).
 
@@ -71,7 +76,7 @@ Work characters first, at about a cent/book; batch text changes ($25/re-pass).
 
 **Examples.** Fixed curated pack, without retrieval. Tag each example with category and log row; at most two/category and twelve/stage, using minimal excerpts. Before adding examples, move text to the existing private S3 bucket and local evidence folder; only IDs, tags and SHA-256 enter git.
 
-**Prompt development.** An edge-case fix is steps 4 to 6; the full re-score is the regression test. Each accepted fix adds its cases to a must-stay-fixed list checked on every later run.
+**Prompt development.** An edge-case fix is steps 4 to 6; the full re-score is the regression test.
 
 **Neither lever reaches:**
 
@@ -138,7 +143,7 @@ Then the proof on the 80, once, every attempt listed.
 
 ## What this cuts
 
-Automatic prompt optimisers, example retrieval, cross-validation folds, model judges, a separate regression framework and the 57 pilot books. Alias recovery and first-cycle OpenAI use are retained under Chris's rulings.
+Automatic prompt optimisers, example retrieval, cross-validation folds, model judges, a separate regression framework, a must-stay-fixed list (the full re-score already covers it), any search for which change to roll back, and the 57 pilot books. Alias recovery and first-cycle OpenAI use are retained under Chris's rulings.
 
 ## Sources
 

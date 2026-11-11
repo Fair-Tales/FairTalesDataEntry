@@ -678,19 +678,46 @@ only Chris could answer. His rulings:
    were animals with ordinary names, which only the illustrations reveal; the
    original coders had the books in front of them. One small call per book.
 
-3. **A character found under a fuller or shorter name counts as found.** This
-   amends the character measure in the analysis plan ratified on 10 November:
-   the headline is the tolerant match, where a fuller or shorter name counts
-   when it points to exactly one character, with the strict figure reported
-   beside it. Chris's condition: "provided the fuller or shorter names are
-   correctly recorded as aliases."
+3. **A character found under a fuller or shorter name counts as found, and
+   aliases are measured separately.** This amends the character measure in the
+   analysis plan ratified on 10 November. Chris first chose it with the
+   condition "provided the fuller or shorter names are correctly recorded as
+   aliases", then asked why the strict match had been recommended, and
+   confirmed it after seeing the records.
 
-   Reading of that condition, again the session's: finding the character and
-   recording its names are two different things and are now measured
-   separately. The headline says whether the character was found. Whether the
-   variant name was recorded as an alias is reported beside it and is a tuning
-   target, because later steps find a character's mentions through those
-   aliases. On the development books ten characters were found but the short
-   form was not recorded.
+   The question had been put to him wrongly: it said the ratified rule matched
+   "the same name" when it already matched any recorded name or alias. The
+   records settled it. In all thirteen unmatched cases on the development books
+   the coder had recorded no alias at all, and several labels were the coder's
+   own shortening or description of a name the book never uses (`Cindy-Lou` for
+   "Cindy-Lou Who"; `older girl` where the pipeline has Mary). A strict match
+   marks the pipeline wrong for copying the book, and could only be satisfied by
+   guessing the coder's wording.
 
-4. **The tuning design is reviewed by Astra before approval.**
+   The exact rule is in the plan: a fuller or shorter name counts when it is a
+   whole-word subsequence of the other, the possessor is unchanged, and each
+   side has exactly one candidate. On the development books that gives 90 of 96
+   found, against 82 strictly. Beside it, alias coverage reports how many of
+   the coders' recorded names the pipeline also recorded as a name or alias;
+   `cat` against "The Old Cat" and `Dad` against "Noi's dad" both count against
+   the pipeline there, because those are mentions it could not find. Recording
+   every form the book uses on its own for a character is a tuning target.
+
+   **Aliases beyond the coders' are welcome.** Chris: "let's allow that the
+   pipeline may find more aliases than the human I.e. more thorough detection,
+   which is good provided they are not duplicates". They are never scored as
+   errors. Reading of "duplicates", the session's: the same form twice for one
+   character once case and a leading a/an/the are ignored, which adds nothing
+   because articles are already optional when mentions are matched (014 items
+   3 and 4); and a form attached to two characters, which is reported as
+   ambiguous. Each extra alias must also be found in the page text.
+
+4. **The tuning design is reviewed by Astra before approval.** Done on
+   11 November (`planning/tuning_design_review_2026-11-11.md`); its objections
+   to the acceptance rule, the use of the check set and the stop rule were
+   adopted.
+
+5. **Every plan budgets both credit balances.** Chris: "Remember, we will have
+   the open AI API credits to use also in any given plan." The tuning design
+   now brings OpenAI models in from the first billing cycle, with a separate
+   envelope per provider.
