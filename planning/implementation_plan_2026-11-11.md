@@ -39,6 +39,8 @@
 
 **Added on review (orchestrating session).** One item the list omits and the analysis plan requires: **P1**, snapshot the 57 pilot books (ids, records, page images and the extraction-error log) into the evidence folder, and list the fragments and same-work pairs the review found. About 1,000 Firestore reads plus the image downloads, so it needs Chris's go-ahead. Accepted when the counts match the census. Depends on A2a; do it before B3a deploys or after B3b, so deleted records are not captured as reference; S.
 
+**Found while building A6b (orchestrating session).** Under the id filter the rotation evaluation keeps 48 of its 72 labelled samples. The 24 it skips are not held out or protected: they come from books outside the 195, which is to say the pilot books, the only phone photographs in the set and so the closest to production input. They are skipped because an unmapped book is refused by default. Whether they may be used belongs with the rotation model screen, and is Chris's to decide then; until he does, they stay out.
+
 ## B. Before `claude-dev` can go to `main`
 
 | ID/reference | Change and files | Runnable acceptance → expected result | Depends; size |

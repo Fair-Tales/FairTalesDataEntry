@@ -30,6 +30,7 @@ import s3fs
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, REPO)
 from image_processing import downscale_for_vision  # noqa: E402
+from scripts.rotation_prompt_eval.sample_filter import SampleFilter  # noqa: E402
 from s3_constants import (  # noqa: E402
     S3_BUCKET, NON_BOOK_S3_PREFIXES, is_page_image, page_image_number,
 )
@@ -55,19 +56,30 @@ def list_book_pages():
         if f.rsplit("/", 1)[-1] not in NON_BOOK_S3_PREFIXES
     )
     book_pages = {}
+    sample_filter = SampleFilter()
+    skipped = dict(held_out=0, protected=0, unmapped=0)
     for folder in folders:
         try:
             entries = fs.ls(folder, detail=False)
         except FileNotFoundError:
             continue
         pages = sorted((page_image_number(e), e) for e in entries if is_page_image(e))
-        if pages:
+        reason = sample_filter.book_reason(folder.rsplit("/", 1)[-1])
+        if reason:
+            skipped[reason] += len(pages)
+        elif pages:
             book_pages[folder] = pages
+    print(f"Rotation pages skipped: {sum(skipped.values())} "
+          f"(held_out={skipped['held_out']}, protected={skipped['protected']}, "
+          f"unmapped={skipped['unmapped']})")
     return book_pages
 
 
 def download(folder, n, key):
     book = folder.rsplit("/", 1)[-1]
+    reason = SampleFilter().book_reason(book)
+    if reason:
+        raise ValueError(f"Rotation sample refused: {reason}")
     local_id = f"{book.replace(' ', '_').replace('/', '_')}__page_{n}"
     raw_path = os.path.join(OUT, local_id + ".jpg")
     if not os.path.exists(raw_path):
@@ -92,7 +104,7 @@ def main():
     for folder in books:
         take = rng.sample(book_pages[folder], min(PAGES_PER_BOOK, len(book_pages[folder])))
         sample.extend((folder, n, key) for n, key in take)
-    while len(sample) < TARGET:
+    while len(sample) < TARGET and set(book_pages) - set(books):
         extra = rng.choice(sorted(set(book_pages) - set(books)))
         books.append(extra)
         take = rng.sample(book_pages[extra], min(PAGES_PER_BOOK, len(book_pages[extra])))
@@ -100,9 +112,8 @@ def main():
 
     # Supplement (seed 20260719): 4 more books not in the main batch.
     rng2 = random.Random(SUPPLEMENT_SEED)
-    extra_books = rng2.sample(
-        sorted(set(book_pages) - set(books)), SUPPLEMENT_BOOKS
-    )
+    remaining = sorted(set(book_pages) - set(books))
+    extra_books = rng2.sample(remaining, min(SUPPLEMENT_BOOKS, len(remaining)))
     for folder in extra_books:
         take = rng2.sample(book_pages[folder], min(PAGES_PER_BOOK, len(book_pages[folder])))
         sample.extend((folder, n, key) for n, key in take)

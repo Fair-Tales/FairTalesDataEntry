@@ -114,7 +114,17 @@ def test_verify_own_output_is_read_only_and_tuning_compatible(manifest, tmp_path
     assert differences == []
     assert replay["imported80_ids"] == written["imported80_ids"]
     assert {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in out.iterdir()} == before
-    loader = TuningLoader(tmp_path / "run", out)
+    from scripts.extraction_eval.store import atomic_json
+    monkeypatch.setattr(freeze, 'SELECTION_COUNTS', {})
+    selections = {key: written[key] for key in (
+        'imported80_ids', 'protected40_ids', 'tune41_ids', 'imported80_ids_sha256')}
+    selections.update(exposed34_ids=[], check20_ids=written['tune41_ids'][:1],
+                      iterate55_ids=written['tune41_ids'][1:], example_source_ids=[],
+                      heldout_author_shared_ids=[], heldout_alias_quoted_ids=[])
+    selections['counts'] = {key: len(selections[key]) for key in freeze.SELECTION_FIELDS}
+    selections_path = tmp_path / 'selections.json'
+    atomic_json(selections_path, selections)
+    loader = TuningLoader(tmp_path / "run", out, selections_path=selections_path)
     assert loader.holdout == set(written["imported80_ids"])
 
 

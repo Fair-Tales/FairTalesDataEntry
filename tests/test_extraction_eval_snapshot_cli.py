@@ -4,6 +4,10 @@ import json
 from google.api_core.exceptions import PermissionDenied, ResourceExhausted
 import pytest
 
+from scripts.extraction_eval.tuning import current_loader
+
+pytestmark = pytest.mark.usefixtures("synthetic_cohort")
+
 from scripts.extraction_eval import cli, snapshot
 from scripts.extraction_eval.read_cost import estimate_snapshot_reads
 from scripts.extraction_eval.store import atomic_json, digest, read_json
@@ -226,9 +230,9 @@ def test_other_service_errors_are_not_misreported_as_quota(tmp_path, monkeypatch
     {"source_changes": False, "membership": True},
 ])
 def test_unaudited_and_partially_audited_snapshots_load_with_explicit_provenance(tmp_path, audits):
-    manifest = {"complete": True, "source_consistent": None, "audits": audits}
+    manifest = {"complete": True, "source_consistent": None, "audits": audits, "books": []}
     atomic_json(tmp_path / "manifest.json", manifest)
-    assert cli._load_snapshot(tmp_path) == manifest
+    assert cli._load_snapshot(tmp_path, loader=current_loader()) == {**manifest, "audit": [], "excluded_books": []}
 
 
 @pytest.mark.parametrize("fields", [
@@ -238,12 +242,12 @@ def test_unaudited_and_partially_audited_snapshots_load_with_explicit_provenance
     {"source_consistent": None, "audits": {"source_changes": "false", "membership": False}},
 ])
 def test_unknown_or_failed_consistency_is_rejected(tmp_path, fields):
-    atomic_json(tmp_path / "manifest.json", {"complete": True, **fields})
+    atomic_json(tmp_path / "manifest.json", {"complete": True, "books": [], **fields})
     with pytest.raises(ValueError):
-        cli._load_snapshot(tmp_path)
+        cli._load_snapshot(tmp_path, loader=current_loader())
 
 
-def test_default_snapshot_then_score_retains_explicit_unaudited_provenance(tmp_path, monkeypatch, capsys):
+def test_default_snapshot_then_score_retains_explicit_unaudited_provenance(tmp_path, monkeypatch, capsys, cohort_loader_factory):
     class FakeBackend:
         def iter_books(self, entered_by):
             return [{"id": "a", "path": "books/a", "update_time": "v1",
@@ -266,16 +270,18 @@ def test_default_snapshot_then_score_retains_explicit_unaudited_provenance(tmp_p
     manifest = read_json(output / "manifest.json")
     assert manifest.get("audits") == {"source_changes": False, "membership": False}
     assert manifest.get("source_consistent") is None
+    loader = cohort_loader_factory(run, iterate=["a"])
+    manifest = loader.snapshot(output)
     selection = {"book_ids": ["a"]}
-    atomic_json(run / "run.json", {"contract": {
+    atomic_json(run / "run.json", {**read_json(run / "run.json"), "contract": {
         "snapshot_id": manifest.get("snapshot_id"), "snapshot_hash": digest(manifest),
         "selection": selection,
     }})
     atomic_json(run / "selection.json", selection)
-    atomic_json(run / "predictions.json", {"snapshot_id": manifest.get("snapshot_id"), "books": {}})
+    atomic_json(run / "predictions.json", {"snapshot_id": manifest.get("snapshot_id"), "books": {"a": {}}})
     monkeypatch.setattr(snapshot, "create_live_backend", forbidden)
     monkeypatch.setattr(cli, "_live_anthropic", forbidden)
-    assert cli.main(["score", "--original-experiment", "--snapshot", str(output), "--run", str(run)]) == 0
+    assert cli.main(["score", "--snapshot", str(output), "--run", str(run)]) == 0
     summary = read_json(run / "reports" / "summary.json")
     assert summary.get("snapshot_audit_status") == "not_audited"
     assert summary.get("snapshot_source_consistent") is None

@@ -42,6 +42,9 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, REPO)
 from image_processing import LANDSCAPE_SPREAD_MIN_ASPECT  # noqa: E402
 from text_content import AIPrompts  # noqa: E402
+from scripts.rotation_prompt_eval.sample_filter import (  # noqa: E402
+    SampleFilter, load_labels, load_preview,
+)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORKDIR = os.environ.get("ROT_EVAL_WORKDIR", os.path.join(HERE, "work"))
@@ -156,15 +159,6 @@ def pipeline(image_bytes, triage_prompt, ckey_base, binary_prompt=None):
     return 0, True, triage, None
 
 
-def load_preview(image_id):
-    with open(os.path.join(WORKDIR, "sample", image_id + "_preview.jpg"), "rb") as f:
-        return f.read()
-
-
-def load_labels():
-    return json.load(open(os.path.join(HERE, "rot_labels.json")))["labels"]
-
-
 def eval_real(variant, runs=2, binary="current"):
     prompt = VARIANTS[variant]
     bprompt = BINARIES[binary]
@@ -219,7 +213,7 @@ def eval_synth(variant, runs=1, binary="current"):
     ok = tot = triage_ok = gated = 0
     fails = []
     expect_triage = {0: "UPRIGHT", 90: "SIDEWAYS", 180: "UPSIDEDOWN", 270: "SIDEWAYS"}
-    for base in SYNTH_BASES:
+    for base in SampleFilter().filter_ids(SYNTH_BASES):
         img0 = load_preview(base)
         for deg in (0, 90, 180, 270):
             img = rotate(img0, deg) if deg else img0

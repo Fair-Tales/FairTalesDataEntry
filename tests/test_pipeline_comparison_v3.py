@@ -475,7 +475,7 @@ def test_empty_cohort_monitoring_does_not_call_unreviewed_output_hallucination()
         monitor_empty_reference(manifest, {"books": {}}, cohort)
 
 
-def test_cli_comparison_routes_the_same_corrected_manifest_to_both_runs(tmp_path):
+def test_cli_comparison_routes_the_same_corrected_manifest_to_both_runs(tmp_path, cohort_loader_factory):
     from argparse import Namespace
     from scripts.extraction_eval.cli import _score
 
@@ -503,9 +503,12 @@ def test_cli_comparison_routes_the_same_corrected_manifest_to_both_runs(tmp_path
     for name, predicted in (("baseline", before), ("candidate", after)):
         target = tmp_path / name
         target.mkdir()
+        loader = cohort_loader_factory(target, iterate=[book["id"]])
+        manifest = loader.snapshot(snapshot)
         (target / "run.json").write_text(
             json.dumps(
                 {
+                    "tuning": json.loads(loader.path.read_text())["tuning"],
                     "run_id": name,
                     "contract": {
                         "snapshot_id": manifest["snapshot_id"],
@@ -525,12 +528,14 @@ def test_cli_comparison_routes_the_same_corrected_manifest_to_both_runs(tmp_path
                 }
             )
         )
+    overlay["source_work_ids"] = [book["id"]]
     (tmp_path / "overlay.json").write_text(json.dumps(overlay))
     (tmp_path / "protocol.json").write_text(
         json.dumps({"convention_version": CONVENTION_VERSION})
     )
     args = Namespace(
-        original_experiment=True,
+        cohort="tune",
+        freeze_dir=None,
         snapshot=snapshot,
         run=tmp_path / "baseline",
         protocol=tmp_path / "protocol.json",
@@ -604,7 +609,7 @@ def test_reviewed_publisher_equivalence_cannot_admit_unlisted_normalized_forms()
     assert score["equivalence_normalization"] == "literal-reviewed-names-v1"
 
 
-def test_optional_stage_failures_remain_visible_with_usable_initial_outputs(tmp_path):
+def test_optional_stage_failures_remain_visible_with_usable_initial_outputs(tmp_path, synthetic_cohort):
     from scripts.extraction_eval.reporting import write_reports
 
     manifest, book, prediction = fixture()

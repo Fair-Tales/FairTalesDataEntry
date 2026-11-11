@@ -289,7 +289,7 @@ def test_explicit_alias_recall_is_headline_and_precision_retains_legacy_value():
     assert "cannot" in diagnostic["reason"]
 
 
-def test_reports_expose_additive_version_conventions_and_metric_qualifications(tmp_path):
+def test_reports_expose_additive_version_conventions_and_metric_qualifications(tmp_path, synthetic_cohort):
     book = {"id": "book", "reference": {"characters": {"status": "observed", "value": [
         {"name": "Whale", "aliases": ["little whale"]}]}}}
     actual = prediction([{"name": "Whale", "aliases": ["little whale"]}])

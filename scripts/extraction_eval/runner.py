@@ -1,7 +1,7 @@
 """Sequential, local-only stage orchestration of the shared application core."""
 from __future__ import annotations
 
-from contextlib import nullcontext
+from datetime import datetime, timezone
 import hashlib
 import importlib.metadata
 import inspect
@@ -12,8 +12,9 @@ import json
 from .gateway import DryRunMiss, RequestLimitError
 from .billing import BillingStopped
 from .tuning import current_loader
+from text_content.tuning import TuningErrors
 from .store import (BudgetStopped, CachedFailure, OutcomeUnknown, atomic_json,
-                    canonical, digest, read_json)
+                    canonical, digest)
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_PATHS = ("ai_runtime.py", "extraction_core.py", "utilities.py", "image_processing.py",
@@ -29,6 +30,8 @@ def code_fingerprint():
 
 
 def freeze_run(out, snapshot, selection, config, replicate, cap, monthly_cap, ledger):
+    loader = _require_loader()
+    _admit_selection(snapshot, selection, loader)
     out = Path(out)
     path = out / "run.json"
     dependencies = {d.metadata.get("Name", "unknown"): d.version for d in importlib.metadata.distributions()}
@@ -37,7 +40,7 @@ def freeze_run(out, snapshot, selection, config, replicate, cap, monthly_cap, le
                 "replicate": str(replicate), "max_spend_usd": cap,
                 "monthly_cap_usd": monthly_cap, "ledger": str(Path(ledger).resolve()),
                 "sources": code_fingerprint()}
-    saved = read_json(path) if path.exists() else {}
+    saved = loader.run_record(path) if path.exists() else {"tuning": loader.state}
     if path.exists() and set(saved) != {"tuning"}:
         if saved.get("contract") != contract or saved.get("dependencies") != dependencies:
             raise ValueError("Run inputs/settings/code/caps changed. Use a new --out; the shared request cache will reuse identical calls")
@@ -57,9 +60,15 @@ class Stages:
         self.db.execute("PRAGMA synchronous=FULL")
         self.db.execute("CREATE TABLE IF NOT EXISTS stages(key TEXT PRIMARY KEY,state TEXT,data TEXT)")
 
-    def get(self, key):
-        row = self.db.execute("SELECT state,data FROM stages WHERE key=?", (key,)).fetchone()
-        return json.loads(row[1]) if row and row[0] in {"completed", "failed"} else None
+    def get(self, key, *, book_id):
+        loader = _require_loader()
+        if not isinstance(book_id, str) or not key.startswith(f"{book_id}:"):
+            loader.refuse([book_id], "stage_cache", TuningErrors.missing_source)
+
+        def read():
+            row = self.db.execute("SELECT state,data FROM stages WHERE key=?", (key,)).fetchone()
+            return json.loads(row[1]) if row and row[0] in {"completed", "failed"} else None
+        return loader.load([book_id], "stage_cache", read)
 
     def put(self, key, value):
         with self.db:
@@ -88,46 +97,53 @@ def estimate(manifest, selection, predictions=None):
             "qualification": "Historical planning estimate, not a quote. Conditional calls and retries vary; exact cache hits are free. Strict per-call reservations may stop below the cap."}
 
 
-def local_image(snapshot_dir, page):
-    image = page.get("image") or {}
-    relative = image.get("path")
-    if not relative:
-        raise FileNotFoundError("Snapshot page has no canonical source image")
-    root = Path(snapshot_dir).resolve()
-    path = (root / relative).resolve()
-    if root not in path.parents:
-        raise ValueError("Snapshot image path escapes the snapshot")
-    data = path.read_bytes()
-    if hashlib.sha256(data).hexdigest() != image.get("sha256"):
-        raise ValueError(f"Snapshot image hash mismatch: {relative}")
-    return data
+def _require_loader(loader=None):
+    loader = loader or current_loader()
+    if loader is None:
+        raise ValueError(TuningErrors.missing_record)
+    return loader
+
+
+def local_image(snapshot_dir, page, *, book_id, loader=None):
+    loader = _require_loader(loader)
+
+    def read():
+        image = page.get("image") or {}
+        relative = image.get("path")
+        if not relative:
+            raise FileNotFoundError("Snapshot page has no canonical source image")
+        root = Path(snapshot_dir).resolve()
+        path = (root / relative).resolve()
+        if root not in path.parents:
+            raise ValueError("Snapshot image path escapes the snapshot")
+        data = path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != image.get("sha256"):
+            raise ValueError(f"Snapshot image hash mismatch: {relative}")
+        return data
+
+    return loader.load([book_id], "image", read)
 
 
 def _admit_selection(manifest, selection, loader):
-    if loader is not None:
-        from text_content.tuning import TuningErrors
-        selected = selection.get('book_ids', [])
-        present = {book.get('id') for book in manifest.get('books', [])}
-        for book_id in selected:
-            if book_id not in present:
-                loader.refuse([book_id], 'selected_book', TuningErrors.selection_absent)
-            loader.load([book_id], 'selected_book', lambda: None)
+    loader = _require_loader(loader)
+    selected = selection.get('book_ids', [])
+    present = {book.get('id') for book in manifest.get('books', [])}
+    for book_id in selected:
+        if book_id not in present:
+            loader.refuse([book_id], 'selected_book', TuningErrors.selection_absent)
+        loader.load([book_id], 'selected_book', lambda: None)
 
 
 def validate_inputs(snapshot_dir, manifest, selection, *, loader):
+    loader = _require_loader(loader)
     _admit_selection(manifest, selection, loader)
     selected = set(selection.get("book_ids", []))
     for book in manifest.get("books", []):
         if book.get("id") in selected:
-            if loader is not None:
-                loader.load([book.get("id")], "book", lambda: None)
+            loader.load([book.get("id")], "book", lambda: None)
             for page in book.get("pages", []):
                 if page.get("image"):
-                    if loader is None:
-                        local_image(snapshot_dir, page)
-                    else:
-                        loader.load([book.get("id")], "image",
-                                    lambda: local_image(snapshot_dir, page))
+                    local_image(snapshot_dir, page, book_id=book.get("id"), loader=loader)
 
 
 def isbn_cache_outcome(saved):
@@ -143,8 +159,7 @@ def isbn_cache_outcome(saved):
 
 
 def _read_isbn_cache(path):
-    loader = current_loader()
-    return loader.source_json(path, "isbn_cache") if loader is not None else read_json(path)
+    return _require_loader().source_json(path, "isbn_cache")
 
 
 def metadata_with_lookup_outcome(metadata, out):
@@ -181,6 +196,9 @@ def cached_isbn_lookup(out, lookup, *, dry_run=False, capture_raw=False,
                      if parameter.kind != inspect.Parameter.POSITIONAL_ONLY}
 
     def fetch(isbn, *, outcome_sink=None):
+        loader = _require_loader()
+        ids = source_ids() if source_ids is not None else None
+        loader.load(ids, "isbn_lookup", lambda: None)
         path = Path(frozen_lookup_dir or Path(out) / "lookups") / f"{digest(str(isbn))}.json"
         if path.exists():
             saved = _read_isbn_cache(path)
@@ -201,15 +219,11 @@ def cached_isbn_lookup(out, lookup, *, dry_run=False, capture_raw=False,
             kwargs["response_sink"] = raw.append
         if accepts_keywords or "outcome_sink" in keyword_names:
             kwargs["outcome_sink"] = outcomes.append
-        loader = current_loader()
-        ids = source_ids() if source_ids is not None else None
-        result = (lookup(isbn, **kwargs) if loader is None else
-                  loader.load(ids, "isbn_lookup", lambda: lookup(isbn, **kwargs)))
+        result = loader.load(ids, "isbn_lookup", lambda: lookup(isbn, **kwargs))
         raw_response = raw[-1] if raw else None
         saved = {"isbn": isbn, "value": result, "raw_response": raw_response,
                  "outcome": outcomes[-1] if outcomes else {}}
-        if loader is not None:
-            saved["source_work_ids"] = ids
+        saved["source_work_ids"] = ids
         outcome = isbn_cache_outcome(saved)
         if outcome.get("status") != "failed":
             atomic_json(path, {**saved, "outcome": outcome})
@@ -220,9 +234,10 @@ def cached_isbn_lookup(out, lookup, *, dry_run=False, capture_raw=False,
 
 
 def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, loader, dry_run=False, core=None, isbn_lookup=None, progress=print):
-    """Require an explicit tuning loader or original-experiment opt-out."""
+    """Extract and replay only after admission to the run's named cohort."""
+    loader = _require_loader(loader)
     try:
-        with loader.activate() if loader is not None else nullcontext():
+        with loader.activate():
             _admit_selection(manifest, selection, loader)
             if core is None:
                 import extraction_core as core
@@ -253,14 +268,12 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                     return {'status': 'pending', 'error': stop_reason[1]}
                 # Stages and their derivatives are owned by the admitted book id in
                 # the stage key; cache hits pass the same check as fresh extraction.
-                saved = (stages.get(key) if loader is None else
-                         loader.load([current_book_id], "stage_cache", lambda: stages.get(key)))
+                saved = stages.get(key, book_id=current_book_id)
                 refreshing_lookup = False
                 if saved is not None:
                     def lookup_metadata():
                         return metadata_with_lookup_outcome(saved.get("value") or {}, out)
-                    value = ((lookup_metadata() if loader is None else
-                              loader.load([current_book_id], "isbn_cache", lookup_metadata))
+                    value = (loader.load([current_book_id], "isbn_cache", lookup_metadata)
                              if refresh_lookup else {})
                     if saved.get("status") != "completed" or (value.get("isbn_lookup") or {}).get("status") != "failed":
                         return saved
@@ -274,8 +287,7 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                 if stop_reason and not refreshing_lookup:
                     return {"status": "budget_stopped" if stop_reason[0] == "budget_stopped" else "pending", "error": stop_reason[1]}
                 try:
-                    value = (callback() if loader is None else
-                             loader.load([current_book_id], "stage", callback))
+                    value = loader.load([current_book_id], "stage", callback)
                 except DryRunMiss as exc:
                     return {"status": "pending", "error": str(exc)}
                 except BudgetStopped as exc:
@@ -303,15 +315,15 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                     if book_id not in selected:
                         continue
                     current_book_id = book_id
-                    if loader is not None:
-                        loader.load([book_id], "book", lambda: None)
-                    progress(f"Book: {book.get('title', book_id)} ({len(book.get('pages', []))} pages)")
+                    loader.load([book_id], "book", lambda: None)
+                    if loader.cohort != "tune" or book_id not in loader.check:
+                        progress(f"Book: {book.get('title', book_id)} ({len(book.get('pages', []))} pages)")
                     book_result = {"pages": {}}
                     results["books"][book_id] = book_result
                     pages = sorted(book.get("pages", []), key=lambda page: page.get("page_number", 0))
                     # Metadata sees original ordered images and NO reference page hints.
                     def metadata():
-                        images = [(page.get("page_number"), local_image(snapshot_dir, page)) for page in pages if page.get("image")]
+                        images = [(page.get("page_number"), local_image(snapshot_dir, page, book_id=book_id)) for page in pages if page.get("image")]
                         if not images:
                             raise ValueError("No images for metadata extraction")
                         value = core.extract_metadata(images, gateway, settings, gateway.record_usage, isbn)
@@ -321,7 +333,7 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                     for page in pages:
                         page_id = page.get("id")
                         def extract(page=page):
-                            result = core.extract_page(local_image(snapshot_dir, page), gateway, settings, gateway.record_usage)
+                            result = core.extract_page(local_image(snapshot_dir, page, book_id=book_id), gateway, settings, gateway.record_usage)
                             corrected = result.pop("corrected_bytes", None)
                             if corrected is not None:
                                 image_path = out / "images" / f"{hashlib.sha256(corrected).hexdigest()}.jpg"
@@ -350,7 +362,8 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                         for page, prediction in zip(pages, predicted_pages):
                             if page.get('image'):
                                 corrected = prediction.get('corrected_path')
-                                image = Path(corrected).read_bytes() if corrected else local_image(snapshot_dir, page)
+                                image = (loader.load([book_id], "corrected_image", lambda: Path(corrected).read_bytes())
+                                         if corrected else local_image(snapshot_dir, page, book_id=book_id))
                                 images.append((page.get('page_number'), image))
                         return core.classify_book_context(predicted_pages, images, gateway, settings, gateway.record_usage)
 
@@ -366,7 +379,7 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                         initial = book_result.get('metadata', {})
                         if initial.get('status') != 'completed':
                             return {'status': 'failed', 'error': 'Initial metadata is unavailable'}
-                        images = [(page.get('page_number'), local_image(snapshot_dir, page))
+                        images = [(page.get('page_number'), local_image(snapshot_dir, page, book_id=book_id))
                                   for page in pages if page.get('image')]
                         value = core.reconcile_metadata(initial.get('value', {}), predicted_pages, images,
                                                         gateway, settings, gateway.record_usage)
@@ -409,9 +422,21 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                 results["incomplete"] = bool(stop_reason) or any(stage.get("status") not in {"completed", "failed"} for book in results["books"].values() for stage in [book.get("metadata", {}), book.get("characters", {}), *book.get("pages", {}).values()])
                 results["stop_reason"] = stop_reason
                 atomic_json(out / ("dry_run_predictions.json" if dry_run else "predictions.json"), results)
+                if (loader.cohort == "rehearsal" and not dry_run and not results["incomplete"]
+                        and selected == loader.protected):
+                    from .json_sources import JsonSources
+                    record = loader.run_record(out / "run.json")
+                    with JsonSources(out / "run.json") as source:
+                        configuration_hash = source.sha256(source.members(source.root)["contract"])
+                    with JsonSources(out / "predictions.json") as source:
+                        results_hash = source.sha256(source.root)
+                    record["completion"] = {"completed_at": datetime.now(timezone.utc).isoformat(),
+                                            "results_sha256": results_hash,
+                                            "configuration_sha256": configuration_hash,
+                                            "book_ids": sorted(selected)}
+                    atomic_json(out / "run.json", record)
                 return results
             finally:
                 stages.close()
     finally:
-        if loader is not None:
-            loader.audit()
+        loader.audit()

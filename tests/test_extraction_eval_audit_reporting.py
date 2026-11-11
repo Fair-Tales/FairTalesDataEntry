@@ -37,7 +37,7 @@ from scripts.extraction_eval.reporting import write_reports
     ],
 )
 def test_score_reports_expose_audit_coverage_offline(
-    tmp_path, monkeypatch, audit_fields, expected_audits, expected_status, expected_consistency, description
+    tmp_path, monkeypatch, audit_fields, expected_audits, expected_status, expected_consistency, description, synthetic_cohort
 ):
     def no_network(*args, **kwargs):
         pytest.fail("Audit provenance reporting attempted a network connection")

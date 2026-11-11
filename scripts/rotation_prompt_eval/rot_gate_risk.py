@@ -40,6 +40,8 @@ for image_id, lab in sorted(labels.items()):
 # The whitened scan spreads with no defined upright are the probe's known
 # blind spot; include them as-is (they are landscape-ish spreads).
 for image_id in ("The_Storm_Whale__page_5", "The_Storm_Whale__page_33"):
+    if image_id not in labels:
+        continue
     cases.append((f"{image_id}@as-is", load_preview(image_id), "scan-excluded"))
 
 triage_bad = probe_bad = both_bad = 0

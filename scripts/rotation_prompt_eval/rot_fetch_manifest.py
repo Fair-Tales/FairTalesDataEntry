@@ -15,6 +15,7 @@ import s3fs
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, REPO)
 from image_processing import downscale_for_vision  # noqa: E402
+from scripts.rotation_prompt_eval.sample_filter import SampleFilter  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORKDIR = os.environ.get("ROT_EVAL_WORKDIR", os.path.join(HERE, "work"))
@@ -27,8 +28,12 @@ fs = s3fs.S3FileSystem(key=secrets["AWS_ACCESS_KEY_ID"],
                        secret=secrets["AWS_SECRET_ACCESS_KEY"])
 
 manifest = json.load(open(os.path.join(HERE, "sample_manifest.json")))
+allowed = set(SampleFilter(manifest=manifest).filter_ids(
+    img["id"] for img in manifest["images"]))
 missing = []
 for img in manifest["images"]:
+    if img["id"] not in allowed:
+        continue
     raw_path = os.path.join(OUT, img["id"] + ".jpg")
     prev_path = os.path.join(OUT, img["id"] + "_preview.jpg")
     if os.path.exists(prev_path):

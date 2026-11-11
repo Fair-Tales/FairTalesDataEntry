@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from ai_pricing import normalize_usage
 from text_content.pipeline_runtime import EVALUATION_CLIENT_MISSING
 
-from .store import CachedFailure, OutcomeUnknown, canonical, digest
+from .store import CachedFailure, OutcomeUnknown, canonical, digest, guard_cached_request
 from .billing import BILLING_EXHAUSTED, BillingStopped, billing_rejection
 from .openai_client import OPENAI_PROVIDERS
 from .openai_adapter import prepare_request, response_content
@@ -158,6 +158,7 @@ class Gateway:
             key = digest({**identity, "attempt": attempt})
             cached = self.ledger.get(key)
             if cached:
+                guard_cached_request(cached.get("request"))
                 state = cached.get("state")
                 if state == "completed":
                     self.cache_hits += 1

@@ -73,3 +73,49 @@ def test_container_type_mismatch_is_visible(tmp_path):
             source.items(source.root)
         with pytest.raises(ValueError, match='object'):
             source.members(source.members(source.root)['values'])
+
+
+@pytest.mark.parametrize('action', ['admit', 'refuse', 'audit_breach', 'resume', 'wrong_cohort'])
+def test_run_record_updates_never_decode_book_inventory(
+        monkeypatch, cohort_loader_factory, action):
+    from scripts.extraction_eval.store import atomic_json, read_json
+    from scripts.extraction_eval.tuning import TuningExposure, TuningLoader, TuningRefused
+
+    loader = cohort_loader_factory(iterate=('iterate',))
+    record = read_json(loader.path)
+    record['contract'] = {'selection': {'inventory': [
+        {'id': 'denied', 'title': 'PRIVATE DENIED CONTENT'},
+    ]}}
+    if action == 'audit_breach':
+        record['tuning']['loaded_ids'] = ['denied']
+    atomic_json(loader.path, record)
+    with JsonSources(loader.path) as source:
+        original_contract_hash = source.sha256(source.members(source.root)['contract'])
+    loads = json.loads
+    forbidden_decodes = []
+
+    def checked_loads(value, *args, **kwargs):
+        raw = value.encode('utf-8') if isinstance(value, str) else value
+        if b'PRIVATE DENIED CONTENT' in raw:
+            forbidden_decodes.append(value)
+        return loads(value, *args, **kwargs)
+
+    monkeypatch.setattr(json, 'loads', checked_loads)
+    if action == 'admit':
+        assert loader.load(['iterate'], 'reference', lambda: 'read') == 'read'
+    elif action == 'refuse':
+        with pytest.raises(TuningRefused):
+            loader.load(['denied'], 'reference', lambda: pytest.fail('Forbidden reader called'))
+    elif action == 'audit_breach':
+        with pytest.raises(TuningExposure):
+            loader.audit()
+    elif action == 'resume':
+        TuningLoader(loader.path.parent, loader.freeze_dir, selections_path=loader.selections_path)
+    else:
+        with pytest.raises(ValueError, match='changed'):
+            TuningLoader(loader.path.parent, loader.freeze_dir, cohort='proof',
+                         selections_path=loader.selections_path)
+    assert forbidden_decodes == []
+    assert b'PRIVATE DENIED CONTENT' in loader.path.read_bytes()
+    with JsonSources(loader.path) as source:
+        assert source.sha256(source.members(source.root)['contract']) == original_contract_hash

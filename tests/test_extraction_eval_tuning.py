@@ -14,27 +14,42 @@ from scripts.extraction_eval.tuning import TuningExposure, TuningLoader, TuningR
 
 
 @pytest.fixture
-def freeze_dir(tmp_path):
-    path = tmp_path / 'freeze'
-    atomic_json(path / 'holdout_ids.json', ['denied'])
-    atomic_json(path / 'freeze.json', {
-        'imported80_ids': ['denied'], 'protected40_ids': ['protected'],
-        'tune41_ids': ['allowed'], 'tune81_ids': ['allowed', 'protected'],
-        'imported80_ids_sha256': digest(['denied']),
-        'holdout_ids_file_sha256': hashlib.sha256((path / 'holdout_ids.json').read_bytes()).hexdigest(),
-    })
-    return path
+def freeze_dir(cohort_loader_factory):
+    return cohort_loader_factory(iterate=['allowed'], check=['check'],
+                                 holdout=['denied']).freeze_dir
 
 
 @pytest.fixture
 def loader(tmp_path, freeze_dir):
-    return TuningLoader(tmp_path / 'run', freeze_dir)
+    return TuningLoader(tmp_path / 'run', freeze_dir,
+                        selections_path=freeze_dir / 'selections.json')
 
 
 @pytest.fixture
-def paired_lock():
-    return {'run_id': 'original-paired-run', 'locked_at': '2000-01-01T00:00:00+00:00',
-            'results_sha256': 'a' * 64, 'configuration_sha256': 'b' * 64}
+def rehearsal_lock(tmp_path, freeze_dir):
+    from datetime import datetime, timezone
+    from scripts.extraction_eval.runner import Stages, freeze_run, run_extract
+
+    out = tmp_path / 'rehearsal'
+    guard = TuningLoader(out, freeze_dir, cohort='rehearsal',
+                         selections_path=freeze_dir / 'selections.json')
+    manifest = {'snapshot_id': 'synthetic', 'books': [book('protected', content='fixture')]}
+    selection = {'book_ids': ['protected'], 'inventory': [{'id': 'protected', 'title': 'FORBIDDEN CONTENT'}]}
+    with guard.activate():
+        record = freeze_run(out, manifest, selection, {}, 1, 1, 1, tmp_path / 'ledger')
+    stages = Stages(out)
+    stages.put('protected:metadata', {'status': 'completed', 'value': {}})
+    stages.put('protected:characters', {'status': 'completed', 'value': []})
+    stages.close()
+    gateway = SimpleNamespace(record_usage=lambda *args: None,
+                              ledger=SimpleNamespace(run_id=record['run_id']))
+    run_extract(tmp_path, manifest, selection, out, gateway, {}, loader=guard,
+                core=SimpleNamespace(), progress=lambda *args: None)
+    completion = read_json(out / 'run.json')['completion']
+    return {'run_record': str((out / 'run.json').resolve()), 'run_id': record['run_id'],
+            'locked_at': datetime.now(timezone.utc).isoformat(),
+            'results_sha256': completion['results_sha256'],
+            'configuration_sha256': completion['configuration_sha256']}
 
 
 def never_read():
@@ -119,13 +134,13 @@ def test_inconsistent_id_set_hash_stops_run(tmp_path, freeze_dir):
         TuningLoader(tmp_path / 'bad-run', freeze_dir)
 
 
-def test_protected_release_records_lock_without_changing_frozen_draw(loader, tmp_path, freeze_dir, paired_lock):
+def test_protected_release_records_lock_without_changing_frozen_draw(loader, tmp_path, freeze_dir, rehearsal_lock):
     original = {name: (freeze_dir / name).read_bytes() for name in ('freeze.json', 'holdout_ids.json')}
     with pytest.raises(TuningRefused):
         loader.load(['protected'], 'reference', never_read)
-    released = TuningLoader(tmp_path / 'released', freeze_dir, paired_experiment_lock=paired_lock)
+    released = TuningLoader(tmp_path / 'released', freeze_dir, rehearsal_lock=rehearsal_lock)
     assert released.load(['protected'], 'reference', lambda: 'released reference') == 'released reference'
-    assert tuning_record(released)['paired_experiment_lock'] == paired_lock
+    assert tuning_record(released)['rehearsal_lock'] == rehearsal_lock
     assert tuning_record(released)['loaded_ids'] == ['protected']
     resumed = TuningLoader(tmp_path / 'released', freeze_dir)
     assert resumed.load(['protected'], 'reference', lambda: 'cached reference') == 'cached reference'
@@ -134,10 +149,10 @@ def test_protected_release_records_lock_without_changing_frozen_draw(loader, tmp
     assert {name: (freeze_dir / name).read_bytes() for name in original} == original
 
 
-def test_release_state_cannot_change_within_existing_run(loader, freeze_dir, paired_lock):
+def test_release_state_cannot_change_within_existing_run(loader, freeze_dir, rehearsal_lock):
     with pytest.raises(ValueError, match='changed'):
-        TuningLoader(loader.path.parent, freeze_dir, paired_experiment_lock=paired_lock)
-    assert tuning_record(loader)['paired_experiment_lock'] is None
+        TuningLoader(loader.path.parent, freeze_dir, rehearsal_lock=rehearsal_lock)
+    assert tuning_record(loader)['rehearsal_lock'] is None
 
 
 @pytest.mark.parametrize('change', [
@@ -145,9 +160,9 @@ def test_release_state_cannot_change_within_existing_run(loader, freeze_dir, pai
     {'locked_at': '2999-01-01T00:00:00Z'}, {'results_sha256': 'unchecked'},
     {'configuration_sha256': None},
 ])
-def test_incomplete_or_invalid_paired_lock_is_refused(tmp_path, freeze_dir, paired_lock, change):
-    with pytest.raises(ValueError):
-        TuningLoader(tmp_path / 'bad-lock', freeze_dir, paired_experiment_lock={**paired_lock, **change})
+def test_incomplete_or_invalid_rehearsal_lock_is_refused(tmp_path, freeze_dir, rehearsal_lock, change):
+    with pytest.raises(TuningRefused):
+        TuningLoader(tmp_path / 'bad-lock', freeze_dir, rehearsal_lock={**rehearsal_lock, **change})
 
 
 def test_recorded_exposure_invalidates_proof_without_replacement(loader, freeze_dir):
@@ -199,21 +214,12 @@ def test_explicit_denied_snapshot_source_refused_before_deserialization(loader, 
     assert tuning_record(loader)['refused_attempts'][-1]['source_ids'] == [selected]
 
 
-@pytest.mark.parametrize('link', ['title', 'image', 'declared_group'])
-def test_equivalent_edition_of_excluded_work_is_refused(loader, tmp_path, monkeypatch, link):
-    allowed, denied = book('allowed'), book('denied')
-    if link == 'title':
-        allowed['title'], denied['title'] = 'The Same Work!', 'the same work'
-    elif link == 'image':
-        allowed['pages'] = denied['pages'] = [{'image': {'sha256': 'same-original-image'}}]
-    else:
-        allowed['holdout_group'] = denied['holdout_group'] = 'known-editions'
-    path = write_snapshot(tmp_path, [allowed, denied])
+def test_snapshot_does_not_decode_excluded_titles_or_image_metadata(loader, tmp_path, monkeypatch):
+    path = write_snapshot(tmp_path, [book('allowed', content='usable'),
+                                    book('denied', title='FORBIDDEN CONTENT',
+                                         pages=[{'image': 'FORBIDDEN CONTENT'}])])
     forbid_marker_decode(monkeypatch)
-    with pytest.raises(TuningRefused):
-        loader.snapshot(path, ['allowed'])
-    assert tuning_record(loader)['loaded_ids'] == []
-    assert tuning_record(loader)['refused_attempts'][-1]['resolved_ids'] == ['allowed', 'denied']
+    assert [row['id'] for row in loader.snapshot(path)['books']] == ['allowed']
 
 
 def test_prediction_cache_is_refused_before_content_decode(loader, tmp_path, monkeypatch):
@@ -234,7 +240,7 @@ def test_allowed_prediction_cache_loads(loader, tmp_path):
     assert tuning_record(loader)['loaded_ids'] == ['allowed']
 
 
-@pytest.mark.parametrize('work_id', ['denied', 'unknown', None])
+@pytest.mark.parametrize('work_id', ['denied', 'protected', 'check', 'unknown', None])
 def test_prompt_example_refused_before_content_decode(loader, tmp_path, monkeypatch, work_id):
     path = tmp_path / 'examples.json'
     atomic_json(path, {'examples': [{'book_id': work_id, 'source_text': 'FORBIDDEN CONTENT'}]})
@@ -249,8 +255,8 @@ def test_allowed_prompt_example_loads(loader, tmp_path):
     path = tmp_path / 'examples.json'
     value = {'pack_version': 'fixture', 'examples': [{'book_id': 'allowed', 'source_text': 'usable'}]}
     atomic_json(path, value)
-    assert loader.examples(path) == value
-    assert tuning_record(loader)['loaded_ids'] == ['allowed']
+    assert loader.examples(path) == {**value, 'development_holdout_groups': []}
+    assert tuning_record(loader)['example_ids'] == ['allowed']
 
 
 def test_runner_cannot_reuse_denied_stage_cache(loader, tmp_path, monkeypatch):
@@ -299,10 +305,10 @@ def test_isbn_cache_provenance_refused_before_decode(loader, monkeypatch, reader
     forbid_marker_decode(monkeypatch)
     with loader.activate(), pytest.raises(TuningRefused):
         if reader == 'cached_lookup':
-            cached_isbn_lookup(out, lambda *args: never_read(), dry_run=True)('123')
+            cached_isbn_lookup(out, lambda *args: never_read(), dry_run=True, source_ids=lambda: ['allowed'])('123')
         else:
             metadata_with_lookup_outcome({'isbn': '123'}, out)
-    assert tuning_record(loader)['loaded_ids'] == []
+    assert tuning_record(loader)['loaded_ids'] == (['allowed'] if reader == 'cached_lookup' else [])
     assert tuning_record(loader)['refused_attempts'][-1]['kind'] == 'isbn_cache'
 
 
@@ -314,7 +320,7 @@ def test_allowed_isbn_cache_and_metadata_outcome_load(loader):
         'isbn': '123', 'value': {'title': 'Usable title'}, 'source_work_ids': ['allowed'],
     })
     with loader.activate():
-        lookup = cached_isbn_lookup(out, lambda *args: never_read(), dry_run=True)
+        lookup = cached_isbn_lookup(out, lambda *args: never_read(), dry_run=True, source_ids=lambda: ['allowed'])
         assert lookup('123') == {'title': 'Usable title'}
         assert metadata_with_lookup_outcome({'isbn': '123'}, out)['isbn_lookup'] == {'status': 'found'}
     assert tuning_record(loader)['loaded_ids'] == ['allowed']
@@ -333,7 +339,7 @@ def test_new_isbn_cache_carries_source_and_replays_without_lookup(loader):
     with loader.activate():
         lookup = cached_isbn_lookup(out, local_lookup, source_ids=lambda: ['allowed'])
         assert lookup('123') == {'title': 'Local fixture title'}
-        replay = cached_isbn_lookup(out, lambda *args: never_read(), dry_run=True)
+        replay = cached_isbn_lookup(out, lambda *args: never_read(), dry_run=True, source_ids=lambda: ['allowed'])
         assert replay('123') == {'title': 'Local fixture title'}
     assert calls == ['123']
     assert read_json(out / 'lookups' / f'{digest("123")}.json')['source_work_ids'] == ['allowed']
@@ -390,8 +396,7 @@ def test_snapshot_audit_skips_embedded_content_and_keeps_folder_guard(loader, tm
     loaded = loader.snapshot(path)
     assert loaded['audit'] == [
         {'issue': 'invalid_page_number', 'book_id': 'denied'},
-        {'issue': 'ambiguous_book_folder', 'book_ids': ['allowed', 'denied'],
-         'folder': 'shared-folder'},
+        {'issue': 'ambiguous_book_folder', 'book_ids': ['allowed', 'denied']},
     ]
     assert tuning_record(loader)['loaded_ids'] == ['allowed']
 
@@ -447,3 +452,102 @@ def test_known_id_absent_from_snapshot_is_recorded_as_refused(loader, tmp_path):
         loader.snapshot(path, ['allowed'])
     assert tuning_record(loader)['loaded_ids'] == []
     assert tuning_record(loader)['refused_attempts'][-1]['source_ids'] == ['allowed']
+
+
+@pytest.mark.parametrize('cohort, admitted', [
+    ('tune', {'allowed', 'check'}), ('rehearsal', {'protected'}), ('proof', {'denied'}),
+])
+def test_each_cohort_admits_exact_ids_before_reader(tmp_path, freeze_dir, cohort, admitted):
+    guard = TuningLoader(tmp_path / cohort, freeze_dir, cohort=cohort)
+    calls = []
+    for work_id in ['allowed', 'check', 'protected', 'denied', 'unknown', 'DENIED', 'ｄｅｎｉｅｄ']:
+        before = list(calls)
+        if work_id in admitted:
+            assert guard.load([work_id], 'image', lambda: calls.append(work_id) or work_id) == work_id
+        else:
+            with pytest.raises(TuningRefused):
+                guard.load([work_id], 'image', lambda: calls.append(work_id))
+            assert calls == before
+    assert set(calls) == admitted
+    assert set(tuning_record(guard)['loaded_ids']) == admitted
+
+
+@pytest.mark.parametrize('cohort, admitted', [
+    ('tune', {'allowed', 'check'}), ('rehearsal', {'protected'}), ('proof', {'denied'}),
+])
+def test_default_manifest_and_limit_stay_in_cohort(tmp_path, freeze_dir, monkeypatch, cohort, admitted):
+    from scripts.extraction_eval.sampling import select_books
+    guard = TuningLoader(tmp_path / cohort, freeze_dir, cohort=cohort)
+    ids = {'allowed', 'check', 'protected', 'denied', 'unknown'}
+    path = write_snapshot(tmp_path, [book(i, content='usable' if i in admitted else 'FORBIDDEN CONTENT',
+                                        pages=[{'image': {'path': 'synthetic.jpg'}}]) for i in ids])
+    forbid_marker_decode(monkeypatch)
+    manifest = guard.snapshot(path)
+    assert {row['id'] for row in manifest['books']} == admitted
+    assert set(select_books(manifest, limit=999)['book_ids']) == admitted
+    assert set(select_books(manifest, limit=1)['book_ids']) <= admitted
+    for work_id in ids - admitted:
+        with pytest.raises(TuningRefused):
+            guard.snapshot(path, [work_id])
+
+
+def test_lock_checks_real_record_without_decoding_its_book_content(tmp_path, freeze_dir, rehearsal_lock, monkeypatch):
+    forbid_marker_decode(monkeypatch)
+    released = TuningLoader(tmp_path / 'released', freeze_dir, rehearsal_lock=rehearsal_lock)
+    assert released.load(['protected'], 'image', lambda: True)
+
+
+@pytest.mark.parametrize('change', [
+    {'run_record': '/missing/rehearsal/run.json'}, {'results_sha256': '0' * 64},
+    {'configuration_sha256': '0' * 64}, {'run_id': 'made-up'},
+])
+def test_shape_only_or_mismatched_lock_is_refused(tmp_path, freeze_dir, rehearsal_lock, change):
+    out = tmp_path / 'bad-release'
+    with pytest.raises(TuningRefused):
+        TuningLoader(out, freeze_dir, rehearsal_lock={**rehearsal_lock, **change})
+    assert read_json(out / 'run.json')['tuning']['refused_attempts'][-1]['kind'] == 'rehearsal_lock'
+
+
+@pytest.mark.parametrize('damage', ['unfinished', 'wrong_cohort', 'missing_results', 'changed_results', 'partial'])
+def test_lock_refuses_incomplete_or_changed_rehearsal(tmp_path, freeze_dir, rehearsal_lock, damage):
+    path = Path(rehearsal_lock['run_record'])
+    record = read_json(path)
+    if damage == 'unfinished':
+        del record['completion']
+    elif damage == 'wrong_cohort':
+        record['tuning']['cohort'] = 'proof'
+    elif damage == 'partial':
+        record['completion']['book_ids'] = []
+    elif damage == 'missing_results':
+        path.with_name('predictions.json').unlink()
+    else:
+        value = read_json(path.with_name('predictions.json'))
+        value['books']['protected']['metadata']['value'] = {'changed': True}
+        atomic_json(path.with_name('predictions.json'), value)
+    atomic_json(path, record)
+    with pytest.raises(TuningRefused):
+        TuningLoader(tmp_path / 'bad-release', freeze_dir, rehearsal_lock=rehearsal_lock)
+
+
+@pytest.mark.parametrize('cohort', ['rehearsal', 'proof'])
+def test_iterate_examples_admitted_separately_from_cohort(tmp_path, freeze_dir, cohort):
+    guard = TuningLoader(tmp_path / cohort, freeze_dir, cohort=cohort)
+    assert guard.load(['allowed'], 'prompt_example', lambda: True)
+    with pytest.raises(TuningRefused):
+        guard.load(['check'], 'prompt_example', never_read)
+    guard.audit()
+    assert tuning_record(guard)['loaded_ids'] == []
+    assert tuning_record(guard)['example_ids'] == ['allowed']
+
+
+@pytest.mark.parametrize('reader', ['selection', 'run_record'])
+def test_saved_inventory_checks_unselected_ids_before_content(loader, tmp_path, monkeypatch, reader):
+    selection = {'book_ids': ['allowed'], 'inventory': [
+        {'id': 'allowed', 'title': 'Usable'}, {'id': 'denied', 'title': 'FORBIDDEN CONTENT'}]}
+    value = selection if reader == 'selection' else {'contract': {'selection': selection}}
+    path = tmp_path / 'mixed-artifact.json'
+    atomic_json(path, value)
+    forbid_marker_decode(monkeypatch)
+    with pytest.raises(TuningRefused):
+        getattr(loader, reader)(path)
+    assert tuning_record(loader)['refused_attempts'][-1]['source_ids'] == ['denied']

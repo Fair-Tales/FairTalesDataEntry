@@ -30,7 +30,7 @@ from collections import defaultdict
 
 from rot_eval import (
     VARIANTS, TRIAGE_WORDS, BINARY_WORDS, SYNTH_BASES,
-    ask, rotate, load_preview, load_labels, phash,
+    ask, rotate, load_preview, load_labels, phash, SampleFilter,
 )
 from text_content import AIPrompts
 
@@ -200,7 +200,7 @@ def eval_pipeline(runs=2):
     print(f"\n== REFINED-GATE PIPELINE, SYNTHETIC 4-ORIENTATION  runs={runs} ==")
     ok = tot = probed = gated = 0
     fails = []
-    for base in SYNTH_BASES:
+    for base in SampleFilter().filter_ids(SYNTH_BASES):
         img0 = load_preview(base)
         for deg in (0, 90, 180, 270):
             img = rotate(img0, deg) if deg else img0

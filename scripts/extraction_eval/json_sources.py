@@ -5,6 +5,7 @@ apply the tuning exclusion check, then decode only the permitted record.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import mmap
 from pathlib import Path
@@ -23,11 +24,20 @@ class JsonSources:
     def __init__(self, path):
         self.path = Path(path)
         self._data = None
+        self._file = None
+
+    @classmethod
+    def from_bytes(cls, data):
+        """Inspect cached JSON held by SQLite without decoding its payload."""
+        source = cls('<cached JSON>')
+        source._data = data
+        return source
 
     def __enter__(self):
-        self._file = self.path.open('rb')
         try:
-            self._data = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
+            if self._data is None:
+                self._file = self.path.open('rb')
+                self._data = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
             self.root = self._scan(0)
             if self._space(self.root[1]) != len(self._data):
                 raise ValueError(E.trailing_json.format(path=self.path))
@@ -37,9 +47,10 @@ class JsonSources:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        if self._data is not None:
+        if isinstance(self._data, mmap.mmap):
             self._data.close()
-        self._file.close()
+        if self._file is not None:
+            self._file.close()
 
     def _space(self, offset):
         return _SPACE.match(self._data, offset).end()
@@ -115,3 +126,13 @@ class JsonSources:
         """Deserialize a value only after the caller has checked its source."""
         start, end = span
         return json.loads(self._data[start:end])
+
+    def sha256(self, span):
+        """Hash a stored JSON value without decoding its content."""
+        start, end = span
+        return hashlib.sha256(self._data[start:end]).hexdigest()
+
+    def replacing(self, span, replacement):
+        """Replace one value while preserving all other bytes without decoding."""
+        start, end = span
+        return self._data[:start] + replacement + self._data[end:]

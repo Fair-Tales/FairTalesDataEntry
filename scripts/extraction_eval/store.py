@@ -179,10 +179,25 @@ def read_calls(path, run_id):
         db.close()
 
 
+def guard_cached_request(request, kind="response_cache"):
+    """Admit a stored request's source before decoding its content or response."""
+    from .tuning import current_loader
+    loader = current_loader()
+    if loader is None:
+        return  # Low-level accounting use outside an evaluation run.
+    from .json_sources import JsonSources
+    with JsonSources.from_bytes((request or "{}").encode("utf-8")) as source:
+        top = source.members(source.root)
+        context = source.members(top["context"]) if "context" in top else {}
+        book_id = source.decode(context["book_id"]) if "book_id" in context else None
+        loader.load([book_id], kind, lambda: None)
+
+
 def call_rows(db, run_id):
     rows = []
     for row in db.execute("SELECT key,run_id,month,state,reservation/1e9 AS reserved_usd,cost/1e9 AS cost_usd,label,error,created,request,response FROM calls WHERE run_id=? ORDER BY created,key", (run_id,)):
         result = dict(row)
+        guard_cached_request(result["request"], "call_report")
         request = json.loads(result.pop("request") or "{}")
         response = json.loads(result.pop("response") or "{}")
         stop_reason = response.get("stop_reason")

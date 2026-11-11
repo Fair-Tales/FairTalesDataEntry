@@ -246,16 +246,17 @@ def load_example_pack(*, held_out_book_ids=(), held_out_groups=()):
     from scripts.extraction_eval.tuning import current_loader
     path = Path(__file__).with_name("pipeline_examples.json")
     loader = current_loader()
-    pack = loader.examples(path) if loader else json.loads(path.read_text())
+    if loader:
+        pack = loader.examples(path)
+    else:
+        pack = json.loads(path.read_text(encoding="utf-8"))
     development = set(pack.get("development_book_ids", []))
-    development_groups = set(pack.get("development_holdout_groups", []))
     held_books, held_groups = set(held_out_book_ids), set(held_out_groups)
     for example in pack.get("examples", []):
         if (example.get("book_id") not in development
-                or example.get("holdout_group") not in development_groups
                 or example.get("book_id") in held_books
                 or example.get("holdout_group") in held_groups):
-            raise ValueError("Example leakage: only frozen development groups are permitted")
+            raise ValueError("Example leakage: only frozen iterate sources are permitted")
         source = example.get("source_text", "")
         if hashlib.sha256(source.encode("utf-8")).hexdigest() != example.get("source_text_sha256"):
             raise ValueError("Example source text hash mismatch")
@@ -301,6 +302,7 @@ def prompt_for(stage, variant="rules-plus-icl"):
 def prompt_request_manifest(stage, variant="rules-plus-icl", rendered_prompt=None):
     examples = example_pack_text(stage, variant)
     rendered = prompt_for(stage, variant) if rendered_prompt is None else rendered_prompt
+    pack_examples = load_example_pack()["examples"] if variant == "rules-plus-icl" else []
     return {"prompt_version": PROMPT_VERSION, "example_pack_version": PACK_VERSION,
             "prompt_variant": variant, "stage": stage, "encoding": "utf-8",
             "example_pack_utf8": examples,
@@ -310,6 +312,5 @@ def prompt_request_manifest(stage, variant="rules-plus-icl", rendered_prompt=Non
             "rendered_prompt_byte_length": len(rendered.encode("utf-8")),
             "examples": [{key: value for key, value in example.items()
                           if key not in {"source_text", "decision"}}
-                         for example in load_example_pack()["examples"]
-                         if variant == "rules-plus-icl" and example.get("stage") == stage],
+                         for example in pack_examples if example.get("stage") == stage],
             **convention_metadata()}

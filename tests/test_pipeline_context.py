@@ -4,6 +4,9 @@ import json
 from types import SimpleNamespace
 
 import pytest
+
+from scripts.extraction_eval.tuning import current_loader
+
 from PIL import Image
 
 import extraction_core as core
@@ -119,6 +122,7 @@ def test_durable_payload_round_trip_retains_regions(settings):
     assert ProcessedPagePayload(recovered, False, False).details == evidence
 
 
+@pytest.mark.usefixtures("synthetic_cohort")
 def test_runner_applies_context_before_characters_and_reconciles_after_ocr(tmp_path):
     import hashlib
     from scripts.extraction_eval.runner import run_extract
@@ -158,7 +162,7 @@ def test_runner_applies_context_before_characters_and_reconciles_after_ocr(tmp_p
     gateway = SimpleNamespace(record_usage=lambda *a: None, context={})
     config = {'settings': {'story_context_enabled': True, 'metadata_reconciliation_enabled': True}}
     result = run_extract(tmp_path, manifest, {'book_ids': ['book']}, tmp_path,
-                         gateway, config, loader=None, core=fake, isbn_lookup=lambda _: None, progress=lambda _: None)
+                         gateway, config, loader=current_loader(), core=fake, isbn_lookup=lambda _: None, progress=lambda _: None)
     assert events == ['metadata', 'page', 'page', 'context', 'reconcile', 'characters']
     book = result['books']['book']
     assert book['metadata']['value']['title'] == 'reconciled'

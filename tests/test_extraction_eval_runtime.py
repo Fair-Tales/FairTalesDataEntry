@@ -8,6 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from scripts.extraction_eval.tuning import current_loader
+
+
 from scripts.extraction_eval.gateway import (
     DryRunMiss, Gateway, RequestLimitError, request_ceiling, validate_prices,
 )
@@ -284,6 +287,7 @@ class FakeCore:
         return [{'name': 'Predicted character'}]
 
 
+@pytest.mark.usefixtures("synthetic_cohort")
 def test_runner_subset_resume_and_predicted_character_inputs(snapshot_fixture, tmp_path, config):
     snapshot, manifest, selection = snapshot_fixture
     out = tmp_path / 'run'
@@ -292,7 +296,7 @@ def test_runner_subset_resume_and_predicted_character_inputs(snapshot_fixture, t
     gateway = SimpleNamespace(record_usage=lambda *args: None)
     def run():
         return run_extract(snapshot, manifest, selection, out, gateway, config,
-                           loader=None, core=core, isbn_lookup=lambda isbn: None, progress=lambda *args: None)
+                           loader=current_loader(), core=core, isbn_lookup=lambda isbn: None, progress=lambda *args: None)
     result = run()
     assert list(result['books']) == ['selected']
     assert result['incomplete'] is False
@@ -308,6 +312,7 @@ def test_runner_subset_resume_and_predicted_character_inputs(snapshot_fixture, t
     assert estimate(manifest, selection, result)['estimated_usd'] == 0
 
 
+@pytest.mark.usefixtures("synthetic_cohort")
 def test_runner_dry_run_no_provider_calls(snapshot_fixture, tmp_path, config, ledger_factory):
     snapshot, manifest, selection = snapshot_fixture
     out = tmp_path / 'dry-run'
@@ -317,7 +322,7 @@ def test_runner_dry_run_no_provider_calls(snapshot_fixture, tmp_path, config, le
     ledger = ledger_factory()
     gateway = Gateway(provider, ledger, config, dry_run=True)
     result = run_extract(snapshot, manifest, selection, out, gateway, config,
-                         dry_run=True, loader=None, core=core, isbn_lookup=lambda isbn: None,
+                         dry_run=True, loader=current_loader(), core=core, isbn_lookup=lambda isbn: None,
                          progress=lambda *args: None)
     assert result['incomplete'] is True
     assert provider.calls == []
@@ -326,6 +331,7 @@ def test_runner_dry_run_no_provider_calls(snapshot_fixture, tmp_path, config, le
     assert not (out / 'predictions.json').exists()
 
 
+@pytest.mark.usefixtures("synthetic_cohort")
 def test_runner_budget_stop_preserves_incomplete_denominator(snapshot_fixture, tmp_path, config, ledger_factory):
     snapshot, manifest, selection = snapshot_fixture
     out = tmp_path / 'stopped'
@@ -334,7 +340,7 @@ def test_runner_budget_stop_preserves_incomplete_denominator(snapshot_fixture, t
     provider = FakeProvider()
     gateway = Gateway(provider, ledger_factory(cap=0), config)
     result = run_extract(snapshot, manifest, selection, out, gateway, config,
-                         loader=None, core=core, isbn_lookup=lambda isbn: None, progress=lambda *args: None)
+                         loader=current_loader(), core=core, isbn_lookup=lambda isbn: None, progress=lambda *args: None)
     book = result['books']['selected']
     assert result['incomplete'] is True
     assert len(book['pages']) == 2
@@ -343,15 +349,17 @@ def test_runner_budget_stop_preserves_incomplete_denominator(snapshot_fixture, t
     assert provider.calls == []
 
 
+@pytest.mark.usefixtures("synthetic_cohort")
 def test_snapshot_integrity_is_verified_before_extraction(snapshot_fixture):
     snapshot, manifest, selection = snapshot_fixture
-    validate_inputs(snapshot, manifest, selection, loader=None)
+    validate_inputs(snapshot, manifest, selection, loader=current_loader())
     path = snapshot / manifest['books'][0]['pages'][0]['image']['path']
     path.write_bytes(b'tampered')
     with pytest.raises(ValueError, match='hash mismatch'):
-        validate_inputs(snapshot, manifest, selection, loader=None)
+        validate_inputs(snapshot, manifest, selection, loader=current_loader())
 
 
+@pytest.mark.usefixtures("synthetic_cohort")
 def test_isbn_genuine_absence_is_cached_and_dry_run_never_looks_up(tmp_path):
     calls = []
     def provider(isbn, *, response_sink, outcome_sink):
@@ -359,7 +367,7 @@ def test_isbn_genuine_absence_is_cached_and_dry_run_never_looks_up(tmp_path):
         response_sink({'totalItems': 0})
         outcome_sink({'status': 'not_found', 'attempts': 1})
         return None
-    lookup = cached_isbn_lookup(tmp_path, provider)
+    lookup = cached_isbn_lookup(tmp_path, provider, source_ids=lambda: ["selected"])
     outcomes = []
     assert lookup('123', outcome_sink=outcomes.append) is None
     assert lookup('123') is None
@@ -367,13 +375,14 @@ def test_isbn_genuine_absence_is_cached_and_dry_run_never_looks_up(tmp_path):
     assert outcomes == [{'status': 'not_found', 'attempts': 1}]
     saved = json.loads((tmp_path / 'lookups' / f'{digest("123")}.json').read_text())
     assert saved['raw_response'] == {'totalItems': 0}
-    dry = cached_isbn_lookup(tmp_path, lambda isbn: pytest.fail('live lookup'), dry_run=True)
+    dry = cached_isbn_lookup(tmp_path, lambda isbn: pytest.fail('live lookup'), dry_run=True, source_ids=lambda: ["selected"])
     assert dry('123', outcome_sink=outcomes.append) is None
     assert outcomes[0] == outcomes[1]
     with pytest.raises(DryRunMiss):
         dry('456')
 
 
+@pytest.mark.usefixtures("synthetic_cohort")
 def test_isbn_failed_lookup_is_not_cached_and_next_call_retries(tmp_path):
     calls, outcomes = [], []
     def provider(isbn, *, response_sink, outcome_sink):
@@ -384,7 +393,7 @@ def test_isbn_failed_lookup_is_not_cached_and_next_call_retries(tmp_path):
         response_sink({'totalItems': 1})
         outcome_sink({'status': 'found'})
         return {'title': 'Recovered'}
-    lookup = cached_isbn_lookup(tmp_path, provider)
+    lookup = cached_isbn_lookup(tmp_path, provider, source_ids=lambda: ["selected"])
     path = tmp_path / 'lookups' / f'{digest("123")}.json'
     assert lookup('123', outcome_sink=outcomes.append) is None
     assert not path.exists()
@@ -396,23 +405,25 @@ def test_isbn_failed_lookup_is_not_cached_and_next_call_retries(tmp_path):
     assert calls == ['123', '123']
 
 
+@pytest.mark.usefixtures("synthetic_cohort")
 def test_legacy_failed_isbn_cache_is_ignored_but_not_changed_during_dry_run(tmp_path):
     path = tmp_path / 'lookups' / f'{digest("123")}.json'
-    poisoned = {'isbn': '123', 'value': None, 'raw_response': None}
+    poisoned = {'isbn': '123', 'value': None, 'raw_response': None, 'source_work_ids': ['selected']}
     atomic_json(path, poisoned)
-    dry = cached_isbn_lookup(tmp_path, lambda isbn: pytest.fail('live lookup'), dry_run=True)
+    dry = cached_isbn_lookup(tmp_path, lambda isbn: pytest.fail('live lookup'), dry_run=True, source_ids=lambda: ["selected"])
     with pytest.raises(DryRunMiss):
         dry('123')
     assert json.loads(path.read_text()) == poisoned
-    lookup = cached_isbn_lookup(tmp_path, lambda isbn: {'title': 'Recovered'})
+    lookup = cached_isbn_lookup(tmp_path, lambda isbn: {'title': 'Recovered'}, source_ids=lambda: ["selected"])
     assert lookup('123') == {'title': 'Recovered'}
     assert json.loads(path.read_text())['value'] == {'title': 'Recovered'}
 
 
 @pytest.mark.parametrize('capture_raw', [False, True])
+@pytest.mark.usefixtures("synthetic_cohort")
 def test_one_argument_isbn_lookup_without_answer_is_not_assumed_absent(tmp_path, capture_raw):
     calls, outcomes = [], []
-    lookup = cached_isbn_lookup(tmp_path, lambda isbn: calls.append(isbn), capture_raw=capture_raw)
+    lookup = cached_isbn_lookup(tmp_path, lambda isbn: calls.append(isbn), capture_raw=capture_raw, source_ids=lambda: ["selected"])
     assert lookup('123', outcome_sink=outcomes.append) is None
     assert lookup('123') is None
     assert calls == ['123', '123']
@@ -420,6 +431,7 @@ def test_one_argument_isbn_lookup_without_answer_is_not_assumed_absent(tmp_path,
     assert not (tmp_path / 'lookups').exists()
 
 
+@pytest.mark.usefixtures("synthetic_cohort")
 def test_isbn_lookup_with_opaque_signature_retains_single_argument_contract(tmp_path):
     class Provider:
         @property
@@ -429,11 +441,12 @@ def test_isbn_lookup_with_opaque_signature_retains_single_argument_contract(tmp_
         def __call__(self, isbn):
             return {'title': isbn}
 
-    lookup = cached_isbn_lookup(tmp_path, Provider(), capture_raw=True)
+    lookup = cached_isbn_lookup(tmp_path, Provider(), capture_raw=True, source_ids=lambda: ["selected"])
     assert lookup('123') == {'title': '123'}
 
 
 @pytest.mark.parametrize('legacy', [False, True])
+@pytest.mark.usefixtures("synthetic_cohort")
 def test_resume_retries_isbn_failure_without_repeating_vision(snapshot_fixture, tmp_path, config, legacy):
     from scripts.extraction_eval.runner import Stages
 
@@ -444,7 +457,7 @@ def test_resume_retries_isbn_failure_without_repeating_vision(snapshot_fixture, 
              'sources': {'title': {'source': 'title_page'}}}
     if legacy:
         atomic_json(out / 'lookups' / f'{digest("123")}.json',
-                    {'isbn': '123', 'value': None, 'raw_response': None})
+                    {'isbn': '123', 'value': None, 'raw_response': None, 'source_work_ids': ['selected']})
     else:
         value.update(isbn_lookup={'status': 'failed', 'reason': 'http_error'},
                      lookup_failed_fields=['authors', 'publisher'])
@@ -457,7 +470,7 @@ def test_resume_retries_isbn_failure_without_repeating_vision(snapshot_fixture, 
         return {'authors': ['Recovered author'], 'publisher': 'Recovered publisher'}
     result = run_extract(snapshot, manifest, selection, out,
                          SimpleNamespace(record_usage=lambda *args: None), config,
-                         loader=None, core=core, isbn_lookup=provider, progress=lambda *args: None)
+                         loader=current_loader(), core=core, isbn_lookup=provider, progress=lambda *args: None)
     metadata = result['books']['selected']['metadata']['value']
     assert calls == ['123']
     assert all(operation != 'metadata' for operation, _ in core.calls)
@@ -468,10 +481,11 @@ def test_resume_retries_isbn_failure_without_repeating_vision(snapshot_fixture, 
     assert metadata['lookup_failed_fields'] == []
 
 
+@pytest.mark.usefixtures("synthetic_cohort")
 def test_run_contract_preserves_initial_tuning_record(snapshot_fixture, tmp_path, config):
     _, manifest, selection = snapshot_fixture
     out = tmp_path / 'frozen'
-    tuning = {'loaded_work_ids': ['selected'], 'refused_attempts': []}
+    tuning = current_loader().state.copy()
     atomic_json(out / 'run.json', {'tuning': tuning})
     record = freeze_run(out, manifest, selection, config, '1', 16, 200,
                         tmp_path / 'shared.sqlite')
@@ -479,6 +493,7 @@ def test_run_contract_preserves_initial_tuning_record(snapshot_fixture, tmp_path
     assert read_json(out / 'run.json')['tuning'] == tuning
 
 
+@pytest.mark.usefixtures("synthetic_cohort")
 def test_run_contract_rejects_changed_inputs(snapshot_fixture, tmp_path, config):
     _, manifest, selection = snapshot_fixture
     out = tmp_path / 'frozen'
@@ -491,6 +506,7 @@ def test_run_contract_rejects_changed_inputs(snapshot_fixture, tmp_path, config)
         freeze_run(out, manifest, selection, changed, '1', 16, 200, ledger)
 
 
+@pytest.mark.usefixtures("synthetic_cohort")
 def test_cli_dry_run_does_not_construct_clients_or_read_secrets(snapshot_fixture, tmp_path, cli_config, monkeypatch):
     from scripts.extraction_eval import cli
     import extraction_core
@@ -513,11 +529,12 @@ def test_cli_dry_run_does_not_construct_clients_or_read_secrets(snapshot_fixture
     monkeypatch.setattr(utilities, 'get_s3_filesystem', forbidden)
     monkeypatch.setattr(utilities, 'FirestoreWrapper', forbidden)
     monkeypatch.setattr('builtins.input', forbidden)
-    assert cli.main(['extract', '--original-experiment', '--snapshot', str(snapshot), '--out', str(tmp_path / 'cli-run'),
+    assert cli.main(['extract', '--snapshot', str(snapshot), '--out', str(tmp_path / 'cli-run'),
                      '--config', str(config_path), '--limit', '1', '--dry-run']) == 0
     assert len(fake.calls) == 3  # metadata and two OCR requests; all cache misses
 
 
+@pytest.mark.usefixtures("synthetic_cohort")
 def test_cli_refused_confirmation_never_constructs_client(snapshot_fixture, tmp_path, cli_config, monkeypatch):
     from scripts.extraction_eval import cli
 
@@ -529,6 +546,91 @@ def test_cli_refused_confirmation_never_constructs_client(snapshot_fixture, tmp_
     out = tmp_path / 'refused'
     monkeypatch.setattr('builtins.input', lambda prompt: 'yes')
     monkeypatch.setattr(cli, '_live_anthropic', lambda *args: pytest.fail('Unauthorized client'))
-    assert cli.main(['extract', '--original-experiment', '--snapshot', str(snapshot), '--out', str(out),
+    assert cli.main(['extract', '--snapshot', str(snapshot), '--out', str(out),
                      '--config', str(config_path), '--limit', '1', '--execute']) == 1
-    assert not (out / 'run.json').exists()
+    assert read_json(out / 'run.json')['tuning']['loaded_ids']
+
+
+def test_runner_requires_cohort_before_content_reader(snapshot_fixture, tmp_path, config, monkeypatch):
+    from scripts.extraction_eval import runner
+
+    snapshot, manifest, selection = snapshot_fixture
+    reads = []
+    monkeypatch.setattr(runner, 'local_image', lambda *a, **k: reads.append(True))
+    with pytest.raises(ValueError, match='run record'):
+        run_extract(snapshot, manifest, selection, tmp_path,
+                    SimpleNamespace(), config, loader=None, core=FakeCore())
+    assert reads == []
+
+
+@pytest.mark.parametrize('kind', ['response_cache', 'call_report'])
+def test_cached_request_refusal_precedes_content_decode(
+        cohort_loader_factory, monkeypatch, kind):
+    from scripts.extraction_eval.json_sources import JsonSources
+    from scripts.extraction_eval.store import guard_cached_request
+    from scripts.extraction_eval.tuning import TuningRefused
+
+    loader = cohort_loader_factory()
+    original = JsonSources.decode
+    decoded = []
+
+    def checked(source, span):
+        data = source._data[span[0]:span[1]]
+        assert b'FORBIDDEN PAYLOAD' not in data
+        decoded.append(data)
+        return original(source, span)
+
+    monkeypatch.setattr(JsonSources, 'decode', checked)
+    with loader.activate(), pytest.raises(TuningRefused):
+        guard_cached_request(json.dumps({'context': {'book_id': 'heldout'},
+                                         'request': {'content': 'FORBIDDEN PAYLOAD'}}), kind)
+    assert b'"heldout"' in decoded
+    assert read_json(loader.path)['tuning']['refused_attempts'][-1]['kind'] == kind
+
+
+@pytest.mark.parametrize('dry_run', [False, True])
+def test_only_completed_rehearsal_produces_release_evidence(
+        snapshot_fixture, tmp_path, config, cohort_loader_factory, dry_run):
+    from datetime import datetime, timezone
+    from scripts.extraction_eval.tuning import TuningLoader
+
+    snapshot, original, selection = snapshot_fixture
+    manifest = {**original, 'books': original['books'][:1]}
+    out = tmp_path / 'rehearsal'
+    loader = cohort_loader_factory(out, iterate=['iterate'], protected=['selected'],
+                                   holdout=['heldout'], cohort='rehearsal')
+    with loader.activate():
+        frozen = freeze_run(out, manifest, selection, config, '1', 16, 200, tmp_path / 'spend.sqlite')
+    result = run_extract(snapshot, manifest, selection, out,
+                         SimpleNamespace(record_usage=lambda *args: None,
+                                         ledger=SimpleNamespace(run_id=frozen['run_id'])), config,
+                         loader=loader, core=FakeCore(), isbn_lookup=lambda _: None,
+                         dry_run=dry_run, progress=lambda _: None)
+    assert result['incomplete'] is False
+    record = read_json(out / 'run.json')
+    if dry_run:
+        assert 'completion' not in record
+    else:
+        completion = record['completion']
+        lock = {key: completion[key] for key in ('results_sha256', 'configuration_sha256')}
+        lock.update(run_record=str(loader.path), run_id=record['run_id'],
+                    locked_at=datetime.now(timezone.utc).isoformat())
+        released = TuningLoader(tmp_path / 'released', loader.freeze_dir,
+                                selections_path=loader.selections_path, rehearsal_lock=lock)
+        calls = []
+        released.load(['selected'], 'image', lambda: calls.append(True))
+        assert calls == [True]
+
+
+def test_stage_cache_cannot_attribute_another_book_key_to_an_allowed_id(cohort_loader_factory):
+    from scripts.extraction_eval.runner import Stages
+    from scripts.extraction_eval.tuning import TuningRefused
+
+    loader = cohort_loader_factory()
+    reads = []
+    stages = object.__new__(Stages)
+    stages.db = SimpleNamespace(execute=lambda *args: reads.append(True))
+    with loader.activate(), pytest.raises(TuningRefused):
+        stages.get('heldout:metadata', book_id='selected')
+    assert reads == []
+    assert read_json(loader.path)['tuning']['refused_attempts'][-1]['kind'] == 'stage_cache'

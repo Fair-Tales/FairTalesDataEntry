@@ -9,6 +9,8 @@ import urllib.request
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("synthetic_cohort")
+
 from scripts.extraction_eval import cli
 from scripts.extraction_eval.store import atomic_json, read_json
 
@@ -138,7 +140,7 @@ def test_dry_run_limit_twenty_no_credentials_no_paid_calls_no_isbn(offline_input
     snapshot, config = offline_inputs
     atomic_json(config, {**read_json(config), 'provider': provider})
     out = tmp_path / "dry-run"
-    assert cli.main(["extract", "--original-experiment", "--snapshot", str(snapshot), "--out", str(out), "--config", str(config),
+    assert cli.main(["extract", "--snapshot", str(snapshot), "--out", str(out), "--config", str(config),
                      "--limit", "20", "--dry-run"]) == 0
     assert len(read_json(out / "selection.json").get("book_ids")) == 20
     predicted = read_json(out / "dry_run_predictions.json")
@@ -188,7 +190,7 @@ def test_openai_cli_executes_and_replays_with_confirmed_key(offline_inputs, fake
                         lambda path: {'EVAL_OPENAI_API_KEY': 'fake-never-used'})
     monkeypatch.setattr(openai_client, 'create_openai_client', create_client)
     out = tmp_path / 'openai-paid-fixture'
-    args = ['extract', '--original-experiment', '--snapshot', str(snapshot),
+    args = ['extract', '--snapshot', str(snapshot),
             '--out', str(out), '--config', str(config_path), '--books', 'book-02', '--execute']
     assert cli.main(args) == 0
     assert len(requests) == 3
@@ -219,8 +221,8 @@ def test_paid_fake_exact_books_confirmation_cost_resume_and_offline_score(offlin
 
     monkeypatch.setattr("builtins.input", approve)
     monkeypatch.setattr(cli, "_live_anthropic", create_provider)
-    args = ["extract", "--original-experiment", "--snapshot", str(snapshot), "--out", str(out), "--config", str(config),
-            "--books", "book-02", "Book 7", "--execute"]
+    args = ["extract", "--snapshot", str(snapshot), "--out", str(out), "--config", str(config),
+            "--books", "book-02", "book-07", "--execute"]
     assert cli.main(args) == 0
     assert read_json(out / "selection.json").get("book_ids") == ["book-02", "book-07"]
     assert set(read_json(out / "predictions.json").get("books")) == {"book-02", "book-07"}
@@ -230,12 +232,12 @@ def test_paid_fake_exact_books_confirmation_cost_resume_and_offline_score(offlin
     assert all(call.get("state") == "completed" and call.get("cost_usd", 0) > 0 for call in calls)
     assert all(call.get("label") for call in calls)
     # Resume without subset flags restores the exact saved selection and is free.
-    assert cli.main(["extract", "--original-experiment", "--snapshot", str(snapshot), "--out", str(out), "--config", str(config), "--execute"]) == 0
+    assert cli.main(["extract", "--snapshot", str(snapshot), "--out", str(out), "--config", str(config), "--execute"]) == 0
     assert len(provider.calls) == 6
     monkeypatch.setattr(cli, "_live_anthropic", forbidden)
     import utilities
     monkeypatch.setattr(utilities, "lookup_isbn", forbidden)
-    assert cli.main(["score", "--original-experiment", "--snapshot", str(snapshot), "--run", str(out)]) == 0
+    assert cli.main(["score", "--snapshot", str(snapshot), "--run", str(out)]) == 0
     assert all((out / "reports" / name).is_file() for name in (
         "summary.json", "books.csv", "pages.csv", "calls.csv", "inspection.html"))
     summary = read_json(out / "reports" / "summary.json")
@@ -245,25 +247,16 @@ def test_paid_fake_exact_books_confirmation_cost_resume_and_offline_score(offlin
 def test_unconfirmed_paid_run_never_constructs_provider(offline_inputs, fake_core, tmp_path, monkeypatch):
     snapshot, config = offline_inputs
     monkeypatch.setattr("builtins.input", lambda prompt: "yes")
-    assert cli.main(["extract", "--original-experiment", "--snapshot", str(snapshot), "--out", str(tmp_path / "refused"),
+    assert cli.main(["extract", "--snapshot", str(snapshot), "--out", str(tmp_path / "refused"),
                      "--config", str(config), "--limit", "20", "--execute"]) == 1
     assert fake_core == []
 
 
 @pytest.fixture
-def tuning_freeze(tmp_path):
-    """A small seal with the same schema as the real freeze; no real IDs/files."""
-    from scripts.extraction_eval.store import digest
-    path = tmp_path / 'freeze'
-    atomic_json(path / 'holdout_ids.json', ['book-00'])
-    allowed = [f'book-{i:02}' for i in range(2, 25)]
-    atomic_json(path / 'freeze.json', {
-        'imported80_ids': ['book-00'], 'protected40_ids': ['book-01'],
-        'tune41_ids': allowed, 'tune81_ids': ['book-01', *allowed],
-        'imported80_ids_sha256': digest(['book-00']),
-        'holdout_ids_file_sha256': hashlib.sha256((path / 'holdout_ids.json').read_bytes()).hexdigest(),
-    })
-    return path
+def tuning_freeze(cohort_loader_factory):
+    loader = cohort_loader_factory(iterate=[f'book-{i:02}' for i in range(2, 25)],
+                                   holdout=['book-00'], protected=['book-01'])
+    return loader.freeze_dir
 
 
 def test_default_extract_and_score_use_tuning_gate(offline_inputs, fake_core, tuning_freeze,
@@ -287,7 +280,7 @@ def test_default_extract_and_score_use_tuning_gate(offline_inputs, fake_core, tu
     assert cli.main(['audit-tuning', '--run', str(out)]) == 0
     assert read_json(out / 'run.json')['tuning']['breaches'] == []
     with pytest.raises(SystemExit) as exc:
-        cli.main(['extract', '--original-experiment', '--snapshot', str(snapshot), '--out', str(out)])
+        cli.main(['extract', '--snapshot', str(snapshot), '--out', str(out), '--cohort', 'proof'])
     assert exc.value.code == 2
 
 
@@ -363,7 +356,7 @@ def test_temporary_paid_artifacts_refused_dry_runs_allowed(
     monkeypatch.setenv('FAIRTALES_EVIDENCE_DIR', str(evidence))
     monkeypatch.setattr('builtins.input', lambda prompt: 'AFFIRMATIVE')
     monkeypatch.setattr(cli, '_live_provider', forbidden)
-    args = ['extract', '--original-experiment', '--snapshot', str(snapshot),
+    args = ['extract', '--snapshot', str(snapshot),
             '--out', str(out), '--config', str(config), '--books', 'book-02',
             '--execute' if execute else '--dry-run']
     if target != 'default-ledger':
@@ -378,7 +371,7 @@ def test_temporary_paid_artifacts_refused_dry_runs_allowed(
         assert str(refused.resolve()) in message
         assert 'Paid run refused' in message and str(evidence) in message
         assert not ledger_path.exists()
-        assert not (out / 'run.json').exists()
+        assert read_json(out / 'run.json')['tuning']['loaded_ids']
     else:
         assert cli.main(args) == 0
         assert ledger_path.is_file()
@@ -397,3 +390,65 @@ def test_evidence_directory_default_and_override(tmp_path, monkeypatch):
     assert evidence_dir() == tmp_path
     with pytest.raises(pytest.skip.Exception, match=str(tmp_path / 'dev20-run' / 'predictions.json')):
         load_dev20_predictions()
+
+
+@pytest.mark.parametrize('cohort,expected', [
+    ('tune', {f'book-{i:02}' for i in range(2, 25)}),
+    ('rehearsal', {'book-01'}), ('proof', {'book-00'}),
+])
+@pytest.mark.parametrize('selection_flag', ['limit', 'default', 'books'])
+def test_each_cli_cohort_filters_before_content_decode(
+        offline_inputs, fake_core, tuning_freeze, tmp_path, monkeypatch,
+        cohort, expected, selection_flag):
+    from scripts.extraction_eval.json_sources import JsonSources
+
+    snapshot, config = offline_inputs
+    forbidden_titles = {f'Book {i}' for i in range(25) if f'book-{i:02}' not in expected}
+    original = JsonSources.decode
+    reads = []
+
+    def checked(source, span):
+        raw = source._data[span[0]:span[1]]
+        for title in forbidden_titles:
+            assert ('"title": "' + title + '"').encode() not in raw
+        reads.append(span)
+        return original(source, span)
+
+    monkeypatch.setattr(JsonSources, 'decode', checked)
+    out = tmp_path / 'cohort-run'
+    args = ['extract', '--cohort', cohort, '--snapshot', str(snapshot),
+            '--out', str(out), '--config', str(config), '--freeze-dir', str(tuning_freeze)]
+    if selection_flag == 'limit':
+        args.extend(['--limit', '40'])
+    elif selection_flag == 'books':
+        args.extend(['--books', *sorted(expected)])
+    assert cli.main(args) == 0
+    assert set(read_json(out / 'selection.json')['book_ids']) == expected
+    assert reads
+
+
+@pytest.mark.parametrize('cohort,book_id', [
+    ('tune', 'book-00'), ('tune', 'book-01'), ('tune', 'unknown'),
+    ('rehearsal', 'book-00'), ('rehearsal', 'book-02'), ('proof', 'book-02'),
+])
+def test_cli_foreign_book_refused_before_image_read(
+        offline_inputs, tuning_freeze, tmp_path, monkeypatch, cohort, book_id):
+    from scripts.extraction_eval import runner
+
+    snapshot, config = offline_inputs
+    readers = []
+    monkeypatch.setattr(runner, 'local_image', lambda *a, **k: readers.append(True))
+    out = tmp_path / 'refused-cohort'
+    with pytest.raises(SystemExit) as exc:
+        cli.main(['extract', '--cohort', cohort, '--snapshot', str(snapshot),
+                  '--out', str(out), '--config', str(config), '--freeze-dir', str(tuning_freeze),
+                  '--books', book_id])
+    assert exc.value.code == 2
+    assert readers == []
+    assert read_json(out / 'run.json')['tuning']['refused_attempts'][0]['source_ids'] == [book_id]
+
+
+def test_original_experiment_flag_is_removed():
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(['extract', '--snapshot', '.', '--out', '.',
+                                       '--original-experiment'])

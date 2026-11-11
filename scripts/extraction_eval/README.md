@@ -15,35 +15,50 @@ Keep the output directory outside this repository: images, text, responses and
 reports contain research data. No command invokes git. Do not use production
 credentials while testing; all harness tests use fakes and synthetic fixtures.
 
-## Tuning exclusions
+## Cohort admissions
 
-`extract` now defaults to guarded tuning. `--freeze-dir` defaults to
-`/home/expert/Documents/uob/fair_tales/autonomy-freeze/`. The loader verifies the
-exact exclusion-file hash and frozen ID lists before reading inputs. With no
-`--books`, it uses the available Tune41 (Tune81 after release). Explicit IDs or
-titles are checked too; `--limit` does not bypass the check.
+Every `extract` and `score` run uses `--cohort tune|rehearsal|proof` (default
+`tune`). The ids-only `selections.json`, validated by `freeze.load_selections()`,
+defines admission:
 
-The shared gate is `tuning.TuningLoader.load`. The existing manifest contains
-every book's references, so `JsonSources` scans JSON structure and identity
-metadata without decoding excluded content. Only allowed book records enter the
-tuning manifest; the global `raw_documents` duplicate is omitted. The same gate
-covers prompt examples, stage/prediction/ISBN caches, and scoring inputs. The
-native IDs in the seal and existing exposed fixtures are known sources; other
-IDs fail closed. Existing title/image/group matching is reused for equivalent
-works. The actual seal has only imported80 in `holdout_ids.json`, protected40
-in `freeze.json`, and no complete pilot/unfinished/abandoned crosswalk: those
-unknown sources are refused, not assumed safe. No sealed files are rewritten.
+| Cohort | Permitted book ids |
+| --- | --- |
+| `tune` | 55 iterate plus 20 check; protected 40 only after a verified rehearsal lock |
+| `rehearsal` | Exactly the protected 40 |
+| `proof` | Exactly the held-out 80 |
 
-To release protected40, pass `--paired-experiment-lock PATH` to a **new** run.
-That JSON records `run_id`, a timezone-aware `locked_at`, `results_sha256`, and
-`configuration_sha256` for the original paired experiment. This is a trusted
-record of completed locking, not a boolean switch or a new approval procedure.
-The lock and freeze hashes are immutable on resume. The original experiment
-uses `--original-experiment` on `extract` and `score`, retaining its original
-loading rules; never use that mode for tuning. Legacy runs without tuning
-records cannot resume as new tuning runs.
+`--original-experiment` has been removed. `--books` accepts exact ids, not
+titles, case variants or Unicode variants. Defaults and `--limit` select only
+within the named cohort. Resume requires the same cohort and lock. Legacy runs
+without a cohort record cannot resume as guarded runs. `--freeze-dir` defaults
+to `/home/expert/Documents/uob/fair_tales/autonomy-freeze/`; sealed exclusion
+hashes and id lists are still checked, and no sealed files are rewritten.
 
-`run.json.tuning` records start time, hashes, lock, loaded IDs and refusals.
+The shared gate is `tuning.TuningLoader.load`. `JsonSources` scans JSON structure
+and ids before decoding permitted book records. Excluded titles, references,
+images and the global `raw_documents` duplicate are not decoded. The same gate
+covers stage/prediction/ISBN caches, replay and scoring inputs. Unknown ids fail
+closed. Prompt examples are a separate input: their sources must always be
+iterate books, including in rehearsal and proof runs. Rendering checks the ids
+before decoding example content; the application applies the same iterate-only
+rule when rendering outside the harness.
+
+To release protected40 into tuning, pass `--rehearsal-lock PATH` to a **new**
+tune run. The JSON must contain `run_record` (the absolute path to the completed
+rehearsal's `run.json`), its `run_id`, a timezone-aware `locked_at`,
+`results_sha256` and `configuration_sha256` from the run record's `completion`.
+These hash the stored JSON value bytes of the predictions and run contract,
+respectively (`JsonSources.sha256`), without decoding book content. The loader
+checks these against the actual completed full rehearsal record and result
+file. A dry run, partial rehearsal, missing record, changed output or invented
+hash cannot release the protected ids. The lock and freeze hashes remain
+immutable on resume.
+
+Tune reports expose check-book aggregates separately from iterate aggregates;
+no check-book or check-page detail is written to reports. Prediction caches and
+the ordinary run record retain the inputs needed for scoring and audit.
+
+`run.json.tuning` records the cohort, start time, hashes, lock, loaded ids and refusals.
 IDs are persisted before admitted reads, so an interrupted or failed reader
 may conservatively count as loaded. Refusals do not invalidate proof. A saved
 forbidden load records an irreversible breach and invalidated proof status;
@@ -57,8 +72,19 @@ final policy lock run:
 Additional label/derived JSON files must declare `source_work_ids`, or have
 `records` carrying `book_id`. ISBN caches require `source_work_ids`; legacy
 unattributed caches are refused. The gate cannot reconstruct missing historical
-provenance or identify editions absent from the existing identity metadata.
-It covers trusted harness use, not arbitrary scripts reading files directly.
+provenance. It covers evaluation inputs; `snapshot` is a separate source-capture
+operation, before evaluation cohorts are selected, and does not apply this gate.
+
+The old rotation fixtures do not feed this harness. In
+`scripts/rotation_prompt_eval/rot_eval.py`, `load_labels()` enumerates
+`rot_labels.json`, and `load_preview()` reads `work/sample/*_preview.jpg`;
+`rot_spine_probe.py` and `rot_gate_risk.py` reuse these functions.
+`rot_sample.py` and `rot_fetch_manifest.py` populate those files separately.
+No extraction harness module imports those scripts or enumerates that directory.
+Its rotation path is `runner.local_image` → `extraction_core.extract_page` →
+`image_processing.correct_page_image`, using admitted snapshot image bytes.
+Those standalone rotation scripts and arbitrary file-reading scripts remain
+outside this harness's cohort gate; do not use them as guarded evaluation runs.
 
 ## Holdout freeze (offline)
 

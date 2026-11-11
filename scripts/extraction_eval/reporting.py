@@ -87,14 +87,52 @@ def snapshot_audit_description(manifest):
             f"Source consistency: {consistency.get(provenance.get('snapshot_source_consistent'), 'not verified')}.")
 
 
-def write_reports(manifest, predictions, out, protocol=None, selection=None, calls=None):
+def report_calls(calls, loader):
+    """Check-book calls stay in the ledger, never in readable tune reports."""
+    calls = list(calls)
+    if loader.cohort != "tune":
+        return calls
+    visible = loader.iterate | loader.protected
+    rows = [call for call in calls if call.get("book_id") in visible]
+    omitted = [call for call in calls if call.get("book_id") not in visible]
+    if omitted:
+        # Keep totals when a portable calls.json is scored without its ledger.
+        # This row can safely pass through the same filter again on replay.
+        rows.append({"aggregate_only": True,
+                     "call_count": sum(call.get("call_count", 1) for call in omitted),
+                     "cost_usd": sum(call.get("cost_usd") or 0 for call in omitted),
+                     "reserved_usd": sum(call.get("reserved_usd") or 0 for call in omitted
+                                         if call.get("state") not in {"completed", "settled", "failed"}),
+                     "state": "aggregate"})
+    return rows
+
+
+def _figures(scores, protocol):
+    """Aggregate without the diagnostic IDs or source descriptions."""
+    result = aggregate(scores, protocol)
+    for section, key in (("wordless", "books"), ("characters", "ambiguous_books"),
+                         ("challenge", "books")):
+        result[section][key + "_count"] = len(result[section].pop(key))
+    result["metadata_lookup_failures"].pop("book_ids")
+    result["ocr"].pop("provenance_counts")
+    return result
+
+
+def write_reports(manifest, predictions, out, protocol=None, selection=None, calls=None, *, loader=None):
     """Write summary.json, books.csv, pages.csv, calls.csv and inspection.html.
 
     ``manifest['_snapshot_dir']`` and ``predictions['_run_dir']`` resolve local
     image paths. The original manifests need not be changed on disk. Selection
     rows use selected=[{id,role,stratum,inclusion_probability}] and book_ids.
     All filtering uses the frozen selection, never prediction availability.
+    Tune check books contribute figures only; their rows remain in scoring
+    memory and are never copied to reports, including the HTML summary.
     """
+    from .tuning import current_loader
+    from text_content.tuning import TuningErrors
+    loader = loader or current_loader()
+    if loader is None:
+        raise ValueError(TuningErrors.missing_record)
     protocol = protocol or {}
     selection = selection or {}
     calls = list(calls or [])
@@ -112,21 +150,43 @@ def write_reports(manifest, predictions, out, protocol=None, selection=None, cal
     predicted_books = predictions.get("books", {})
     scores = []
     for book in books:
+        loader.load([book.get("id")], "report", lambda: None)
         prediction = predicted_books.get(book.get("id")) or {}
         stage = prediction.get("metadata") or {}
         if stage.get("status") == "completed":
-            prediction = {**prediction, "metadata": {**stage, "value": metadata_with_lookup_outcome(
-                stage.get("value") or {}, predictions.get("_run_dir"))}}
+            with loader.activate():
+                prediction = {**prediction, "metadata": {**stage, "value": metadata_with_lookup_outcome(
+                    stage.get("value") or {}, predictions.get("_run_dir"))}}
         score = score_book(book, prediction, protocol)
         sample = sampling.get(book.get("id"), {})
         for key in ("role", "stratum", "inclusion_probability", "holdout_group"):
             if key in sample:
                 score[key] = sample[key]
         scores.append(score)
-    summary = aggregate(scores, protocol)
+    tune = loader.cohort == "tune"
+    hidden = loader.check if tune else set()
+    visible_scores = [score for score in scores if score["id"] not in hidden]
+    summary = _figures(scores, protocol) if tune else aggregate(scores, protocol)
+    if tune:
+        summary["cohort_aggregates"] = {
+            name: _figures([score for score in scores if score["id"] in group], protocol)
+            for name, group in (("iterate", loader.iterate), ("check", loader.check))}
+        released = [score for score in scores if score["id"] in loader.protected]
+        if released:
+            summary["cohort_aggregates"]["released_protected"] = _figures(released, protocol)
+    report_selection = selection
+    exclusions = manifest.get("excluded_books", manifest.get("exclusions", []))
+    if tune:
+        # Selection inventories include titles and unselected books too. Keep
+        # the original selection in run.json, and report only its counts.
+        report_selection = {key: selection.get(key) for key in (
+            "version", "snapshot_id", "seed", "requested_limit", "method") if key in selection}
+        report_selection["selected_books"] = len(books)
+        exclusions = {"count": len(exclusions)}
     summary.update(snapshot_audit_provenance(manifest))
     summary.update({"snapshot_id": manifest.get("snapshot_id"), "run_id": predictions.get("run_id"),
-                    "selection": selection, "snapshot_exclusions": manifest.get("excluded_books", manifest.get("exclusions", [])),
+                    "cohort": loader.cohort,
+                    "selection": report_selection, "snapshot_exclusions": exclusions,
                     "adjudication": manifest.get("adjudication"),
                     "equivalence_version": protocol.get("equivalence_version"),
                     "settled_cost_usd": sum(call.get("cost_usd") or 0 for call in calls),
@@ -135,23 +195,33 @@ def write_reports(manifest, predictions, out, protocol=None, selection=None, cal
     from .comparison import book_comparison_record, comparison_protocol
     identity = comparison_protocol(protocol, manifest)
     summary["comparison_protocol"] = identity
-    summary["book_scores"] = [book_comparison_record(score, protocol_identity=identity) for score in scores]
+    summary["book_scores"] = [book_comparison_record(score, protocol_identity=identity) for score in visible_scores]
     cohort_path = Path(__file__).parent / "evidence" / "dev20-v1" / "empty_reference_cohort.json"
-    from .tuning import current_loader
-    loader = current_loader()
-    cohort = (loader.source_json(cohort_path, 'historical_labels', snapshot_id=manifest.get('snapshot_id'))
-              if loader else json.loads(cohort_path.read_text(encoding="utf-8"))) if cohort_path.exists() else None
+    cohort = (loader.source_json(cohort_path, 'historical_labels', snapshot_id=manifest['snapshot_id'])
+              if manifest.get('snapshot_id') and cohort_path.exists() else None)
     if cohort and cohort.get("snapshot_id") == manifest.get("snapshot_id"):
         from .monitoring import monitor_empty_reference
         summary["empty_reference_monitoring"] = monitor_empty_reference(manifest, predictions, cohort, selected_ids=ids)
+        if tune:
+            monitoring = summary["empty_reference_monitoring"]
+            monitoring["records"] = [record for record in monitoring["records"] if record["book_id"] not in hidden]
     _atomic_text(output / "summary.json", json.dumps(summary, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
-    _atomic_text(output / "book_scores.json", json.dumps(scores, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
-    _atomic_text(output / "protocol.json", json.dumps(protocol, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
+    _atomic_text(output / "book_scores.json", json.dumps(visible_scores, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
+    report_protocol = protocol
+    if tune:
+        from .store import digest
+        report_protocol = dict(protocol)
+        for key in ("reviewed_equivalences", "publication_equivalences"):
+            if key in report_protocol:
+                report_protocol[key + "_sha256"] = digest(report_protocol.pop(key))
+    _atomic_text(output / "protocol.json", json.dumps(report_protocol, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
     book_rows, page_rows, sections = [], [], []
     snapshot_root = Path(manifest.get("_snapshot_dir", "."))
     run_root = Path(predictions.get("_run_dir", "."))
     for book, score in zip(books, scores):
         book_id = book.get("id")
+        if book_id in hidden:
+            continue
         actual_book = predicted_books.get(book_id, {})
         book_cost = sum(call.get("cost_usd") or 0 for call in calls
                         if call.get("book_id") == book_id or str(call.get("label", "")).startswith(f"{book_id}/"))
@@ -192,8 +262,9 @@ def write_reports(manifest, predictions, out, protocol=None, selection=None, cal
         sections.append("\n".join(parts))
     _csv(output / "books.csv", book_rows, ["book_id", "title", "role", "pages", "ocr_f1", "ocr", "wordless", "metadata", "characters", "reference_hash", "cost_usd", "alias_foundation", "optional_stages", "story_context_fallback"])
     _csv(output / "pages.csv", page_rows, ["book_id", "page_id", "page_number", "reference_status", "prediction_status", "subgroup", "classification_source", "f1", "cer", "wer", "reference_text", "predicted_text", "ocr", "story", "error"])
-    call_fields = sorted({key for call in calls for key in call}) or ["key", "run_id", "state", "reserved_usd", "cost_usd", "label", "error"]
-    _csv(output / "calls.csv", calls, call_fields)
+    visible_calls = report_calls(calls, loader)
+    call_fields = sorted({key for call in visible_calls for key in call}) or ["key", "run_id", "state", "reserved_usd", "cost_usd", "label", "error"]
+    _csv(output / "calls.csv", visible_calls, call_fields)
     document = ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
                 '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src \'self\' file: data:; style-src \'unsafe-inline\'">'
                 '<meta name="viewport" content="width=device-width, initial-scale=1"><title>Pilot reference agreement</title>'

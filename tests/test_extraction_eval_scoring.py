@@ -120,7 +120,7 @@ def test_metadata_strict_equivalences_and_year_semantics():
     assert score_metadata("published_year", ref(-1, status="missing"), 2000)["exact"] is None
 
 
-def test_metadata_lookup_failure_excludes_only_affected_eligible_fields(tmp_path):
+def test_metadata_lookup_failure_excludes_only_affected_eligible_fields(tmp_path, cohort_loader_factory):
     book = {"id": "lookup-failed", "pages": [], "reference": {"metadata": {
         "title": ref("Vision title"), "authors": ref(["Ada Smith"], complete=True),
         "publisher": ref(None, status="missing"), "published_year": ref(1999),
@@ -138,13 +138,14 @@ def test_metadata_lookup_failure_excludes_only_affected_eligible_fields(tmp_path
     assert score["metadata"]["publisher"]["exclusion"] == "missing"
     assert score["metadata"]["published_year"]["exact"] is False
     assert score["metadata"]["illustrators"]["exact"] is False
-    summary = write_reports({"books": [book]}, {"books": {book["id"]: prediction}}, tmp_path)
+    loader = cohort_loader_factory(iterate=[book["id"]])
+    summary = write_reports({"books": [book]}, {"books": {book["id"]: prediction}}, tmp_path, loader=loader)
     assert summary["metadata"]["authors"]["strict_denominator"] == 0
     assert summary["metadata"]["authors"]["failed_books"] == 0
     assert summary["metadata"]["authors"]["lookup_failed_exclusions"] == 1
     assert summary["metadata"]["publisher"]["lookup_failed_exclusions"] == 0
     assert summary["metadata_lookup_failures"] == {
-        "affected_books": 1, "book_ids": [book["id"]], "excluded_fields": 1}
+        "affected_books": 1, "excluded_fields": 1}
     document = (tmp_path / "inspection.html").read_text()
     assert "metadata_lookup_failures" in document and "excluded_fields" in document
 
@@ -160,19 +161,20 @@ def test_metadata_lookup_failure_remains_visible_when_vision_filled_every_field(
 
 
 @pytest.mark.parametrize('raw_response,excluded', [(None, 1), ({"totalItems": 0}, 0)])
-def test_offline_report_classifies_legacy_isbn_cache_without_mutating_run(tmp_path, monkeypatch, raw_response, excluded):
+def test_offline_report_classifies_legacy_isbn_cache_without_mutating_run(tmp_path, monkeypatch, raw_response, excluded, cohort_loader_factory):
     from scripts.extraction_eval.store import atomic_json, digest
 
     monkeypatch.setattr(socket, "socket", lambda *args, **kwargs: pytest.fail("Network access"))
     run = tmp_path / "old-run"
     path = run / "lookups" / f'{digest("123")}.json'
-    atomic_json(path, {"isbn": "123", "value": None, "raw_response": raw_response})
+    atomic_json(path, {"isbn": "123", "value": None, "raw_response": raw_response, "source_work_ids": ["legacy"]})
     before_cache = path.read_bytes()
     book = {"id": "legacy", "reference": {"metadata": {"title": ref("Missing title")}}}
     predictions = {"_run_dir": str(run), "books": {"legacy": {
         "metadata": {"status": "completed", "value": {"isbn": "123", "title": None}}}}}
     before_predictions = deepcopy(predictions)
-    summary = write_reports({"books": [book]}, predictions, tmp_path / "report")
+    loader = cohort_loader_factory(iterate=[book["id"]])
+    summary = write_reports({"books": [book]}, predictions, tmp_path / "report", loader=loader)
     assert summary["metadata_lookup_failures"]["excluded_fields"] == excluded
     assert summary["metadata_lookup_failures"]["affected_books"] == excluded
     assert summary["metadata"]["title"]["strict_denominator"] == 1 - excluded
@@ -262,7 +264,7 @@ def test_wordless_intended_denominator_includes_failures_and_unrun():
     assert summary["wordless"]["end_to_end_agreement_rate"] == 0
 
 
-def test_offline_reports_use_selection_and_escape_html(tmp_path, monkeypatch):
+def test_offline_reports_use_selection_and_escape_html(tmp_path, monkeypatch, synthetic_cohort):
     def no_network(*args, **kwargs):
         pytest.fail("Scoring attempted a network call")
     monkeypatch.setattr(socket, "socket", no_network)
@@ -281,6 +283,82 @@ def test_offline_reports_use_selection_and_escape_html(tmp_path, monkeypatch):
     assert "http://" not in report and "https://" not in report
     assert json.loads((tmp_path / "summary.json").read_text())["wordless"]["intended_pages"] == 2
     assert write_reports(manifest, predictions, tmp_path, selection=selection) == summary
+
+
+def test_tune_reports_show_check_figures_without_any_check_rows(tmp_path, monkeypatch, cohort_loader_factory):
+    from pathlib import Path
+    from scripts.extraction_eval.reporting import report_calls
+
+    check_id = "secret-check-id"
+    loader = cohort_loader_factory(iterate=["a"], check=[check_id])
+    manifest, predictions = fixture_manifest(), fixture_predictions()
+    check_book = manifest["books"][1]
+    check_book.update(id=check_id, title="CHECK_TITLE_SENTINEL")
+    check_book["pages"][0].update(id="CHECK_PAGE_SENTINEL")
+    check_book["pages"][0]["reference"]["text"] = ref("CHECK_TEXT_SENTINEL", provenance="CHECK_PROVENANCE_SENTINEL")
+    check_book["pages"].append({"id": "CHECK_EMPTY_PAGE", "reference": {"text": ref("")}})
+    check_book["reference"]["metadata"] = {"authors": ref(["CHECK_AUTHOR_SENTINEL"])}
+    predictions["books"][check_id] = {
+        "pages": {"CHECK_PAGE_SENTINEL": {"status": "completed", "text": "wrong"}},
+        "metadata": {"status": "completed", "value": {"isbn_lookup": {"status": "failed"}}}}
+    del predictions["books"]["b"]
+    selection = {"book_ids": ["a", check_id], "selected": [
+        {"id": "a"}, {"id": check_id, "title": "CHECK_TITLE_SENTINEL"}],
+        "inventory": [{"id": check_id, "title": "CHECK_TITLE_SENTINEL"}]}
+    manifest["excluded_books"] = [{"id": check_id, "reason": "CHECK_EXCLUSION_SENTINEL"}]
+    calls = [{"book_id": "a", "cost_usd": 1},
+             {"book_id": check_id, "cost_usd": 2, "reserved_usd": 4, "state": "dispatched", "error": "CHECK_ERROR_SENTINEL"},
+             {"error": "UNATTRIBUTED_ERROR_SENTINEL", "cost_usd": 3, "reserved_usd": 8, "state": "settled"}]
+    protocol = {"reviewed_equivalences": {"characters": {"CHECK_EQUIVALENCE_SENTINEL": "Alias"}},
+                "publication_equivalences": {"version": "fixture", "reviewed": True, "records": [
+                    {"names": ["CHECK_PUBLISHER_SENTINEL"], "evidence": "CHECK_EVIDENCE_SENTINEL"}]}}
+    cohort = {"snapshot_id": manifest["snapshot_id"], "records": [
+        {"book_id": check_id, "page_id": "CHECK_PAGE_SENTINEL", "image_sha256": None}]}
+    original_exists = Path.exists
+    monkeypatch.setattr(Path, "exists", lambda path: path.name == "empty_reference_cohort.json" or original_exists(path))
+    monkeypatch.setattr(loader, "source_json", lambda *args, **kwargs: cohort)
+
+    out = tmp_path / "reports"
+    summary = write_reports(manifest, predictions, out, selection=selection, calls=calls, protocol=protocol, loader=loader)
+    assert summary["cohort_aggregates"]["check"]["books"] == 1
+    assert summary["cohort_aggregates"]["check"]["ocr"]["book_macro_f1"] == 0
+    assert summary["cohort_aggregates"]["iterate"]["ocr"]["book_macro_f1"] == 1
+    assert summary["cohort_aggregates"]["check"]["wordless"]["books_count"] == 1
+    assert summary["cohort_aggregates"]["check"]["metadata_lookup_failures"]["affected_books"] == 1
+    assert summary["settled_cost_usd"] == 6
+    assert summary["outstanding_reservations_usd"] == 4
+    assert summary["empty_reference_monitoring"]["completed_monitoring_pages"] == 1
+    assert summary["empty_reference_monitoring"]["records"] == []
+    assert [row["id"] for row in summary["book_scores"]] == ["a"]
+    exported_calls = report_calls(calls, loader)
+    assert exported_calls == [calls[0], {"aggregate_only": True, "call_count": 2,
+                                        "cost_usd": 5, "reserved_usd": 4, "state": "aggregate"}]
+    assert report_calls(exported_calls, loader) == exported_calls
+    fallback = write_reports(manifest, predictions, tmp_path / "portable-reports", selection=selection,
+                             calls=exported_calls, protocol=protocol, loader=loader)
+    assert fallback["settled_cost_usd"] == summary["settled_cost_usd"]
+    assert fallback["outstanding_reservations_usd"] == summary["outstanding_reservations_usd"]
+    for path in out.iterdir():
+        content = path.read_text()
+        assert check_id not in content, path.name
+        assert "CHECK_" not in content, path.name
+        assert "UNATTRIBUTED_ERROR_SENTINEL" not in content, path.name
+    assert "A book" in (out / "books.csv").read_text()
+
+
+def test_reports_require_admission_before_scoring(tmp_path, monkeypatch, cohort_loader_factory):
+    from scripts.extraction_eval import reporting
+    from scripts.extraction_eval.tuning import TuningRefused
+
+    called = []
+    monkeypatch.setattr(reporting, "score_book", lambda *args: called.append(args))
+    manifest = {"books": [{"id": "heldout"}]}
+    with pytest.raises(ValueError, match="run record"):
+        write_reports(manifest, {}, tmp_path / "unguarded")
+    loader = cohort_loader_factory()
+    with pytest.raises(TuningRefused):
+        write_reports(manifest, {}, tmp_path / "guarded", loader=loader)
+    assert called == []
 
 
 def test_reviewed_overlay_is_versioned_reference_only_and_immutable():

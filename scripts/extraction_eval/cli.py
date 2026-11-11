@@ -8,7 +8,6 @@ import shlex
 import sqlite3
 import sys
 import tempfile
-from contextlib import nullcontext
 
 from .evidence import evidence_dir
 from .store import atomic_json, read_json, run_lock
@@ -39,8 +38,8 @@ def build_parser():
     extract.add_argument("--out", type=Path, required=True, help="New run directory, or existing directory to resume")
     extract.add_argument("--config", type=Path, default=PACKAGE / "baseline.json")
     extract.add_argument("--limit", type=int, help="Number of COMPLETE books (20 for the first subset)")
-    extract.add_argument("--books", nargs="+", help="Exact IDs/titles; interpreted as a purposive subset")
-    extract.add_argument("--challenge-books", nargs="+", help="Reviewed challenge IDs/titles; sampled results are reported separately")
+    extract.add_argument("--books", nargs="+", help="Exact book IDs; interpreted as a purposive subset")
+    extract.add_argument("--challenge-books", nargs="+", help="Reviewed challenge IDs; sampled results are reported separately")
     extract.add_argument("--seed", type=int, default=20261104)
     extract.add_argument("--replicate", default="1", help="Independent response cache identity; never select the best replicate")
     extract.add_argument("--max-spend-usd", type=float, default=16)
@@ -48,8 +47,8 @@ def build_parser():
     extract.add_argument("--ledger", type=Path, help="Shared evaluator ledger; defaults to snapshot parent's spend.sqlite")
     extract.add_argument("--secrets", default=".streamlit/secrets.toml", help="Read only AFTER paid-call confirmation")
     extract.add_argument("--freeze-dir", type=Path, default=DEFAULT_FREEZE_DIR, help=TuningHelp.freeze_dir)
-    extract.add_argument("--paired-experiment-lock", type=Path, help=TuningHelp.lock)
-    extract.add_argument("--original-experiment", action="store_true", help=TuningHelp.original)
+    extract.add_argument("--rehearsal-lock", type=Path, help=TuningHelp.lock)
+    extract.add_argument("--cohort", choices=("tune", "rehearsal", "proof"), default="tune", help=TuningHelp.cohort)
     group = extract.add_mutually_exclusive_group()
     group.add_argument("--execute", action="store_true")
     group.add_argument("--dry-run", action="store_true", help="Default: local preprocessing/cache replay, zero network calls")
@@ -63,7 +62,7 @@ def build_parser():
     score.add_argument("--equivalences", type=Path, help="Reviewed versioned name/imprint equivalences")
     score.add_argument("--compare-run", type=Path, help="Paired book-cluster comparison against another local run")
     score.add_argument("--freeze-dir", type=Path, help=TuningHelp.freeze_dir)
-    score.add_argument("--original-experiment", action="store_true", help=TuningHelp.original)
+    score.add_argument("--cohort", choices=("tune", "rehearsal", "proof"), default="tune", help=TuningHelp.cohort)
     audit = commands.add_parser("audit-tuning", help=TuningHelp.audit)
     audit.add_argument("--run", type=Path, required=True)
     audit.add_argument("--freeze-dir", type=Path, help=TuningHelp.freeze_dir)
@@ -71,7 +70,9 @@ def build_parser():
 
 
 def _load_snapshot(path, *, loader=None, book_ids=None, additional_ids=None):
-    manifest = loader.snapshot(path, book_ids, additional_ids=additional_ids) if loader else read_json(path / "manifest.json")
+    if loader is None:
+        raise ValueError(TuningErrors.missing_record)
+    manifest = loader.snapshot(path, book_ids, additional_ids=additional_ids)
     if manifest.get("complete") is not True:
         raise ValueError("Snapshot has not completed")
     consistency = manifest.get("source_consistent")
@@ -84,6 +85,24 @@ def _load_snapshot(path, *, loader=None, book_ids=None, additional_ids=None):
         if "source_consistent" not in manifest or consistency is not None or not explicit or all(audits.get(name) for name in ("source_changes", "membership")):
             raise ValueError("Snapshot has missing or invalid source-audit provenance")
     return manifest
+
+
+def _load_calls(path, loader):
+    from .json_sources import JsonSources
+    with JsonSources(path) as source:
+        records = source.items(source.root)
+        aggregate_fields = {'aggregate_only', 'call_count', 'cost_usd', 'reserved_usd', 'state'}
+        for span in records:
+            fields = source.members(span)
+            if (set(fields) == aggregate_fields
+                    and source.decode(fields['aggregate_only']) is True
+                    and source.decode(fields['state']) == 'aggregate'
+                    and all(isinstance(source.decode(fields[key]), (int, float))
+                            for key in ('call_count', 'cost_usd', 'reserved_usd'))):
+                continue
+            book_id = source.decode(fields['book_id']) if 'book_id' in fields else None
+            loader.load([book_id], 'call_report', lambda: None)
+        return [source.decode(span) for span in records]
 
 
 def _snapshot(args):
@@ -165,20 +184,14 @@ def _live_provider(secrets_path, config):
 
 def _extract(args):
     with run_lock(args.out):
-        if args.original_experiment:
-            if args.paired_experiment_lock or ((args.out / 'run.json').exists()
-                    and read_json(args.out / 'run.json').get('tuning')):
-                raise ValueError(TuningErrors.mixed_modes)
-            loader = None
-        else:
-            lock = read_json(args.paired_experiment_lock) if args.paired_experiment_lock else None
-            loader = TuningLoader(args.out, args.freeze_dir, paired_experiment_lock=lock)
-        with loader.activate() if loader else nullcontext():
+        lock = read_json(args.rehearsal_lock) if args.rehearsal_lock else None
+        loader = TuningLoader(args.out, args.freeze_dir, cohort=args.cohort,
+                              rehearsal_lock=lock)
+        with loader.activate():
             try:
                 return _extract_loaded(args, loader)
             finally:
-                if loader:
-                    loader.audit()
+                loader.audit()
 
 
 def _extract_loaded(args, loader):
@@ -187,7 +200,7 @@ def _extract_loaded(args, loader):
     from .sampling import select_books
     from .store import Ledger
     requested = args.books
-    if loader and not requested:
+    if not requested:
         requested = loader.state.get('snapshot_book_ids')
     manifest = _load_snapshot(args.snapshot, loader=loader, book_ids=requested,
                               additional_ids=args.challenge_books)
@@ -207,7 +220,7 @@ def _extract_loaded(args, loader):
     ledger_path = args.ledger or args.snapshot.parent / "spend.sqlite"
     saved_selection = args.out / "selection.json"
     if saved_selection.exists() and args.limit is None and args.books is None and args.challenge_books is None:
-        selection = read_json(saved_selection)
+        selection = loader.selection(saved_selection)
     else:
         selection = select_books(manifest, limit=args.limit, books=args.books, seed=args.seed, challenge_books=args.challenge_books)
     if not selection.get("book_ids"):
@@ -218,7 +231,7 @@ def _extract_loaded(args, loader):
     previous_path = args.out / "predictions.json"
     if not previous_path.exists():
         previous_path = args.out / "dry_run_predictions.json"
-    previous = (loader.predictions(previous_path) if loader else read_json(previous_path)) if previous_path.exists() else None
+    previous = loader.predictions(previous_path) if previous_path.exists() else None
     plan = estimate(manifest, selection, previous)
     print(json.dumps(plan, indent=2))
     print(f"Run cap: ${args.max_spend_usd:.2f}; shared monthly cap: ${args.monthly_cap_usd:.2f}. Ledger: {ledger_path}")
@@ -247,7 +260,8 @@ def _extract_loaded(args, loader):
             client = _live_provider(args.secrets, config)
         gateway = Gateway(client, ledger, config, replicate=args.replicate, dry_run=not args.execute)
         result = run_extract(args.snapshot, manifest, selection, args.out, gateway, config, loader=loader, dry_run=not args.execute)
-        atomic_json(args.out / "calls.json", ledger.rows())
+        from .reporting import report_calls
+        atomic_json(args.out / "calls.json", report_calls(ledger.rows(), loader))
         if result.get('stop_reason'):
             from text_content.pipeline_runtime import RUN_STOPPED
             reason, detail = result.get('stop_reason')
@@ -264,51 +278,47 @@ def _extract_loaded(args, loader):
 
 
 def _score(args):
-    record = read_json(args.run / 'run.json')
-    if args.original_experiment:
-        if record.get('tuning'):
-            raise ValueError(TuningErrors.mixed_modes)
-        return _score_loaded(args, None)
-    if record.get('tuning'):
-        with run_lock(args.run):
-            loader = TuningLoader(args.run, args.freeze_dir or record['tuning']['freeze_dir'])
-            with loader.activate():
-                try:
-                    return _score_loaded(args, loader)
-                finally:
-                    loader.audit()
-    raise ValueError(TuningErrors.missing_record)
+    state = TuningLoader.run_state(args.run / 'run.json')
+    if not state:
+        raise ValueError(TuningErrors.missing_record)
+    with run_lock(args.run):
+        loader = TuningLoader(args.run, args.freeze_dir or state['freeze_dir'],
+                              cohort=args.cohort)
+        with loader.activate():
+            try:
+                return _score_loaded(args, loader)
+            finally:
+                loader.audit()
 
 
 def _score_loaded(args, loader):
     from .reporting import snapshot_audit_description, write_reports
     manifest = _load_snapshot(args.snapshot, loader=loader,
-                              book_ids=loader.state.get('snapshot_book_ids') if loader else None)
+                              book_ids=loader.state.get('snapshot_book_ids'))
     protocol = read_json(args.protocol)
     # Read/freeze overlays before even opening predictions.
-    overlay = (loader.source_json(args.adjudications, 'historical_labels') if loader
-               else read_json(args.adjudications)) if args.adjudications else None
+    overlay = loader.source_json(args.adjudications, 'historical_labels') if args.adjudications else None
     if args.compare_run and overlay and overlay.get("schema_version") != "adjudication-v2":
         from text_content.evaluation import EvaluationErrors
         raise ValueError(EvaluationErrors.comparison_overlay_required)
     if args.equivalences:
         from .scoring import apply_equivalences
-        table = loader.source_json(args.equivalences, 'equivalences') if loader else read_json(args.equivalences)
+        table = loader.source_json(args.equivalences, 'equivalences')
         protocol = apply_equivalences(protocol, table)
     adjudicated = None
     if overlay:
         from .scoring import apply_overlay
         adjudicated = apply_overlay(manifest, overlay, convention_version=protocol.get("convention_version"))
-    run_config = read_json(args.run / "run.json")
+    run_config = loader.run_record(args.run / "run.json")
     from .store import digest
     contract = run_config.get("contract", {})
     if contract.get("snapshot_id") != manifest.get("snapshot_id") or contract.get("snapshot_hash") != digest(manifest):
         raise ValueError("Run and snapshot identities differ")
-    predictions = loader.predictions(args.run / 'predictions.json') if loader else read_json(args.run / "predictions.json")
+    predictions = loader.predictions(args.run / 'predictions.json')
     if predictions.get("snapshot_id") != manifest.get("snapshot_id"):
         raise ValueError("Prediction and snapshot identities differ")
     predictions["_run_dir"] = str(args.run.resolve())
-    selection = read_json(args.run / "selection.json")
+    selection = loader.selection(args.run / "selection.json")
     if selection != contract.get("selection"):
         raise ValueError("Selection differs from the frozen run contract")
     ledger_path = contract.get("ledger")
@@ -316,36 +326,37 @@ def _score_loaded(args, loader):
         from .store import read_calls
         calls = read_calls(ledger_path, run_config.get("run_id"))
     else:
-        calls = read_json(args.run / "calls.json") if (args.run / "calls.json").exists() else []
+        calls = _load_calls(args.run / "calls.json", loader) if (args.run / "calls.json").exists() else []
     manifest["_snapshot_dir"] = str(args.snapshot.resolve())
     out = args.out or args.run / "reports"
-    summary = write_reports(manifest, predictions, out, protocol=protocol, selection=selection, calls=calls)
+    summary = write_reports(manifest, predictions, out, protocol=protocol, selection=selection, calls=calls, loader=loader)
     corrected_summary = None
     if adjudicated:
         adjudicated["_snapshot_dir"] = manifest.get("_snapshot_dir")
-        corrected_summary = write_reports(adjudicated, predictions, out / "adjudicated", protocol=protocol, selection=selection, calls=calls)
+        corrected_summary = write_reports(adjudicated, predictions, out / "adjudicated", protocol=protocol, selection=selection, calls=calls, loader=loader)
     if args.compare_run:
         from .comparison import compare_metrics
-        candidate_run = read_json(args.compare_run / "run.json")
+        candidate_state = TuningLoader.run_state(args.compare_run / "run.json")
+        if not candidate_state:
+            raise ValueError(TuningErrors.missing_record)
+        TuningLoader(args.compare_run, args.freeze_dir or candidate_state['freeze_dir'],
+                     cohort=args.cohort).audit()
+        candidate_run = loader.run_record(args.compare_run / "run.json")
         other_contract = candidate_run.get("contract", {})
         if other_contract.get("snapshot_hash") != contract.get("snapshot_hash"):
             raise ValueError("Comparison runs must use the same frozen snapshot")
-        if loader:
-            if not candidate_run.get('tuning'):
-                raise ValueError(TuningErrors.missing_record)
-            TuningLoader(args.compare_run, args.freeze_dir or candidate_run['tuning']['freeze_dir']).audit()
-        candidate = loader.predictions(args.compare_run / 'predictions.json') if loader else read_json(args.compare_run / "predictions.json")
+        candidate = loader.predictions(args.compare_run / 'predictions.json')
         if candidate.get("snapshot_id") != manifest.get("snapshot_id"):
             raise ValueError("Candidate predictions use a different snapshot")
         candidate["_run_dir"] = str(args.compare_run.resolve())
-        other_selection = read_json(args.compare_run / "selection.json")
+        other_selection = loader.selection(args.compare_run / "selection.json")
         if other_selection != other_contract.get("selection"):
             raise ValueError("Comparison selection differs from its frozen run contract")
-        comparison_summary = write_reports(manifest, candidate, out / "comparison_candidate", protocol=protocol, selection=other_selection)
+        comparison_summary = write_reports(manifest, candidate, out / "comparison_candidate", protocol=protocol, selection=other_selection, loader=loader)
         comparison = {"raw_to_raw": compare_metrics(summary.get("book_scores", []), comparison_summary.get("book_scores", [])),
                       "corrected_to_corrected": None, "fixed_baseline_measurement_repair": None}
         if adjudicated is not None and corrected_summary is not None:
-            corrected_candidate = write_reports(adjudicated, candidate, out / "comparison_candidate" / "adjudicated", protocol=protocol, selection=other_selection)
+            corrected_candidate = write_reports(adjudicated, candidate, out / "comparison_candidate" / "adjudicated", protocol=protocol, selection=other_selection, loader=loader)
             comparison["corrected_to_corrected"] = compare_metrics(corrected_summary.get("book_scores", []), corrected_candidate.get("book_scores", []))
             comparison["fixed_baseline_measurement_repair"] = compare_metrics(summary.get("book_scores", []), corrected_summary.get("book_scores", []), measurement_repair=True)
         atomic_json(out / "comparison.json", comparison)
@@ -366,8 +377,9 @@ def main(argv=None):
 
 def _audit_tuning(args):
     with run_lock(args.run):
-        record = read_json(args.run / 'run.json')
-        if not record.get('tuning'):
+        state = TuningLoader.run_state(args.run / 'run.json')
+        if not state:
             raise ValueError(TuningErrors.missing_record)
-        TuningLoader(args.run, args.freeze_dir or record['tuning']['freeze_dir']).audit()
+        TuningLoader(args.run, args.freeze_dir or state['freeze_dir'],
+                     cohort=state['cohort']).audit()
     return 0

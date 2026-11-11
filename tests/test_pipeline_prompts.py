@@ -2,6 +2,9 @@
 from copy import deepcopy
 import hashlib
 import json
+from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -29,6 +32,35 @@ def test_frozen_pack_quotes_hashes_and_adjudication_boundaries():
     assert "the_gruffalo's_child" not in pack["development_book_ids"]
 
 
+def test_committed_examples_are_iterate_books():
+    root = Path(__file__).resolve().parents[1]
+    selections = json.loads((root / "scripts/extraction_eval/selections.json").read_text())
+    pack = json.loads((root / "text_content/pipeline_examples.json").read_text())
+    assert all(row["book_id"] in selections["iterate55_ids"] for row in pack["examples"])
+
+
+def test_app_prompt_import_does_not_grow_harness_coupling():
+    result = subprocess.run([sys.executable, "-c", """
+import json
+from pathlib import Path
+import sys
+
+# The live app must not depend on selections, even when that file is broken.
+original = Path.open
+def checked_open(path, *args, **kwargs):
+    assert path.name != 'selections.json', 'App import read evaluation selections'
+    return original(path, *args, **kwargs)
+Path.open = checked_open
+import text_content.ai_prompts
+print(json.dumps(sorted(name for name in sys.modules
+                        if name.startswith('scripts.extraction_eval.'))))
+"""], cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, check=True)
+    assert set(json.loads(result.stdout)) <= {
+        "scripts.extraction_eval.tuning", "scripts.extraction_eval.store",
+        "scripts.extraction_eval.openai_adapter", "scripts.extraction_eval.exposure",
+    }
+
+
 @pytest.mark.parametrize("key", ["held_out_book_ids", "held_out_groups"])
 def test_pack_refuses_heldout_books_and_duplicate_groups(key):
     example = load_example_pack()["examples"][0]
@@ -37,25 +69,63 @@ def test_pack_refuses_heldout_books_and_duplicate_groups(key):
         load_example_pack(**{key: [forbidden]})
 
 
-def test_pack_rejects_changed_source_and_nonverbatim_quotes(monkeypatch):
+def test_pack_rejects_changed_source_and_nonverbatim_quotes(monkeypatch, tmp_path):
     import text_content.pipeline_prompts as prompts
     pack = load_example_pack()
-
-    class FakePath:
-        def with_name(self, name):
-            return self
-
-        def read_text(self):
-            return json.dumps(pack)
-
-    monkeypatch.setattr(prompts, "Path", lambda _: FakePath())
+    monkeypatch.setattr(prompts, "__file__", str(tmp_path / "pipeline_prompts.py"))
+    path = tmp_path / "pipeline_examples.json"
     pack["examples"][0]["quotes"].append("not a printed quotation")
+    path.write_text(json.dumps(pack))
     with pytest.raises(ValueError, match="verbatim"):
         prompts.load_example_pack()
     pack["examples"][0]["quotes"].pop()
     pack["examples"][0]["source_text"] += " changed"
+    path.write_text(json.dumps(pack))
     with pytest.raises(ValueError, match="hash"):
         prompts.load_example_pack()
+
+
+@pytest.mark.parametrize("source_id", ["check", "protected", "held-out", "unknown"])
+@pytest.mark.parametrize("cohort", ["tune", "rehearsal", "proof"])
+def test_render_refuses_non_iterate_example_before_content_decode(
+        monkeypatch, tmp_path, source_id, cohort, cohort_loader_factory):
+    import text_content.pipeline_prompts as prompts
+    from scripts.extraction_eval.json_sources import JsonSources
+    from scripts.extraction_eval.tuning import TuningRefused
+
+    loader = cohort_loader_factory(iterate=("iterate",), holdout=("held-out",), cohort=cohort)
+    monkeypatch.setattr(prompts, "__file__", str(tmp_path / "pipeline_prompts.py"))
+    (tmp_path / "pipeline_examples.json").write_text(json.dumps({
+        "development_book_ids": [source_id],
+        "development_holdout_groups": ["FORBIDDEN CONTENT"],
+        "examples": [{"book_id": source_id, "source_text": "FORBIDDEN CONTENT"}],
+    }))
+    original_decode = JsonSources.decode
+    content_reads = []
+
+    def checked_decode(source, span):
+        start, end = span
+        if b"FORBIDDEN CONTENT" in source._data[start:end]:
+            content_reads.append(span)
+        return original_decode(source, span)
+
+    monkeypatch.setattr(JsonSources, "decode", checked_decode)
+    with loader.activate():
+        with pytest.raises(TuningRefused):
+            prompts.prompt_for("character_detection")
+    assert content_reads == []
+    assert loader.state["refused_attempts"][-1]["source_ids"] == [source_id]
+    assert loader.state["refused_attempts"][-1]["kind"] == "prompt_example"
+
+
+def test_rules_only_manifest_never_opens_examples(monkeypatch):
+    import text_content.pipeline_prompts as prompts
+
+    def forbidden_pack_read():
+        pytest.fail("Rules-only prompts must not read example content")
+
+    monkeypatch.setattr(prompts, "load_example_pack", forbidden_pack_read)
+    assert prompts.prompt_request_manifest("character_detection", "rules-only")["examples"] == []
 
 
 @pytest.mark.parametrize("stage", ["character_detection", "page_extraction", "story_classification",
