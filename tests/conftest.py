@@ -2,8 +2,6 @@
 import hashlib
 import ipaddress
 import json
-import os
-from pathlib import Path
 import socket
 
 import pytest
@@ -11,10 +9,9 @@ import pytest
 
 def load_dev20_predictions():
     """Load the unchanged dev20 evidence kept outside the public repository."""
-    from scripts.extraction_eval.tuning import DEFAULT_FREEZE_DIR
+    from scripts.extraction_eval.evidence import evidence_dir
 
-    evidence_dir = Path(os.environ.get('FAIRTALES_EVIDENCE_DIR', DEFAULT_FREEZE_DIR / 'evidence'))
-    path = evidence_dir / 'dev20-run' / 'predictions.json'
+    path = evidence_dir() / 'dev20-run' / 'predictions.json'
     try:
         data = path.read_bytes()
     except FileNotFoundError:

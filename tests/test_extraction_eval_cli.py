@@ -18,6 +18,15 @@ def forbidden(*args, **kwargs):
 
 
 @pytest.fixture
+def system_temporary_dir(tmp_path, monkeypatch):
+    """Model temporary and durable storage locally; all paid providers are fake."""
+    path = tmp_path / 'temporary'
+    path.mkdir()
+    monkeypatch.setattr(cli.tempfile, 'gettempdir', lambda: str(path))
+    return path
+
+
+@pytest.fixture
 def offline_inputs(tmp_path, monkeypatch):
     snapshot = tmp_path / "snapshot"
     snapshot.mkdir()
@@ -144,7 +153,7 @@ def test_dry_run_limit_twenty_no_credentials_no_paid_calls_no_isbn(offline_input
 
 
 def test_openai_cli_executes_and_replays_with_confirmed_key(offline_inputs, fake_core,
-                                                          tmp_path, monkeypatch):
+                                                          tmp_path, monkeypatch, system_temporary_dir):
     import httpx
     from scripts import data_cleanup
     from scripts.extraction_eval import openai_client
@@ -192,7 +201,7 @@ def test_openai_cli_executes_and_replays_with_confirmed_key(offline_inputs, fake
     assert all(client.is_closed for client in clients)
 
 
-def test_paid_fake_exact_books_confirmation_cost_resume_and_offline_score(offline_inputs, fake_core, tmp_path, monkeypatch, capsys):
+def test_paid_fake_exact_books_confirmation_cost_resume_and_offline_score(offline_inputs, fake_core, tmp_path, monkeypatch, capsys, system_temporary_dir):
     snapshot, config = offline_inputs
     out = tmp_path / "paid-fixture"
     provider = FakePaidProvider()
@@ -258,7 +267,7 @@ def tuning_freeze(tmp_path):
 
 
 def test_default_extract_and_score_use_tuning_gate(offline_inputs, fake_core, tuning_freeze,
-                                                 tmp_path, monkeypatch):
+                                                 tmp_path, monkeypatch, system_temporary_dir):
     snapshot, config = offline_inputs
     out = tmp_path / 'tuning'
     provider = FakePaidProvider()
@@ -315,3 +324,76 @@ def test_challenge_selection_keeps_other_tuning_candidates(offline_inputs, fake_
     assert cli.main(['extract', '--snapshot', str(snapshot), '--out', str(out), '--config', str(config),
                      '--freeze-dir', str(tuning_freeze), '--challenge-books', 'book-02', '--limit', '3']) == 0
     assert len(read_json(out / 'selection.json')['book_ids']) == 3
+
+
+@pytest.mark.parametrize('execute', [False, True])
+@pytest.mark.parametrize('target', ['ledger', 'default-ledger', 'output'])
+@pytest.mark.parametrize('path_form', ['absolute', 'relative', 'symlink'])
+def test_temporary_paid_artifacts_refused_dry_runs_allowed(
+        offline_inputs, fake_core, tmp_path, monkeypatch, capsys,
+        system_temporary_dir, execute, target, path_form):
+    snapshot, config = offline_inputs
+    out = tmp_path / 'temporary-sibling'  # A shared name prefix is not containment.
+    ledger = tmp_path / 'spend.sqlite'
+    if target == 'default-ledger':
+        snapshot = snapshot.rename(system_temporary_dir / 'snapshot')
+        path = snapshot
+    elif target == 'ledger':
+        path = system_temporary_dir / 'spend.sqlite'
+    else:
+        path = system_temporary_dir  # The temporary directory itself is unsafe too.
+    if path_form == 'relative':
+        monkeypatch.chdir(tmp_path)
+        path = path.relative_to(tmp_path)
+    elif path_form == 'symlink':
+        link = tmp_path / 'linked-artifact'
+        if target == 'default-ledger':
+            link.symlink_to(path.parent, target_is_directory=True)
+            path = link / path.name
+        else:
+            link.symlink_to(path, target_is_directory=target != 'ledger')
+            path = link
+    if target == 'default-ledger':
+        snapshot = path
+    elif target == 'ledger':
+        ledger = path
+    else:
+        out = path
+    evidence = tmp_path / 'preserved-evidence'
+    monkeypatch.setenv('FAIRTALES_EVIDENCE_DIR', str(evidence))
+    monkeypatch.setattr('builtins.input', lambda prompt: 'AFFIRMATIVE')
+    monkeypatch.setattr(cli, '_live_provider', forbidden)
+    args = ['extract', '--original-experiment', '--snapshot', str(snapshot),
+            '--out', str(out), '--config', str(config), '--books', 'book-02',
+            '--execute' if execute else '--dry-run']
+    if target != 'default-ledger':
+        args.extend(['--ledger', str(ledger)])
+    ledger_path = ledger if target != 'default-ledger' else snapshot.parent / 'spend.sqlite'
+    if execute:
+        with pytest.raises(SystemExit) as exc:
+            cli.main(args)
+        assert exc.value.code == 2
+        message = capsys.readouterr().err
+        refused = out if target == 'output' else ledger_path
+        assert str(refused.resolve()) in message
+        assert 'Paid run refused' in message and str(evidence) in message
+        assert not ledger_path.exists()
+        assert not (out / 'run.json').exists()
+    else:
+        assert cli.main(args) == 0
+        assert ledger_path.is_file()
+        assert (out / 'dry_run_predictions.json').is_file()
+    assert fake_core == []
+
+
+def test_evidence_directory_default_and_override(tmp_path, monkeypatch):
+    from conftest import load_dev20_predictions
+    from scripts.extraction_eval.evidence import evidence_dir
+    from scripts.extraction_eval.tuning import DEFAULT_FREEZE_DIR
+
+    monkeypatch.delenv('FAIRTALES_EVIDENCE_DIR', raising=False)
+    assert evidence_dir() == DEFAULT_FREEZE_DIR / 'evidence'
+    monkeypatch.setenv('FAIRTALES_EVIDENCE_DIR', str(tmp_path))
+    assert evidence_dir() == tmp_path
+    with pytest.raises(pytest.skip.Exception, match=str(tmp_path / 'dev20-run' / 'predictions.json')):
+        load_dev20_predictions()

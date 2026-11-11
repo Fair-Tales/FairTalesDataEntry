@@ -7,8 +7,10 @@ from pathlib import Path
 import shlex
 import sqlite3
 import sys
+import tempfile
 from contextlib import nullcontext
 
+from .evidence import evidence_dir
 from .store import atomic_json, read_json, run_lock
 from .tuning import DEFAULT_FREEZE_DIR, TuningLoader, TuningRefused, TuningExposure
 from text_content.tuning import TuningErrors, TuningHelp
@@ -226,6 +228,14 @@ def _extract_loaded(args, loader):
         if answer != "AFFIRMATIVE":
             print("No paid calls authorized.")
             return 1
+        temporary_dir = Path(tempfile.gettempdir()).resolve()
+        for label, path in (("ledger", ledger_path), ("output directory", args.out)):
+            resolved = path.resolve()
+            if resolved.is_relative_to(temporary_dir):
+                raise ValueError(
+                    f"Paid run refused: {label} {path} resolves to {resolved} inside "
+                    f"temporary directory {temporary_dir}. Keep paid-run evidence in "
+                    f"durable storage, such as {evidence_dir()}.")
         from .billing import validate_billing
         validate_billing(config)
     frozen = freeze_run(args.out, manifest, selection, config, args.replicate, args.max_spend_usd, args.monthly_cap_usd, ledger_path)

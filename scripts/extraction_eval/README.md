@@ -79,21 +79,34 @@ already cached snapshot); this module neither fetches nor copies the snapshot.
 
 ## First 20-book run
 
-The following are commands for a human operator. Replace `/secure/fairtales-eval`
-with your protected research-data directory. `snapshot` needs **IAM-enforced
-read-only** Firestore/S3 credentials; the adapter exposes only reads, but IAM is
+The following are commands for a human operator. Keep evidence in
+`DEFAULT_FREEZE_DIR / "evidence"`, currently
+`/home/expert/Documents/uob/fair_tales/autonomy-freeze/evidence/`;
+`FAIRTALES_EVIDENCE_DIR` overrides this shared location for the harness and tests.
+The commands below read it through the shared helper.
+
+Paid runs refuse a ledger or output directory resolving inside the system temporary
+directory (including symlinks): cleanup or reboot could erase the only paid evidence.
+Dry runs may still use temporary paths.
+
+The ledger defaults to `spend.sqlite` in the snapshot's parent directory, so a
+snapshot kept directly in the evidence folder picks up the preserved ledger.
+
+`snapshot` needs **IAM-enforced read-only** Firestore/S3 credentials;
+the adapter exposes only reads, but IAM is
 the independent protection. `extract` reads only the Anthropic key from its
 secrets file and never constructs Firestore/S3 clients.
 Versioned S3 buckets also require the read-only `s3:GetObjectVersion` permission
 to fetch the captured object version.
 
 ```bash
-mkdir -p /secure/fairtales-eval
+EVIDENCE_DIR="$(.venv/bin/python -c 'from scripts.extraction_eval.evidence import evidence_dir; print(evidence_dir())')"
+mkdir -p "$EVIDENCE_DIR"
 .venv/bin/python -m scripts.extraction_eval snapshot \
-  --out /secure/fairtales-eval/pilot-v1 --entered-by pilot_import \
-  --secrets /secure/fairtales-eval/read-only-secrets.toml
+  --out "$EVIDENCE_DIR/pilot-v1" --entered-by pilot_import \
+  --secrets "$EVIDENCE_DIR/read-only-secrets.toml"
 
-cp scripts/extraction_eval/baseline.json /secure/fairtales-eval/baseline.json
+cp scripts/extraction_eval/baseline.json "$EVIDENCE_DIR/baseline.json"
 ```
 
 The default snapshot makes **one capture pass** over Firestore. It does not
@@ -153,20 +166,20 @@ currently sends them.
 
 ```bash
 .venv/bin/python -m scripts.extraction_eval extract \
-  --snapshot /secure/fairtales-eval/pilot-v1 \
-  --out /secure/fairtales-eval/dev20 \
-  --config /secure/fairtales-eval/baseline.json \
+  --snapshot "$EVIDENCE_DIR/pilot-v1" \
+  --out "$EVIDENCE_DIR/dev20" \
+  --config "$EVIDENCE_DIR/baseline.json" \
   --limit 20 --seed 20261104 --max-spend-usd 16 --dry-run
 
 .venv/bin/python -m scripts.extraction_eval extract \
-  --snapshot /secure/fairtales-eval/pilot-v1 \
-  --out /secure/fairtales-eval/dev20 \
-  --config /secure/fairtales-eval/baseline.json \
+  --snapshot "$EVIDENCE_DIR/pilot-v1" \
+  --out "$EVIDENCE_DIR/dev20" \
+  --config "$EVIDENCE_DIR/baseline.json" \
   --max-spend-usd 16 --execute
 
 .venv/bin/python -m scripts.extraction_eval score \
-  --snapshot /secure/fairtales-eval/pilot-v1 \
-  --run /secure/fairtales-eval/dev20
+  --snapshot "$EVIDENCE_DIR/pilot-v1" \
+  --run "$EVIDENCE_DIR/dev20"
 ```
 
 Execution prints the selected book/page counts, historical estimate, outstanding
@@ -342,7 +355,7 @@ reconcile these against provider records before reusing that request; the tool
 does not guess or automatically repay it. Known charges above a configured
 ceiling are retained and flagged. No model is silently substituted.
 
-All runs should share `--ledger /secure/fairtales-eval/spend.sqlite` (the default
+All runs should share `--ledger "$EVIDENCE_DIR/spend.sqlite"` (the default
 for the paths above). The shared monthly cap defaults to $200 and the run cap to
 $16; both are frozen, not authorization to spend beyond the human's allowance.
 Reconcile application/other-workspace spending separately and configure an
@@ -413,7 +426,7 @@ equivalences require a document such as
 and `--equivalences /path/names.json`. Strict matching remains separately visible.
 
 For a paired experiment use a new extract output/config, then add
-`--compare-run /secure/fairtales-eval/candidate` to the baseline `score` command.
+`--compare-run "$EVIDENCE_DIR/candidate"` to the baseline `score` command.
 The comparison reports candidate-minus-baseline effects with book-cluster
 intervals; references and book selection must agree. For stochastic diagnostics,
 use three separate runs with `--replicate 1`, `2`, `3` on the **same four explicit
