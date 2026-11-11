@@ -617,7 +617,10 @@ were wrong. Chris ruled on each point the same day.
    The file is byte-identical to the baseline run's own output and is kept in
    the evidence folder beside the freeze; the two tests that used it read it
    from there. Evidence is kept in that local folder only; no second copy was
-   requested.
+   requested. The rewrite was done on 11 November and changes commit
+   ids from 4 November onward; `planning/commit_id_map_2026-11-11.md` maps old
+   to new. Three student usernames in a planning note were masked in the same
+   pass.
 
 6. **`claude-dev` is not to be merged to `main` as it stands.** It would
    replace the live prompts with a candidate never run against a model, queue
