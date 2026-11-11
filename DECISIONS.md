@@ -717,6 +717,17 @@ only Chris could answer. His rulings:
    to the acceptance rule, the use of the check set and the stop rule were
    adopted.
 
+6. **The tuning design is approved, with one change to how a change is
+   accepted.** Chris: "the change is accepted if it improves on both the 55 and
+   the 20 books, or improves on the 55 and doesn't get worse on the 20. The
+   reason being that 20 books might not be enough to show the improvement".
+   So the 20 unread books are scored at every change rather than at three fixed
+   points, which makes them a validation set in the usual sense and leaves the
+   rehearsal on the protected 40 as the first untouched look. "Not worse" is
+   read against the 20's own measured noise, this session's reading, because
+   twenty books scored twice will differ by chance and a literal reading would
+   reject about half of all harmless changes.
+
 5. **Every plan budgets both credit balances.** Chris: "Remember, we will have
    the open AI API credits to use also in any given plan." The tuning design
    now brings OpenAI models in from the first billing cycle, with a separate

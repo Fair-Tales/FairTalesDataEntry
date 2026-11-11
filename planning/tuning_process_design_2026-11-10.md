@@ -1,6 +1,6 @@
 # Tuning process design — 10 November 2026
 
-**Status: design for Chris's approval; revised 11 November. No inference run or spend.** Implements DECISIONS 017–018 and the [analysis plan](analysis_plan_2026-11-10.md). Reviewed independently by Astra ([note](tuning_design_review_2026-11-11.md)); its objections to the loop are adopted in §§2, 5 and 6.
+**Status: approved by Chris on 11 November with one change to the acceptance rule (§5 step 6; DECISIONS 018). No inference run or spend.** Implements DECISIONS 017–018 and the [analysis plan](analysis_plan_2026-11-10.md). Reviewed independently by Astra ([note](tuning_design_review_2026-11-11.md)); its objections to the loop are adopted in §§2, 5 and 6.
 
 ## 1. What the baseline's errors actually are
 
@@ -43,7 +43,7 @@ Guardrails, each judged against its measured noise rather than against zero:
 | Set | Books | Use | Projected 2SE half-width (points) |
 |---|---|---|---|
 | Iterate | 55: 34 exposed + 21 unused | Read failures; source examples | 2.70 |
-| Check | 20 unused, ten per alias stratum | Scores only | 4.47 |
+| Check | 20 unused, ten per alias stratum | Scored at every change; never read, never a source of examples | 4.47 |
 | Rehearsal | 40 protected | Once after freeze; then Iterate has 95 | 2.05 after joining |
 | Proof | 80 held out | Once | ±0.7–±8, single-arm projections from analysis plan |
 
@@ -55,7 +55,7 @@ Guardrails, each judged against its measured noise rather than against zero:
 
 The cached Anthropic reference says Sonnet 5 rejects non-default sampling settings. Pin supported model/thinking/effort/token settings per stage in the request identity; record served model, usage and stop reason. Recheck settings before execution; OpenAI uses §7's provider-specific settings.
 
-Rerun with `--replicate`: characters twice more on 55 Iterate books ($1.15), transcription twice more on ten ($9.19). The sample SD of three panel means estimates a preliminary noise floor; it measures neither Check noise nor full-pipeline noise across 55 books.
+Rerun with `--replicate`: characters twice more on all 75 Iterate and Check books ($1.56), transcription twice more on ten Iterate and ten Check books ($18.38). The sample SD of three panel means gives each set its own preliminary noise floor; Check needs one because every change is judged against it.
 
 ## 5. The loop
 
@@ -64,13 +64,13 @@ Rerun with `--replicate`: characters twice more on 55 Iterate books ($1.15), tra
 3. **Error analysis.** Read every Iterate miss, classify and count. Tally gender cues beyond pronouns by kind and bring each kind to Chris before adding it to a prompt. Never infer gender from illustrations or stereotypes (DECISIONS 018).
 4. **One hypothesis, one change:** a rule, an example or a structural step, aimed at the largest category a lever can reach.
 5. **Re-score the whole Iterate set**, not just the cases the change was written for.
-6. **Accept only if** the measure the change was aimed at, named before the run (a primary, alias coverage or a guardrail), improves by more than twice its floor, and no primary or guardrail worsens by more than its own floor. A fall in the category's count is not enough by itself: counts and book means can move in opposite directions. Otherwise revert.
+6. **Accept only if it improves on the 55 and does not get worse on the 20** (Chris, 11 November: "the change is accepted if it improves on both the 55 and the 20 books, or improves on the 55 and doesn't get worse on the 20. The reason being that 20 books might not be enough to show the improvement"). In practice: on Iterate, the measure the change was aimed at, named before the run (a primary, alias coverage or a guardrail), improves by more than twice its floor and no primary or guardrail worsens by more than its own floor; on Check, neither that measure nor any primary falls by more than Check's floor. "Not worse" is read against noise because twenty books scored twice will differ by chance. A fall in a category's count is not enough by itself: counts and book means can move in opposite directions. Otherwise revert.
 7. **Log one row per attempt:** hypothesis, change, counts before and after, primaries, guardrails, cost, verdict. Reverted attempts stay.
-8. **Score the Check set at three points fixed in advance:** after the baseline, after the fifth accepted change, and before freeze. Read its figures and nothing else. It is a diagnostic, not a clean test: if Iterate has gained and Check has not, stop adding changes of that kind and record it. Do not search for which change to remove, since each search is another look.
+8. **Score the Check set with every candidate change** and read its figures and nothing else: no failure on a Check book is ever opened and no example comes from one. Used this way the 20 are part of tuning, a validation set in the usual sense, so the first untouched look is the rehearsal on the protected 40.
 9. **Stop** when no remaining category holds errors a lever could reach, after 15 accepted changes, or after 30 attempts in all. Running out of a cycle's budget pauses the loop; it is not a result.
 10. **Confirm once before freeze:** a fresh run of the final version against a fresh run of the baseline on every Iterate book, so the cumulative gain is not a product of selecting among noisy attempts.
 
-Work characters first, at about a cent/book; batch text changes ($25/re-pass).
+Work characters first, at about a cent/book; batch text changes ($34/re-pass over all 75 books).
 
 ## 6. The two levers, and what neither reaches
 
@@ -136,7 +136,7 @@ Adjudication is unnecessary; review §2 app defects still gate the `main` merge.
 Freeze: commit and tag the prompts, the example pack's hash, models and settings, scoring code, page mapping and the change log. Run the frozen pipeline and analysis once on the protected 40.
 
 - **The rehearsal may change** anything mechanical that stops the analysis running as written: inputs, mapping, scoring bugs, failure handling. Each is fixed, re-tagged and noted.
-- **If its figures fall short of the Check set's** beyond what the ranges explain, tuning reopens with the 40 added to Iterate. Check is already an adaptive tuning diagnostic; it is no longer a clean independent signal.
+- **If its figures fall short of the Iterate and Check sets'** beyond what the ranges explain, the tuning has overfitted: reopen it with the 40 added to Iterate. Nothing untouched then remains but the proof.
 - **It may not change** the five primaries, the interval, the references or the held-out ids.
 
 Then the proof on the 80, once, every attempt listed.
