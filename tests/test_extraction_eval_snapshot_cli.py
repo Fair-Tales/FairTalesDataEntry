@@ -5,12 +5,11 @@ from google.api_core.exceptions import PermissionDenied, ResourceExhausted
 import pytest
 
 from scripts.extraction_eval.tuning import current_loader
-
-pytestmark = pytest.mark.usefixtures("synthetic_cohort")
-
 from scripts.extraction_eval import cli, snapshot
 from scripts.extraction_eval.read_cost import estimate_snapshot_reads
 from scripts.extraction_eval.store import atomic_json, digest, read_json
+
+pytestmark = pytest.mark.usefixtures("synthetic_cohort")
 
 
 def forbidden(*args, **kwargs):

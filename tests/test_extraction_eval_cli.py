@@ -9,10 +9,10 @@ import urllib.request
 
 import pytest
 
-pytestmark = pytest.mark.usefixtures("synthetic_cohort")
-
 from scripts.extraction_eval import cli
 from scripts.extraction_eval.store import atomic_json, read_json
+
+pytestmark = pytest.mark.usefixtures("synthetic_cohort")
 
 
 def forbidden(*args, **kwargs):
