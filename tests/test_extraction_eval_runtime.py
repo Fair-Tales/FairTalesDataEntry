@@ -310,6 +310,158 @@ class FakeCore:
         return [{'name': 'Predicted character'}]
 
 
+@pytest.fixture
+def example_pack(tmp_path, monkeypatch):
+    from text_content import pipeline_prompts as prompts
+
+    examples = []
+    for stage in prompts.RULES:
+        for book in ('selected', 'a', 'b'):
+            text = f'Synthetic {book} {stage} evidence.'
+            examples.append({
+                'id': f'{book}_{stage}', 'book_id': book, 'stage': stage,
+                'holdout_group': 'shared' if book in ('selected', 'a') else 'other',
+                'page_number': 1, 'source_text': text, 'quotes': [text],
+                'source_text_sha256': hashlib.sha256(text.encode()).hexdigest(),
+                'source_image_sha256': hashlib.sha256(b'synthetic image').hexdigest(),
+                'approval_status': 'synthetic', 'decision': f'Expected {text}',
+            })
+    pack = {'development_book_ids': ['selected', 'a', 'b'], 'examples': examples}
+    atomic_json(tmp_path / 'pipeline_examples.json', pack)
+    monkeypatch.setattr(prompts, '__file__', str(tmp_path / 'pipeline_prompts.py'))
+    return pack
+
+
+@pytest.mark.parametrize('variant', ['rules-plus-icl', 'rules-only', 'legacy-v1'])
+@pytest.mark.parametrize('book', ['selected', 'book'])
+def test_evaluation_prompts_leave_out_book_and_group(
+        example_pack, cohort_loader_factory, variant, book):
+    from text_content import pipeline_prompts as prompts
+
+    loader = cohort_loader_factory()
+    stages = prompts.LEGACY_PROMPTS if variant == 'legacy-v1' else prompts.RULES
+    baseline = {stage: prompts.prompt_for(stage, variant) for stage in stages}
+    with loader.activate(), prompts.evaluation_prompt_context(book) as excluded:
+        for stage in stages:
+            rendered = prompts.prompt_for(stage, variant)
+            manifest = prompts.prompt_request_manifest(stage, variant, rendered)
+            if variant != 'rules-plus-icl':
+                assert rendered == baseline[stage]
+                assert manifest['examples'] == []
+                continue
+            expected = [example for example in example_pack['examples']
+                        if example['stage'] == stage and
+                        (book != 'selected' or example['book_id'] == 'b')]
+            assert [example['id'] for example in manifest['examples']] == [
+                example['id'] for example in expected]
+            for example in example_pack['examples']:
+                if example['stage'] == stage:
+                    assert (example['source_text'] in rendered) == (example in expected)
+                    assert (example['decision'] in rendered) == (example in expected)
+            assert excluded[stage] == ([f'selected_{stage}', f'a_{stage}']
+                                        if book == 'selected' else [])
+            assert (rendered == baseline[stage]) == (book != 'selected')
+    assert {stage: prompts.prompt_for(stage, variant) for stage in stages} == baseline
+
+
+def test_evaluation_prompt_scope_requires_loader_and_resets_on_error(
+        example_pack, cohort_loader_factory):
+    from text_content import pipeline_prompts as prompts
+
+    baseline = prompts.prompt_for('character_detection')
+    with prompts.evaluation_prompt_context('selected') as excluded:
+        assert prompts.prompt_for('character_detection') == baseline
+        assert excluded == {}
+    with cohort_loader_factory().activate():
+        with pytest.raises(RuntimeError, match='interrupted'):
+            with prompts.evaluation_prompt_context('selected'):
+                assert prompts.prompt_for('character_detection') != baseline
+                raise RuntimeError('interrupted')
+        assert prompts.prompt_for('character_detection') == baseline
+
+
+def test_runner_records_exclusions_for_every_rendered_stage(
+        example_pack, snapshot_fixture, tmp_path, config, cohort_loader_factory):
+    from text_content import pipeline_prompts as prompts
+
+    snapshot, manifest, selection = snapshot_fixture
+    # Run a source book and a non-source book consecutively to catch context leaks.
+    other = deepcopy(manifest['books'][0])
+    other['id'] = 'book'
+    manifest['books'] = [manifest['books'][0], other]
+    selection['book_ids'] = ['selected', 'book']
+    out = tmp_path / 'run'
+    loader = cohort_loader_factory(out)
+    config['settings'].update(story_context_enabled=True, metadata_reconciliation_enabled=True)
+    gateway = SimpleNamespace(record_usage=lambda *args: None)
+    rendered = []
+
+    def render(stage):
+        prompt = prompts.prompt_for(stage)
+        rendered.append((gateway.context['book_id'], stage, prompt))
+        return prompts.prompt_request_manifest(stage, rendered_prompt=prompt)
+
+    class RenderingCore(FakeCore):
+        def extract_metadata(self, *args):
+            render('locate_key_pages')
+            return {'prompt_manifest': render('joint_metadata_extraction')}
+
+        def extract_page(self, *args):
+            return {'status': 'completed', 'text': 'Synthetic story.', 'contains_story': True,
+                    'prompt_manifest': render('page_extraction')}
+
+        def classify_book_context(self, *args):
+            return {'status': 'completed', 'prompt_manifest': render('story_classification')}
+
+        def reconcile_metadata(self, *args):
+            return {'prompt_manifest': render('joint_metadata_extraction')}
+
+        def extract_characters(self, *args):
+            render('character_detection')
+            return []
+
+    def run():
+        return run_extract(snapshot, manifest, selection, out, gateway, config,
+                           loader=loader, core=RenderingCore(), progress=lambda *args: None)
+
+    result = run()
+    assert result['incomplete'] is False
+    expected = {book: {stage: ([f'selected_{stage}', f'a_{stage}'] if book == 'selected' else [])
+                       for stage in prompts.RULES} for book in selection['book_ids']}
+    assert read_json(out / 'run.json')['tuning']['excluded_prompt_examples'] == expected
+    for book, stage, prompt in rendered:
+        assert f'EXAMPLE b_{stage} ' in prompt
+        assert (f'EXAMPLE selected_{stage} ' in prompt) == (book != 'selected')
+        assert (f'EXAMPLE a_{stage} ' in prompt) == (book != 'selected')
+    count = len(rendered)
+    assert run() == result
+    assert len(rendered) == count  # Cached stages preserve the exclusion record.
+    assert read_json(out / 'run.json')['tuning']['excluded_prompt_examples'] == expected
+
+
+@pytest.mark.parametrize('stage', [
+    'character_detection', 'page_extraction', 'story_classification', 'joint_metadata_extraction'])
+def test_leave_one_out_cannot_hit_full_pack_request_cache(
+        example_pack, cohort_loader_factory, config, ledger_factory, stage):
+    from text_content import pipeline_prompts as prompts
+
+    config['pricing']['models']['fake-model']['max_request_bytes'] = 100000
+    ledger = ledger_factory()
+    provider = FakeProvider(response(), response())
+    gateway = Gateway(provider, ledger, config)
+    gateway.context = {'book_id': 'selected'}
+    full = gateway.create(**request(prompts.prompt_for(stage)))
+    with cohort_loader_factory().activate(), prompts.evaluation_prompt_context('selected'):
+        filtered_request = request(prompts.prompt_for(stage))
+        with pytest.raises(DryRunMiss):
+            Gateway(None, ledger, config, dry_run=True).create(**filtered_request)
+        filtered = gateway.create(**filtered_request)
+        assert filtered._eval_key != full._eval_key
+        assert filtered._eval_cached is False
+        assert gateway.create(**filtered_request)._eval_cached is True
+    assert len(provider.calls) == 2
+
+
 @pytest.mark.usefixtures("synthetic_cohort")
 def test_runner_subset_resume_and_predicted_character_inputs(snapshot_fixture, tmp_path, config):
     snapshot, manifest, selection = snapshot_fixture

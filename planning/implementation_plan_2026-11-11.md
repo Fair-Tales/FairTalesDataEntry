@@ -41,6 +41,10 @@
 
 **Found while building A6b (orchestrating session).** Under the id filter the rotation evaluation keeps 48 of its 72 labelled samples. The 24 it skips are not held out or protected: they come from books outside the 195, which is to say the pilot books, the only phone photographs in the set and so the closest to production input. They are skipped because an unmapped book is refused by default. Whether they may be used belongs with the rotation model screen, and is Chris's to decide then; until he does, they stay out.
 
+**Resequenced while building this branch (orchestrating session).** A7b, leaving a book's own examples out when it is scored, is done before A7a rather than after it. A7a, moving the example text out of the public repository, is deferred until B1 has settled which prompts production runs: it changes what the application's prompt path can load, and doing it first would leave `claude-dev` unable to render its own default prompt. A7b filters through the existing pack loader, so it does not need redoing when the text moves. A7a is needed before any example is added or changed, not before the baseline.
+
+**Limit found in A4.** `legacy-v1` replays page text and character detection byte for byte, but not the old metadata workflow: the separate title-page and copyright-page calls were since replaced by one joint stage, and the key-page lookup changed how it labels images. B1 therefore cannot restore the old title, author and publisher behaviour by prompts alone; that needs a decision when B1 is reached.
+
 ## B. Before `claude-dev` can go to `main`
 
 | ID/reference | Change and files | Runnable acceptance → expected result | Depends; size |

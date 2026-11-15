@@ -1,4 +1,6 @@
 """Frozen evidence-rich prompts and request provenance; no service access."""
+from contextlib import contextmanager
+from contextvars import ContextVar
 import hashlib
 import json
 from pathlib import Path
@@ -11,6 +13,18 @@ CHARACTER_TRUNCATED = "Character response reached the output limit; partial evid
 CHARACTER_PARTIAL = "Character response was incomplete; partial evidence retained."
 CHARACTER_STRUCTURE_INVALID = "Character response has an invalid structure; raw evidence retained."
 PROMPT_VARIANTS = ("legacy-v1", "rules-only", "rules-plus-icl")
+_evaluation_book = ContextVar("evaluation_prompt_book", default=None)
+
+
+@contextmanager
+def evaluation_prompt_context(book_id):
+    """Scope leave-one-book-out rendering and collect exclusions by stage."""
+    excluded = {}
+    token = _evaluation_book.set((book_id, excluded))
+    try:
+        yield excluded
+    finally:
+        _evaluation_book.reset(token)
 
 # 5 November baseline: text_content/ai_prompts.py at
 # 9277ef723d46d22930ea09ed756208233ead74ae (blob 23f8d8862293191fda85f7ebf905baca087a11be).
@@ -467,15 +481,35 @@ def load_example_pack(*, held_out_book_ids=(), held_out_groups=()):
     return pack
 
 
-def example_pack_text(stage, variant="rules-plus-icl"):
+def _stage_examples(stage, variant):
+    from scripts.extraction_eval.tuning import current_loader
+
     if variant not in PROMPT_VARIANTS:
         raise ValueError("Unknown prompt variant")
     if variant != "rules-plus-icl":
-        return ""
+        return []
+    # Keep source admission and validation in the pack loader, independent of
+    # where A7a eventually stores the text. Leave-one-out only filters admitted
+    # examples; it must not bypass the existing held-out-source refusal.
+    examples = load_example_pack().get("examples", [])
+    context = _evaluation_book.get() if current_loader() is not None else None
+    excluded_ids = set()
+    if context is not None:
+        book_id, excluded = context
+        groups = {example["holdout_group"] for example in examples
+                  if example.get("book_id") == book_id and example.get("holdout_group")}
+        excluded_ids = {example["id"] for example in examples
+                        if example.get("book_id") == book_id
+                        or example.get("holdout_group") in groups}
+        excluded[stage] = [example["id"] for example in examples
+                           if example.get("stage") == stage and example["id"] in excluded_ids]
+    return [example for example in examples
+            if example.get("stage") == stage and example["id"] not in excluded_ids]
+
+
+def example_pack_text(stage, variant="rules-plus-icl"):
     blocks = []
-    for example in load_example_pack().get("examples", []):
-        if example.get("stage") != stage:
-            continue
+    for example in _stage_examples(stage, variant):
         quotes = "\n".join(json.dumps(quote, ensure_ascii=False) for quote in example["quotes"])
         blocks.append(
             f"EXAMPLE {example['id']} — {example['book_id']}, photograph {example['page_number']}\n"
@@ -508,7 +542,7 @@ def prompt_for(stage, variant="rules-plus-icl"):
 def prompt_request_manifest(stage, variant="rules-plus-icl", rendered_prompt=None):
     examples = example_pack_text(stage, variant)
     rendered = prompt_for(stage, variant) if rendered_prompt is None else rendered_prompt
-    pack_examples = load_example_pack()["examples"] if variant == "rules-plus-icl" else []
+    pack_examples = _stage_examples(stage, variant)
     return {"prompt_version": "legacy-v1" if variant == "legacy-v1" else PROMPT_VERSION,
             "example_pack_version": PACK_VERSION,
             "prompt_variant": variant, "stage": stage, "encoding": "utf-8",

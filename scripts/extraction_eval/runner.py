@@ -12,6 +12,7 @@ import json
 from .gateway import DryRunMiss, RequestLimitError
 from .billing import BillingStopped
 from .tuning import current_loader
+from text_content.pipeline_prompts import evaluation_prompt_context
 from text_content.tuning import TuningErrors
 from .store import (BudgetStopped, CachedFailure, OutcomeUnknown, atomic_json,
                     canonical, digest)
@@ -315,7 +316,12 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                 if stop_reason and not refreshing_lookup:
                     return {"status": "budget_stopped" if stop_reason[0] == "budget_stopped" else "pending", "error": stop_reason[1]}
                 try:
-                    value = loader.load([current_book_id], "stage", callback)
+                    with evaluation_prompt_context(current_book_id) as excluded:
+                        try:
+                            value = loader.load([current_book_id], "stage", callback)
+                        finally:
+                            loader.state["excluded_prompt_examples"][current_book_id].update(excluded)
+                            loader.save()
                 except DryRunMiss as exc:
                     return {"status": "pending", "error": str(exc)}
                 except BudgetStopped as exc:
@@ -344,6 +350,8 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                         continue
                     current_book_id = book_id
                     loader.load([book_id], "book", lambda: None)
+                    loader.state.setdefault("excluded_prompt_examples", {}).setdefault(book_id, {})
+                    loader.save()
                     stage_prefix = book_id
                     scan_pages = None
                     if config.get('inputs') == 'scans':
