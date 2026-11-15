@@ -29,6 +29,49 @@ def _loader():
     return loader
 
 
+def _snapshot_titles(snapshot_dir, book_ids, kind):
+    """Admit all ids before opening the manifest; decode only their titles."""
+    loader = _loader()
+    ids = sorted(set(book_ids))
+    loader.load(ids, kind, lambda: None)
+    titles = {}
+    with JsonSources(Path(snapshot_dir) / 'manifest.json') as source:
+        top = source.members(source.root)
+        for span in source.items(top['books']):
+            fields = source.members(span)
+            book_id = source.decode(fields['id'])
+            if book_id in ids:
+                if book_id in titles:
+                    raise ValueError(f"Duplicate snapshot book id: {book_id}")
+                titles[book_id] = loader.load(
+                    [book_id], kind + '_title',
+                    lambda: source.decode(fields['title']) if 'title' in fields else None)
+    return titles
+
+
+def _poppler(book_id, kind, names):
+    programs = {name: shutil.which(name) for name in names}
+    missing = [name for name, executable in programs.items() if executable is None]
+    if missing:
+        raise ValueError(f"Poppler is required for {kind} inputs; missing: {', '.join(missing)}")
+
+    def run(program, *arguments):
+        result = subprocess.run([programs[program], *map(str, arguments)],
+                                capture_output=True, check=False)
+        if result.returncode:
+            raise ValueError(f"{program} failed for {book_id}: {result.stderr.decode('utf-8').strip()}")
+        return result.stdout.decode('utf-8')
+
+    return run
+
+
+def _pdf_page_count(run, path, book_id):
+    count = re.search(r'^Pages:\s+(\d+)\s*$', run('pdfinfo', path), re.MULTILINE)
+    if count is None or int(count[1]) < 1:
+        raise ValueError(f"Cannot read PDF page count: {book_id}")
+    return int(count[1])
+
+
 def load_scan(book_id, title, scan_root=DEFAULT_SCAN_ROOT):
     """Return ordered embedded JPEG bytes and their public inventory metadata.
 
@@ -50,22 +93,8 @@ def load_scan(book_id, title, scan_root=DEFAULT_SCAN_ROOT):
         if len(pdfs) != 1:
             raise UnmappedScan(book_id, 'missing_pdf' if not pdfs else 'ambiguous_pdf')
         path = pdfs[0]
-        programs = {name: shutil.which(name) for name in ('pdfinfo', 'pdfimages')}
-        missing = [name for name, executable in programs.items() if executable is None]
-        if missing:
-            raise ValueError(f"Poppler is required for scan inputs; missing: {', '.join(missing)}")
-
-        def run(program, *arguments):
-            result = subprocess.run([programs[program], *map(str, arguments)],
-                                    capture_output=True, text=True, check=False)
-            if result.returncode:
-                raise ValueError(f"{program} failed for {book_id}: {result.stderr.strip()}")
-            return result.stdout
-
-        count = re.search(r'^Pages:\s+(\d+)\s*$', run('pdfinfo', path), re.MULTILINE)
-        if count is None or int(count[1]) < 1:
-            raise ValueError(f"Cannot read scan page count: {book_id}")
-        page_count = int(count[1])
+        run = _poppler(book_id, 'scan', ('pdfinfo', 'pdfimages'))
+        page_count = _pdf_page_count(run, path, book_id)
         rows = [line.split() for line in run('pdfimages', '-list', path).splitlines()
                 if re.match(r'^\s*\d+\s', line)]
         if ([int(row[0]) for row in rows] != list(range(1, page_count + 1))
@@ -93,29 +122,16 @@ def scan_metadata(scan):
 
 def inventory(snapshot_dir, book_ids, scan_root=DEFAULT_SCAN_ROOT):
     """Hash one admitted cohort without decoding reference text or page records."""
-    loader = _loader()
     ids = sorted(set(book_ids))
-    loader.load(ids, 'scan_inventory', lambda: None)
+    titles = _snapshot_titles(snapshot_dir, ids, 'scan_inventory')
     result = {'books': [], 'unmapped': []}
-    with JsonSources(Path(snapshot_dir) / 'manifest.json') as source:
-        top = source.members(source.root)
-        titles = {}
-        for span in source.items(top['books']):
-            fields = source.members(span)
-            book_id = source.decode(fields['id'])
-            if book_id in ids:
-                if book_id in titles:
-                    raise ValueError(f"Duplicate snapshot book id: {book_id}")
-                titles[book_id] = fields.get('title')
-        for book_id in ids:
-            try:
-                if book_id not in titles:
-                    raise UnmappedScan(book_id, 'missing_snapshot_id')
-                title = loader.load([book_id], 'scan_title',
-                                    lambda: source.decode(titles[book_id]) if titles[book_id] else None)
-                result['books'].append(scan_metadata(load_scan(book_id, title, scan_root)))
-            except UnmappedScan as exc:
-                result['unmapped'].append({'id': book_id, 'reason': exc.reason})
+    for book_id in ids:
+        try:
+            if book_id not in titles:
+                raise UnmappedScan(book_id, 'missing_snapshot_id')
+            result['books'].append(scan_metadata(load_scan(book_id, titles[book_id], scan_root)))
+        except UnmappedScan as exc:
+            result['unmapped'].append({'id': book_id, 'reason': exc.reason})
     return result
 
 

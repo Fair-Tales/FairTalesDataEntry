@@ -38,6 +38,29 @@ The JSON contains only ids, relative filenames, page counts/hashes and unmapped
 reasons. Console output gives iterate/check counts only; reference pages are not
 decoded. Keep the admission record (`--run`) separate from the sealed freeze.
 
+## Original Word references
+
+`reference_inputs.load_reference(book_id, snapshot_dir)` resolves the admitted
+id's title using the same normalization; `.doc.pdf` also matches, so duplicate
+exports remain ambiguous. Requires Poppler `pdfinfo` and `pdftotext`, no Python
+dependency. `-raw -enc UTF-8 -eol unix` preserves content-stream order: on 140
+unchanged text-layer DEV20 pages it matched 135 after whitespace normalization,
+versus 131 for default/`-layout`; the remaining five differ only in word spacing.
+Returned pages retain every extracted character except form-feed delimiters,
+including short/empty pages; hashes cover UTF-8 and counts include whitespace.
+All reads use the active cohort loader before opening files.
+
+Explicit `published_path=` (CLI `--published-text`) permits fallback only when
+no PDF matches, never on ambiguity or extraction failure. The published `Title`
+column is a matching index; only the matching `Text` cell is decoded. Fallback
+records its source, row and whole-book hash, with `page_count=null` (no invented
+pages). The inventory contains filenames, ordered page hashes/counts and unmapped
+ids, never text; A3c must still establish scan correspondence.
+
+```bash
+.venv/bin/python -m scripts.extraction_eval.reference_inputs --snapshot SNAPSHOT --cohort tune --run INVENTORY_RUN --published-text ../fair-tales-language-analysis/data/book_dataframe.json --out scripts/extraction_eval/reference_inventory_tune.json
+```
+
 ## Cohort admissions
 
 Every `extract` and `score` run uses `--cohort tune|rehearsal|proof` (default
