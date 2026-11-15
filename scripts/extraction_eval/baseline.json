@@ -16,7 +16,8 @@
     "extraction_max_tokens": 2048,
     "locate_max_edge": 784,
     "enable_rotation_correction": true,
-    "enable_crop_quality_gate": true
+    "enable_crop_quality_gate": true,
+    "prompt_variant": "legacy-v1"
   },
   "pricing": {
     "verified": true,

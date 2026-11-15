@@ -258,10 +258,19 @@ permanent on 2026-08-10. Re-confirm current account input/output/cache prices,
 context/output/image/request-byte limits and any applicable multipliers before
 a large run, then update `pricing.models`, `pricing.source`, `pricing.verified_at`
 and keep `pricing.verified` `true`. Rates are USD per
-million tokens. A rate/limit cannot silently default to zero. Confirm settings
-match the intended baseline; the template freezes repository defaults, not a
-live admin-settings document. Generation temperatures are left as production
+million tokens. A rate/limit cannot silently default to zero. Every extraction
+config must explicitly name `settings.prompt_variant`; missing or unknown
+variants are refused. `baseline.json` uses `legacy-v1`, the prompts from the
+5 November baseline, and `candidate_pipeline_v2.json` uses `rules-plus-icl`.
+These configs do not change the live application's prompt default. Confirm the
+other settings match the intended run; they are not read from a live
+admin-settings document. Generation temperatures are left as production
 currently sends them.
+
+`legacy-v1` restores page, character, page-location, title-page and copyright-page
+prompts. It has no joint-metadata or whole-book classification prompt: those
+stages came later. The current metadata caller also changed image-label layout,
+so selecting the old prompts alone cannot replay the old metadata workflow.
 
 ```bash
 .venv/bin/python -m scripts.extraction_eval extract \

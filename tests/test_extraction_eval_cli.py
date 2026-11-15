@@ -131,6 +131,37 @@ def test_snapshot_completed_resume_constructs_no_clients(offline_inputs, capsys)
     assert "25 books" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("variant", [None, "", "unknown-variant", 1])
+def test_extract_requires_explicit_known_prompt_variant(
+        offline_inputs, tmp_path, monkeypatch, capsys, variant):
+    from scripts.extraction_eval import runner
+
+    snapshot, config_path = offline_inputs
+    config = read_json(config_path)
+    if variant is None:
+        del config["settings"]["prompt_variant"]
+    else:
+        config["settings"]["prompt_variant"] = variant
+    atomic_json(config_path, config)
+    monkeypatch.setattr(runner, "local_image", forbidden)
+    monkeypatch.setattr("builtins.input", forbidden)
+    out = tmp_path / "invalid-variant"
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["extract", "--snapshot", str(snapshot), "--out", str(out),
+                  "--config", str(config_path), "--books", "book-02", "--execute"])
+    assert exc.value.code == 2
+    error = capsys.readouterr().err
+    assert ("Missing/invalid frozen setting: prompt_variant" in error
+            if variant is None or not isinstance(variant, str)
+            else "Unknown prompt variant" in error)
+    assert not (snapshot.parent / "spend.sqlite").exists()
+
+
+def test_checked_in_configs_name_their_prompt_variants():
+    assert read_json(cli.PACKAGE / "baseline.json")["settings"]["prompt_variant"] == "legacy-v1"
+    assert read_json(cli.PACKAGE / "candidate_pipeline_v2.json")["settings"]["prompt_variant"] == "rules-plus-icl"
+
+
 def test_scan_cli_uses_scan_pages_without_stored_renders(
         offline_inputs, fake_core, tmp_path, capsys):
     from PIL import Image

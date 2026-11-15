@@ -235,6 +235,7 @@ def _extract(args):
 
 
 def _extract_loaded(args, loader):
+    from text_content.pipeline_prompts import PROMPT_VARIANTS
     from .gateway import Gateway, validate_prices
     from .runner import configure_inputs, estimate, freeze_run, run_extract, validate_inputs
     from .sampling import select_books
@@ -269,6 +270,9 @@ def _extract_loaded(args, loader):
         value = settings.get(key)
         if type(value) is not type(default):
             raise ValueError(f"Missing/invalid frozen setting: {key}")
+    if settings["prompt_variant"] not in PROMPT_VARIANTS:
+        raise ValueError(f"Unknown prompt variant: {settings['prompt_variant']!r}; "
+                         f"choose one of {', '.join(PROMPT_VARIANTS)}")
     for key in ("extraction_max_edge", "locate_max_edge"):
         if not 512 <= settings.get(key, 0) <= 4096:
             raise ValueError(f"Invalid resolution: {key}")

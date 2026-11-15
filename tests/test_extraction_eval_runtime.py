@@ -44,6 +44,7 @@ def cli_config(config):
         key: 'fake-model' if key.endswith('_model') else value
         for key, value in AI_SETTINGS_DEFAULTS.items()
     }
+    config['settings']['prompt_variant'] = 'rules-plus-icl'
     return config
 
 

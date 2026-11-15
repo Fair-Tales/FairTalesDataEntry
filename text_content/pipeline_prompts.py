@@ -10,6 +10,206 @@ PROMPT_VERSION = "pipeline-prompts-v2"
 CHARACTER_TRUNCATED = "Character response reached the output limit; partial evidence retained."
 CHARACTER_PARTIAL = "Character response was incomplete; partial evidence retained."
 CHARACTER_STRUCTURE_INVALID = "Character response has an invalid structure; raw evidence retained."
+PROMPT_VARIANTS = ("legacy-v1", "rules-only", "rules-plus-icl")
+
+# 5 November baseline: text_content/ai_prompts.py at
+# 9277ef723d46d22930ea09ed756208233ead74ae (blob 23f8d8862293191fda85f7ebf905baca087a11be).
+# File SHA-256 matches dev20-run/run.json contract.sources:
+# b4f278964e017ae8e1592e3954302679f48ae916e27c1dc5c9a1d150218f14a6.
+# Preserve literal bytes: no convention suffix or examples. Joint metadata and
+# whole-book story classification did not exist in that pipeline.
+LEGACY_PROMPTS = {
+    'character_detection': """\
+You are analysing the FULL text of a SINGLE children's picture book to identify \
+its characters. Below is a JSON array; each entry gives one page's number and \
+that page's story text.
+
+Identify every distinct character referred to ANYWHERE in the book, grouping all \
+the references to the SAME character into one entry. For example "the boy", "Tom" \
+and "Tommy" are probably the same character and should be merged — choose ONE as \
+the main name and record the others as aliases. Track characters across pages: a \
+character introduced as "the boy" on page 1 and named "Tom" on page 3 is one \
+character.
+
+Include every kind of reference:
+- proper names (e.g. "Tom")
+- nicknames (e.g. "Tommy")
+- descriptive references (e.g. "the boy", "the little rabbit", "Mum")
+- groups of characters (e.g. "the children", "the witches")
+
+Do NOT invent characters that are not referred to in the text.
+
+For each distinct character provide:
+- "name": the clearest, most specific name (prefer a proper name over a \
+description).
+- "aliases": the OTHER references used for this character (exclude the chosen \
+name; may be an empty list).
+- "gender": exactly one of "Female", "Male", "Non-specific", "Transgender". \
+Infer ONLY from gendered pronouns or words in the references; use "Non-specific" \
+when unclear. Only use "Transgender" if it is explicit.
+- "human": true if the character is a person, false if an animal, object or \
+other creature.
+- "plural": true if this refers to a group or collection of characters \
+(e.g. "the children").
+- "protagonist": true only for the clear main character of the story.
+
+Be conservative: only merge references you are confident refer to the same \
+character. When in doubt keep them separate — the user will review and can merge \
+further.
+
+Respond with valid JSON only — no other text before or after:
+{{"characters": [{{"name": "Tom", "aliases": ["the boy", "Tommy"], \
+"gender": "Male", "human": true, "plural": false, "protagonist": true}}]}}
+
+Book pages (JSON array of {{"page", "text"}}):
+{pages_json}""",
+    'page_extraction': """\
+Analyse this photo of a children's picture book page.
+
+Instructions:
+1. Correct for any rotation or tilt in the image. Focus on the book page itself \
+and ignore any background (table, hands, etc.).
+2. Decide whether the page carries ANY of the book's OWN printed text at all. \
+This includes story/narrative text AND any front- or back-matter text: title, \
+copyright notice, ISBN, publisher information, dedication, table of contents, \
+about-the-author, back-cover blurb or synopsis, end matter. Many picture-book \
+pages are WORDLESS full illustrations — that is normal and expected. Set \
+has_text to true if the page carries any of the book's own printed text of any \
+kind; set it to false only for a page with no readable book text at all (e.g. a \
+wordless full illustration).
+3. Transcribe ALL of the book's own printed text visible on the page exactly as \
+written — story text AS WELL AS any front/back-matter text (title, copyright \
+notice, ISBN, publisher information, dedication, contents, about-the-author, \
+back-cover blurb, end matter). Include speech bubbles and captions. Do not \
+include page numbers.
+   - If the photo shows a double-page spread (two facing pages captured together in \
+one image), decide the reading order before transcribing. By default, treat the two \
+pages as separate text blocks and transcribe the LEFT-hand page fully before the \
+RIGHT-hand page. However, if the text visibly flows as a single continuous block \
+across the whole spread — with no separate left/right split — do NOT force a \
+left-then-right split; instead follow the natural reading flow of the text as it is \
+actually laid out. Use your judgement based on how the text appears in the photo.
+   - Text may use a variety of fonts, stylised or decorative lettering, or handwriting — \
+transcribe it as accurately as possible regardless of style.
+   - Text within the page may appear in different orientations (rotated, vertical, curved, \
+or angled) — read and transcribe it even if it is not horizontal.
+   - Do NOT transcribe text that is part of the illustration artwork rather than the \
+narrative — for example: signposts, shop or street names, labels on objects, posters, \
+or other background signage. Only extract text that belongs to the story itself.
+   - If a word or passage is difficult to read (blurred, partially obscured, \
+unusual lettering), enclose it in square brackets with a question mark: [like this?]
+   - If you cannot make out any part of a word at all, write [?] in its place.
+   - If the page has no readable book text at all (has_text is false), set text \
+to "" (an empty string). NEVER put a description, caption, or note ABOUT the \
+illustration into the text field — the text field must contain only the book's \
+own transcribed words and nothing else.
+4. Classify whether this is a STORY page — meaning it contains narrative text \
+that is part of the story itself. The following page types are NOT story pages: \
+title page, half-title, copyright, dedication, contents, about the author, \
+publisher information, back-cover synopsis, end matter, blank pages.
+
+Respond with valid JSON only — no other text before or after. Example of the \
+expected format:
+{
+  "has_text": true,
+  "text": "Once upon a time, a [small?] rabbit lived in the forest.",
+  "is_story_page": true,
+  "page_type": "story"
+}
+
+Example for a copyright page (front/back-matter that has text but is NOT part of \
+the story):
+{
+  "has_text": true,
+  "text": "First published in 2019 by Example Press. Text and illustrations \
+copyright © Jane Author 2019. ISBN 978-0-00-000000-0. All rights reserved.",
+  "is_story_page": false,
+  "page_type": "copyright"
+}
+
+Example for a wordless illustration:
+{
+  "has_text": false,
+  "text": "",
+  "is_story_page": true,
+  "page_type": "story"
+}
+
+Now analyse the image and return JSON:""",
+    'locate_key_pages': """\
+You are shown the page images of a children's picture book, in order. Each image \
+is preceded by its page number ("Page 1", "Page 2", and so on).
+
+Identify two specific pages and return the page NUMBER shown before each image:
+- title_page: the page showing the book's title together with the author and/or \
+illustrator (usually the inside title page; use the front cover if no inside \
+title page is present).
+- copyright_page: the copyright / imprint page — the page bearing the copyright \
+notice (©), the ISBN, the publisher's details and/or the first-publication year. \
+It is often on the reverse of the title page, but may instead appear at the very \
+back of the book.
+
+If either page cannot be found, use null for that field.
+
+Respond with valid JSON only — no other text before or after:
+{"title_page": 2, "copyright_page": 3}""",
+    'book_metadata_extraction': """\
+Analyse this photo of the TITLE PAGE (or front cover) of a children's picture book.
+
+Extract the book's bibliographic details exactly as printed on the page:
+- title: the book's title
+- authors: a list of the author name(s) — the person(s) who WROTE the book \
+(usually shown as "written by", "story by", or simply "by")
+- illustrators: a list of the illustrator name(s) — the person(s) who DREW the \
+pictures (usually shown as "illustrated by", "pictures by", or "art by"). If the \
+same person both wrote and illustrated the book, include their name in both lists.
+- publisher: the name of the publishing house, if visible
+- published_year: the 4-digit year of first publication, if visible (this is \
+often only printed on the copyright page — use null if it is not shown)
+
+Rules:
+- Transcribe names exactly as written. Do NOT invent, guess, or look up details \
+that are not visible in the image.
+- If a field is not present, use an empty list for authors/illustrators, or null \
+for title/publisher/published_year.
+
+Respond with valid JSON only — no other text before or after. Example of the \
+expected format:
+{
+  "title": "The Gruffalo",
+  "authors": ["Julia Donaldson"],
+  "illustrators": ["Axel Scheffler"],
+  "publisher": "Macmillan Children's Books",
+  "published_year": 1999
+}
+
+Now analyse the image and return JSON:""",
+    'copyright_page_extraction': """\
+Analyse this photo of the COPYRIGHT / IMPRINT page of a children's picture book \
+(the page carrying the copyright notice, ISBN and publisher details).
+
+Extract the following, exactly as printed:
+- publisher: the name of the publishing house, if shown (else null)
+- first_published_year: the 4-digit year the book was FIRST published. Prefer the \
+year printed beside "first published" if present; otherwise the earliest \
+copyright (©) year shown. Use null if no year is visible.
+- isbn: the ISBN (ISBN-13 or ISBN-10), digits and hyphens exactly as printed, or \
+null if none is visible.
+
+Rules:
+- Transcribe only what is visible. Do NOT invent, guess, or look up details.
+
+Respond with valid JSON only — no other text before or after. Example of the \
+expected format:
+{
+  "publisher": "Macmillan Children's Books",
+  "first_published_year": 1999,
+  "isbn": "978-0-333-71093-5"
+}
+
+Now analyse the image and return JSON:""",
+}
+
 RULES = {
     'character_detection': """\
 You identify characters and their referring expressions in ONE supplied book.
@@ -268,9 +468,9 @@ def load_example_pack(*, held_out_book_ids=(), held_out_groups=()):
 
 
 def example_pack_text(stage, variant="rules-plus-icl"):
-    if variant not in {"rules-only", "rules-plus-icl"}:
+    if variant not in PROMPT_VARIANTS:
         raise ValueError("Unknown prompt variant")
-    if variant == "rules-only":
+    if variant != "rules-plus-icl":
         return ""
     blocks = []
     for example in load_example_pack().get("examples", []):
@@ -286,6 +486,12 @@ def example_pack_text(stage, variant="rules-plus-icl"):
 
 
 def prompt_for(stage, variant="rules-plus-icl"):
+    if variant not in PROMPT_VARIANTS:
+        raise ValueError("Unknown prompt variant")
+    if variant == "legacy-v1":
+        if stage not in LEGACY_PROMPTS:
+            raise ValueError(f"Prompt stage {stage!r} did not exist in legacy-v1")
+        return LEGACY_PROMPTS[stage]
     if stage not in RULES:
         raise ValueError("Unknown pipeline prompt stage")
     prompt = RULES[stage] + "\n\nConvention version: " + convention_metadata()["convention_version"]
@@ -303,7 +509,8 @@ def prompt_request_manifest(stage, variant="rules-plus-icl", rendered_prompt=Non
     examples = example_pack_text(stage, variant)
     rendered = prompt_for(stage, variant) if rendered_prompt is None else rendered_prompt
     pack_examples = load_example_pack()["examples"] if variant == "rules-plus-icl" else []
-    return {"prompt_version": PROMPT_VERSION, "example_pack_version": PACK_VERSION,
+    return {"prompt_version": "legacy-v1" if variant == "legacy-v1" else PROMPT_VERSION,
+            "example_pack_version": PACK_VERSION,
             "prompt_variant": variant, "stage": stage, "encoding": "utf-8",
             "example_pack_utf8": examples,
             "example_pack_sha256": hashlib.sha256(examples.encode("utf-8")).hexdigest(),
