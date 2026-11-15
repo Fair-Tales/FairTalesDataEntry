@@ -18,31 +18,25 @@ credentials while testing; all harness tests use fakes and synthetic fixtures.
 
 ## Original colour scans
 
-Use `extract --inputs scans --snapshot SNAPSHOT --out RUN` to read the original
+Use `extract --inputs scans --inputs-manifest INPUTS --snapshot SNAPSHOT --out RUN` to read the original
 colour scans; `--inputs renders` is the legacy default. Requires system Poppler
 (`pdfinfo`, `pdfimages`), with a clear error if missing; no Python PDF dependency.
 `--scan-root` defaults to `/media/storage/Gender in Children's Literature/Books`.
 Titles use the importer's normalization (lowercase, `&` → `and`, punctuation →
 spaces): exactly one matching folder and exactly one PDF inside it, any basename.
-Missing/ambiguous matches are unmapped; no substitutions. Each PDF must contain
+When exact matching fails, `input_overrides.json` may name one existing file for
+that admitted id, with a one-line reason. Overrides outside the cohort are ignored;
+missing or multiple override files are errors. Each PDF must contain
 one JPEG per page; embedded bytes are extracted in PDF order without re-encoding.
 The cohort gate runs before any PDF read. The source choice and ordered hashes
 are frozen in `run.json`; the source also separates request and stage caches.
-Scan page ids are `scan-1`, `scan-2`, …; scoring awaits A3b/A3c reference mapping.
-
-```bash
-.venv/bin/python -m scripts.extraction_eval inventory --snapshot SNAPSHOT --cohort tune --run INVENTORY_RUN --out scripts/extraction_eval/scan_inventory_tune.json
-```
-
-The JSON contains only ids, relative filenames, page counts/hashes and unmapped
-reasons. Console output gives iterate/check counts only; reference pages are not
-decoded. Keep the admission record (`--run`) separate from the sealed freeze.
+Scan page ids are `scan-1`, `scan-2`, …; whole-book text scoring awaits A5a.
 
 ## Original Word references
 
 `reference_inputs.load_reference(book_id, snapshot_dir)` resolves the admitted
 id's title using the same normalization; `.doc.pdf` also matches, so duplicate
-exports remain ambiguous. Requires Poppler `pdfinfo` and `pdftotext`, no Python
+exports require an explicit override. Requires Poppler `pdfinfo` and `pdftotext`, no Python
 dependency. `-raw -enc UTF-8 -eol unix` preserves content-stream order: on 140
 unchanged text-layer DEV20 pages it matched 135 after whitespace normalization,
 versus 131 for default/`-layout`; the remaining five differ only in word spacing.
@@ -54,12 +48,41 @@ Explicit `published_path=` (CLI `--published-text`) permits fallback only when
 no PDF matches, never on ambiguity or extraction failure. The published `Title`
 column is a matching index; only the matching `Text` cell is decoded. Fallback
 records its source, row and whole-book hash, with `page_count=null` (no invented
-pages). The inventory contains filenames, ordered page hashes/counts and unmapped
-ids, never text; A3c must still establish scan correspondence.
+pages). Source choices are made before predictions and frozen in the inputs manifest.
+
+## Paired inputs manifest
+
+One command records every cohort id, scan/reference filenames, file and ordered
+page hashes/counts, exact/override resolution, and `ready` or `unavailable` with
+its reason. `inputs_manifest_tune.json` replaces both separate tuning inventories.
 
 ```bash
-.venv/bin/python -m scripts.extraction_eval.reference_inputs --snapshot SNAPSHOT --cohort tune --run INVENTORY_RUN --published-text ../fair-tales-language-analysis/data/book_dataframe.json --out scripts/extraction_eval/reference_inventory_tune.json
+.venv/bin/python -m scripts.extraction_eval.inputs_manifest --snapshot SNAPSHOT --cohort tune --run .cache/a3c-inputs --published-text ../fair-tales-language-analysis/data/book_dataframe.json --out scripts/extraction_eval/inputs_manifest_tune.json
 ```
+
+Keep `--run` outside the sealed freeze. All pairing is `book_level_only`; unequal
+page counts are flagged separately, without guessing missing/split pages. Even
+equal counts assert no page correspondence. Whole-book text and inserted tokens
+need only ordered concatenation; alias groundedness uses predicted page text,
+and failed-page/cost guardrails use scan/run records.
+
+Scan runs embed the manifest in their frozen configuration and verify source
+hashes. Unavailable books stay selected, make no requests, and count in results.
+`inputs_manifest.scoring_inputs` prepares ordered whole-book reference/prediction
+strings (including wordless and failed pages) and forces unavailable books to
+zero. A5a must consume those rows for the selected ids, retain their denominator,
+and replace the current scan-scoring refusal; the old page metric cannot be used.
+Supply `extract --reference-root` / `--published-text` when their later scoring
+paths differ from defaults or a published fallback was selected.
+
+For rehearsal/proof, run the same command with that explicit cohort before any
+predictions, using frozen rules. Software reads only admitted files; nobody needs
+to read book content. Resolve awkward filenames from existing filename/edition
+metadata and record an id-specific override before predictions, without viewing
+pages or text. A duplicate-text equality/hash check can run without displaying
+text (as for Bottoms); do not choose between genuinely different references by
+looking at predictions. If metadata cannot establish the file, keep it unavailable
+and score zero, with no replacement. No fuzzy title guessing is added here.
 
 ## Cohort admissions
 

@@ -150,7 +150,10 @@ def test_input_source_separates_identical_requests(config, ledger_factory, tmp_p
     ledger = ledger_factory()
     provider = FakeProvider(response(), response())
     renders = configure_inputs(config, 'renders')
-    scans = configure_inputs(config, 'scans', scans=[], scan_root=tmp_path)
+    paired = {'books': []}
+    scans = configure_inputs(config, 'scans', inputs_manifest=paired, scan_root=tmp_path)
+    paired['books'].append({'id': 'later-mutation'})
+    assert scans['inputs_manifest'] == {'books': []}
     first = Gateway(provider, ledger, renders).create(**request())
     legacy = Gateway(provider, ledger, config).create(**request())
     second = Gateway(provider, ledger, scans).create(**request())

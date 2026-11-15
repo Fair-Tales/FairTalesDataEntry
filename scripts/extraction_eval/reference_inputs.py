@@ -6,7 +6,8 @@ import hashlib
 from pathlib import Path
 
 from .json_sources import JsonSources
-from .scan_inputs import _loader, _pdf_page_count, _poppler, _snapshot_titles, normalise_title
+from .scan_inputs import (_input_file, _loader, _override_file, _pdf_page_count,
+                          _poppler, _snapshot_titles, normalise_title)
 from .store import atomic_json
 from .tuning import TuningLoader
 
@@ -48,11 +49,9 @@ def _published_text(book_id, key, path):
             'text': text, 'text_sha256': _text_hash(text), 'text_char_count': len(text)}
 
 
-def _load_reference(book_id, title, reference_root, published_path):
+def _load_reference(book_id, title, reference_root, published_path, overrides=None):
     def read():
         key = normalise_title(title)
-        if not key:
-            raise UnmappedReference(book_id, 'missing_title')
         root = Path(reference_root)
         matches = []
         for path in root.iterdir():
@@ -60,15 +59,34 @@ def _load_reference(book_id, title, reference_root, published_path):
                 # The importer also treats .doc.pdf as a Word export of this
                 # title, but silently prefers .pdf. Here duplicates stay unmapped.
                 stem = path.stem[:-4] if path.stem.lower().endswith('.doc') else path.stem
-                if normalise_title(stem) == key:
+                if key and normalise_title(stem) == key:
                     matches.append(path)
-        if len(matches) > 1:
-            raise UnmappedReference(book_id, 'ambiguous_pdf')
-        if not matches:
-            if published_path is not None:
-                return _published_text(book_id, key, published_path)
-            raise UnmappedReference(book_id, 'missing_pdf')
-        path = matches[0]
+        resolution = {'resolved_by': 'exact'}
+        if len(matches) == 1:
+            path = matches[0]
+        else:
+            override = _override_file(book_id, 'reference', root, overrides)
+            if override is not None:
+                path, reason = override
+                resolution = {'resolved_by': 'override', 'resolution_reason': reason}
+            elif not key:
+                raise UnmappedReference(book_id, 'missing_title')
+            elif matches:
+                raise UnmappedReference(book_id, 'ambiguous_pdf')
+            elif published_path is not None:
+                return {**_published_text(book_id, key, published_path), **resolution}
+            else:
+                raise UnmappedReference(book_id, 'missing_pdf')
+        return {**load_reference_file(book_id, str(path.relative_to(root)), root), **resolution}
+
+    return _loader().load([book_id], 'reference', read)
+
+
+def load_reference_file(book_id, filename, reference_root=DEFAULT_REFERENCE_ROOT):
+    """Read an admitted, already resolved Word export without title matching."""
+    def read():
+        root = Path(reference_root)
+        path = _input_file(root, filename)
         run = _poppler(book_id, 'reference', ('pdfinfo', 'pdftotext'))
         count = _pdf_page_count(run, path, book_id)
         text = run('pdftotext', *PDFTOTEXT_ARGS, path, '-')
@@ -79,6 +97,7 @@ def _load_reference(book_id, title, reference_root, published_path):
             raise ValueError(f"Reference text boundaries disagree with PDF page count: {book_id}")
         pages.pop()
         return {'id': book_id, 'source': 'word_export',
+                'file_sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
                 'reference_file': str(path.relative_to(root)), 'page_count': count,
                 'page_sha256': [_text_hash(page) for page in pages],
                 'page_char_counts': [len(page) for page in pages], 'pages': pages}
@@ -87,7 +106,7 @@ def _load_reference(book_id, title, reference_root, published_path):
 
 
 def load_reference(book_id, snapshot_dir, reference_root=DEFAULT_REFERENCE_ROOT, *,
-                   published_path=None):
+                   published_path=None, overrides=None):
     """Resolve the admitted id's snapshot title; fallback requires an explicit path.
 
     Word results contain ordered ``pages`` exactly as emitted by pdftotext -raw
@@ -98,7 +117,7 @@ def load_reference(book_id, snapshot_dir, reference_root=DEFAULT_REFERENCE_ROOT,
     titles = _snapshot_titles(snapshot_dir, [book_id], 'reference')
     if book_id not in titles:
         raise UnmappedReference(book_id, 'missing_snapshot_id')
-    return _load_reference(book_id, titles[book_id], reference_root, published_path)
+    return _load_reference(book_id, titles[book_id], reference_root, published_path, overrides)
 
 
 def reference_metadata(reference):

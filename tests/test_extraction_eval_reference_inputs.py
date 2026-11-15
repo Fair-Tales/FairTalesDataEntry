@@ -170,6 +170,7 @@ def test_explicit_fallback_is_unaltered_recorded_and_decodes_only_matching_text(
         result = reference_inputs.load_reference('book', snapshot, root, published_path=published)
     assert result == {
         'id': 'book', 'source': 'published_text', 'reference_file': published.name,
+        'resolved_by': 'exact',
         'published_row': '3', 'fallback_reason': 'missing_pdf',
         'page_count': None, 'page_sha256': [], 'page_char_counts': [],
         'text': text, 'text_sha256': hashlib.sha256(text.encode()).hexdigest(),

@@ -134,6 +134,8 @@ def test_snapshot_completed_resume_constructs_no_clients(offline_inputs, capsys)
 def test_scan_cli_uses_scan_pages_without_stored_renders(
         offline_inputs, fake_core, tmp_path, capsys):
     from PIL import Image
+    from test_extraction_eval_reference_inputs import make_pdf
+    from scripts.extraction_eval import inputs_manifest
     from scripts.extraction_eval.store import digest
 
     snapshot, config = offline_inputs
@@ -145,15 +147,23 @@ def test_scan_cli_uses_scan_pages_without_stored_renders(
     folder.mkdir(parents=True)
     with Image.new('RGB', (8, 10), 'red') as first, Image.new('RGB', (8, 10), 'blue') as second:
         first.save(folder / 'Book 2.pdf', save_all=True, append_images=[second])
+    reference_root = tmp_path / 'references'
+    make_pdf(reference_root, 'Book 2.pdf', pages=('A synthetic reference',))
+    paired_path = tmp_path / 'inputs.json'
+    paired = inputs_manifest.build_manifest(snapshot, ['book-02'], scan_root, reference_root)
+    atomic_json(paired_path, paired)
     out = tmp_path / 'scan-run'
     args = ['extract', '--snapshot', str(snapshot), '--out', str(out), '--config', str(config),
-            '--books', 'book-02', '--inputs', 'scans', '--scan-root', str(scan_root), '--dry-run']
+            '--books', 'book-02', '--inputs', 'scans', '--scan-root', str(scan_root),
+            '--reference-root', str(reference_root), '--inputs-manifest', str(paired_path), '--dry-run']
     assert cli.main(args) == 0
     record = read_json(out / 'run.json')
     contract = record['contract']
     assert contract['config']['inputs'] == 'scans'
-    assert contract['config']['scan_inventory'][0]['page_count'] == 2
-    assert len(contract['config']['scan_inventory'][0]['page_sha256']) == 2
+    assert contract['config']['inputs_manifest'] == paired
+    assert paired['books'][0]['scan']['page_count'] == 2
+    assert len(paired['books'][0]['scan']['page_sha256']) == 2
+    assert paired['books'][0]['pairing_reason'] == 'unequal_page_counts'
     assert contract['selection']['page_count'] == 2
     predictions = read_json(out / 'dry_run_predictions.json')
     assert list(predictions['books']['book-02']['pages']) == ['scan-1', 'scan-2']
@@ -167,12 +177,63 @@ def test_scan_cli_uses_scan_pages_without_stored_renders(
     assert '0 paid calls' in capsys.readouterr().out
     with pytest.raises(SystemExit):
         cli.main(['score', '--snapshot', str(snapshot), '--run', str(out)])
-    assert 'A3b/A3c' in capsys.readouterr().err
+    assert 'A5a' in capsys.readouterr().err
     with Image.new('RGB', (8, 10), 'green') as changed:
         changed.save(folder / 'Book 2.pdf')
     with pytest.raises(SystemExit):
         cli.main(args)
+    assert 'changed' in capsys.readouterr().err.lower()
+    # Regenerating after a file change cannot silently change an existing run.
+    changed = inputs_manifest.build_manifest(snapshot, ['book-02'], scan_root, reference_root)
+    atomic_json(paired_path, changed)
+    with pytest.raises(SystemExit):
+        cli.main(args)
     assert 'Run inputs/settings/code/caps changed' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('select_explicitly', [False, True])
+@pytest.mark.parametrize('present_in_snapshot', [False, True])
+def test_scan_cli_keeps_unavailable_book_without_dispatch(
+        offline_inputs, fake_core, tmp_path, monkeypatch, capsys, select_explicitly,
+        present_in_snapshot, cohort_loader_factory):
+    from scripts.extraction_eval import inputs_manifest
+
+    cohort_loader_factory(iterate=['book-02'], check=[])
+    snapshot, config = offline_inputs
+    source = read_json(snapshot / 'manifest.json')
+    source['books'] = [source['books'][2]] if present_in_snapshot else []
+    atomic_json(snapshot / 'manifest.json', source)
+    scan_root, reference_root = tmp_path / 'scans', tmp_path / 'references'
+    scan_root.mkdir()
+    reference_root.mkdir()
+    paired = inputs_manifest.build_manifest(snapshot, ['book-02'], scan_root, reference_root)
+    assert paired['books'][0]['status'] == 'unavailable'
+    paired_path = tmp_path / 'inputs.json'
+    atomic_json(paired_path, paired)
+    monkeypatch.setattr(inputs_manifest, 'load_manifest_scan', forbidden)
+    out = tmp_path / 'unavailable-run'
+    selected = ['--books', 'book-02'] if select_explicitly else []
+    assert cli.main(['extract', '--snapshot', str(snapshot), '--out', str(out), *selected,
+                     '--config', str(config), '--inputs', 'scans',
+                     '--scan-root', str(scan_root), '--reference-root', str(reference_root),
+                     '--inputs-manifest', str(paired_path), '--dry-run']) == 0
+    assert read_json(out / 'selection.json')['book_ids'] == ['book-02']
+    result = read_json(out / 'dry_run_predictions.json')
+    assert result['books']['book-02'] == {
+        'status': 'unavailable', 'reason': paired['books'][0]['reason'], 'pages': {},
+    }
+    assert result['unavailable_books'] == 1
+    assert result['incomplete'] is False
+    # An implicit resume also keeps ids absent from the source snapshot.
+    assert cli.main(['extract', '--snapshot', str(snapshot), '--out', str(out),
+                     '--config', str(config), '--inputs', 'scans', '--scan-root', str(scan_root),
+                     '--reference-root', str(reference_root), '--inputs-manifest', str(paired_path),
+                     '--dry-run']) == 0
+    assert read_json(out / 'selection.json')['book_ids'] == ['book-02']
+    assert fake_core == []
+    output = capsys.readouterr().out
+    assert '"unavailable_books": 1' in output
+    assert '"estimated_usd": 0.0' in output
 
 
 def test_inventory_cli_reports_counts_only(tmp_path, cohort_loader_factory, capsys):

@@ -22,6 +22,8 @@ class TuningErrors:
     duplicate_member = "Duplicate JSON member {key!r}: {path}"
     expected_object = "Expected a JSON object"
     expected_array = "Expected a JSON array"
+    inputs_manifest_required = "Scan extraction requires --inputs-manifest from the frozen file mappings"
+    scan_scoring_pending = "Scan scoring requires the whole-book text measure in A5a; the frozen inputs manifest supplies its book-level inputs"
 
 
 class TuningHelp:
@@ -29,3 +31,6 @@ class TuningHelp:
     cohort = "Permitted book cohort: tune (default), rehearsal or proof"
     lock = "JSON lock linking a completed rehearsal run record and its results/configuration hashes"
     audit = "Recheck a tuning run's loaded IDs before final policy lock; no content or service access"
+    inputs_manifest = "Frozen scan/reference files, hashes and availability for this cohort"
+    reference_root = "Directory containing the Word exports named in the inputs manifest"
+    published_text = "Published text file, only for fallbacks already frozen in the inputs manifest"

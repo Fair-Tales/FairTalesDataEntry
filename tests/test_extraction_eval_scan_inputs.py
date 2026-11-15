@@ -157,6 +157,8 @@ def test_inventory_contains_only_scan_metadata_and_never_decodes_pages(
         result = scan_inputs.inventory(snapshot, ['book', 'check'], scan_root=root)
     assert result == {
         'books': [{'id': 'book', 'scan_file': path.relative_to(root).as_posix(),
+                   'file_sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+                   'resolved_by': 'exact',
                    'page_count': 2,
                    'page_sha256': [hashlib.sha256(page).hexdigest() for page in embedded]}],
         'unmapped': [{'id': 'check', 'reason': 'missing_folder'}],
@@ -200,6 +202,7 @@ def test_non_jpeg_pdf_is_rejected_without_rendering(loader, tmp_path, monkeypatc
 def test_runner_uses_scan_order_and_bytes_for_every_image_stage(
         loader, tmp_path, monkeypatch, has_render):
     from scripts.extraction_eval import runner
+    from scripts.extraction_eval.reference_inputs import PDFTOTEXT_ARGS
     from scripts.extraction_eval.sampling import select_books
 
     root = tmp_path / 'scans'
@@ -220,9 +223,14 @@ def test_runner_uses_scan_order_and_bytes_for_every_image_stage(
     with loader.activate():
         scan = scan_inputs.load_scan('book', 'A and B', scan_root=root)
     inventory = [scan_inputs.scan_metadata(scan)]
+    paired = {'version': 1, 'cohort': 'tune', 'pdftotext_args': list(PDFTOTEXT_ARGS), 'books': [{
+        'id': 'book', 'scan': inventory[0], 'reference': {'id': 'book', 'page_count': 3},
+        'status': 'ready', 'reason': None, 'pairing': 'book_level_only',
+        'pairing_reason': 'whole_book_text',
+    }]}
     config = runner.configure_inputs({
         'settings': {'story_context_enabled': True, 'metadata_reconciliation_enabled': True},
-    }, 'scans', scans=inventory, scan_root=root)
+    }, 'scans', inputs_manifest=paired, scan_root=root)
     extraction_manifest = scan_inputs.scan_manifest(manifest, inventory)
     selection = select_books(extraction_manifest, books=['book'])
     assert selection['book_ids'] == ['book']

@@ -29,20 +29,31 @@ def code_fingerprint():
     return {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in paths}
 
 
-def configure_inputs(config, inputs, *, scans=None, scan_root=None):
+def configure_inputs(config, inputs, *, inputs_manifest=None, scan_root=None,
+                     reference_root=None, published_path=None):
     """Freeze source choice and namespace even text-only downstream requests."""
     if inputs not in {'renders', 'scans'}:
         raise ValueError(f"Unknown page inputs: {inputs}")
     result = {**config, 'inputs': inputs}
     if inputs == 'scans':
-        result.update(scan_root=str(Path(scan_root).resolve()), scan_inventory=scans,
+        if inputs_manifest is None:
+            raise ValueError(TuningErrors.inputs_manifest_required)
+        from .reference_inputs import DEFAULT_REFERENCE_ROOT
+        result.update(scan_root=str(Path(scan_root).resolve()),
+                      reference_root=str(Path(reference_root or DEFAULT_REFERENCE_ROOT).resolve()),
+                      published_path=str(Path(published_path).resolve()) if published_path else None,
+                      inputs_manifest=json.loads(canonical(inputs_manifest)),
                       request_version={'base': config.get('request_version', '1'), 'inputs': inputs})
     return result
 
 
 def freeze_run(out, snapshot, selection, config, replicate, cap, monthly_cap, ledger):
     loader = _require_loader()
-    _admit_selection(snapshot, selection, loader)
+    admitted = snapshot
+    if config.get('inputs') == 'scans':
+        from .inputs_manifest import extraction_manifest
+        admitted = extraction_manifest(snapshot, config['inputs_manifest'])
+    _admit_selection(admitted, selection, loader)
     out = Path(out)
     path = out / "run.json"
     dependencies = {d.metadata.get("Name", "unknown"): d.version for d in importlib.metadata.distributions()}
@@ -92,18 +103,20 @@ class Stages:
 def estimate(manifest, selection, predictions=None):
     selected = set(selection.get("book_ids", []))
     books = [book for book in manifest.get("books", []) if book.get("id") in selected]
+    available = [book for book in books if book.get('input_status') != 'unavailable']
     predictions = (predictions or {}).get("books", {})
-    total_pages = sum(len(book.get("pages", [])) for book in books)
+    total_pages = sum(len(book.get("pages", [])) for book in available)
     remaining_pages = 0
     remaining_books = 0
-    for book in books:
+    for book in available:
         saved = predictions.get(book.get("id"), {})
         remaining_pages += sum(saved.get("pages", {}).get(page.get("id"), {}).get("status") not in {"completed", "failed"} for page in book.get("pages", []))
         remaining_books += any(saved.get(stage, {}).get("status") not in {"completed", "failed"} for stage in ("metadata", "characters"))
-    return {"books": len(books), "pages": total_pages, "pending_pages": remaining_pages,
+    return {"books": len(books), "unavailable_books": len(books) - len(available),
+            "pages": total_pages, "pending_pages": remaining_pages,
             "pending_books": remaining_books,
             "estimated_usd": round(2 * (.0111 * remaining_pages + .0103 * remaining_books), 4),
-            "full_selected_estimate_usd": round(2 * (.0111 * total_pages + .0103 * len(books)), 4),
+            "full_selected_estimate_usd": round(2 * (.0111 * total_pages + .0103 * len(available)), 4),
             "formula": "2 * (0.0111 * pending_pages + 0.0103 * pending_books)",
             "qualification": "Historical planning estimate, not a quote. Conditional calls and retries vary; exact cache hits are free. Strict per-call reservations may stop below the cap."}
 
@@ -249,6 +262,9 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
     loader = _require_loader(loader)
     try:
         with loader.activate():
+            if config.get('inputs') == 'scans':
+                from .inputs_manifest import extraction_manifest
+                manifest = extraction_manifest(manifest, config['inputs_manifest'])
             _admit_selection(manifest, selection, loader)
             if core is None:
                 import extraction_core as core
@@ -331,14 +347,16 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                     stage_prefix = book_id
                     scan_pages = None
                     if config.get('inputs') == 'scans':
-                        from .scan_inputs import load_scan, scan_metadata, scan_manifest
-                        scan = load_scan(book_id, book.get('title'), config['scan_root'])
-                        expected = next((row for row in config['scan_inventory'] if row['id'] == book_id), None)
-                        if scan_metadata(scan) != expected:
-                            raise ValueError(f"Scan inputs changed since inventory: {book_id}")
-                        book = scan_manifest({'books': [book]}, [scan])['books'][0]
+                        from .inputs_manifest import load_manifest_scan
+                        expected = next(row for row in config['inputs_manifest']['books']
+                                        if row['id'] == book_id)
+                        if expected['status'] == 'unavailable':
+                            results['books'][book_id] = {'status': 'unavailable',
+                                                        'reason': expected['reason'], 'pages': {}}
+                            continue
+                        scan = load_manifest_scan(expected, config['scan_root'])
                         scan_pages = scan['pages']
-                        stage_prefix = f'{book_id}:scans:{digest(expected)}'
+                        stage_prefix = f"{book_id}:scans:{digest(expected['scan'])}"
 
                     def read_image(page):
                         if scan_pages is not None:
@@ -449,7 +467,9 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                                                    'unresolved_pages': sum(row.get('contains_story') is None for row in predicted_pages)}}
                     book_result["characters"] = perform(f"{stage_prefix}:characters", characters)
                     atomic_json(out / ("dry_run_predictions.json" if dry_run else "predictions.json"), results)
-                results["incomplete"] = bool(stop_reason) or any(stage.get("status") not in {"completed", "failed"} for book in results["books"].values() for stage in [book.get("metadata", {}), book.get("characters", {}), *book.get("pages", {}).values()])
+                results["unavailable_books"] = sum(book.get('status') == 'unavailable'
+                                                   for book in results['books'].values())
+                results["incomplete"] = bool(stop_reason) or any(stage.get("status") not in {"completed", "failed"} for book in results["books"].values() if book.get('status') != 'unavailable' for stage in [book.get("metadata", {}), book.get("characters", {}), *book.get("pages", {}).values()])
                 results["stop_reason"] = stop_reason
                 atomic_json(out / ("dry_run_predictions.json" if dry_run else "predictions.json"), results)
                 if (loader.cohort == "rehearsal" and not dry_run and not results["incomplete"]

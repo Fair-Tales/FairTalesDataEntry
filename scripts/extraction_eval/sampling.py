@@ -32,13 +32,13 @@ def _inventory(manifest):
     for book in sorted(manifest.get("books", []), key=lambda b: b.get("id", "")):
         pages = book.get("pages", [])
         image_count = sum(bool(p.get("image")) for p in pages)
-        if not image_count:
+        if not image_count and book.get('input_status') != 'unavailable':
             excluded.append({"id": book.get("id"), "reason": "no_unambiguous_original_photos"})
             continue
         observed_texts = [p.get("reference", {}).get("text", {}) for p in pages
                           if p.get("reference", {}).get("text", {}).get("status") in {"observed", "verified"}]
         nonempty = [r.get("value") for r in observed_texts if isinstance(r.get("value"), str) and r.get("value").strip()]
-        density = sum(len(text.split()) for text in nonempty) / image_count
+        density = sum(len(text.split()) for text in nonempty) / image_count if image_count else 0
         density_category = "unknown" if not nonempty else "low" if density < 20 else "medium" if density < 60 else "high"
         rows.append({"id": book.get("id"), "title": book.get("title", ""),
                      "page_count": len(pages), "image_count": image_count,

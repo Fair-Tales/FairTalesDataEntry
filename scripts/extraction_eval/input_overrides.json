@@ -1,0 +1,22 @@
+[
+  {
+    "id": "is_it_betime_wibbly_pig",
+    "scan_file": "Is It Bedtime Wibbly Pig/Is It Betime Wibbly Pig.pdf",
+    "reason": "Sole PDF basename matches stored Betime; folder corrects it to Bedtime."
+  },
+  {
+    "id": "lost_in_snow",
+    "scan_file": "Lost in the Snow/Lost in the Snow.pdf",
+    "reason": "Folder and sole PDF add the; sibling Lost in Snow.doc matches the stored title."
+  },
+  {
+    "id": "what_the_ladybird_heard_next",
+    "scan_file": "What The Ladybord Heard Next/What The Ladybord Heard Next.pdf",
+    "reason": "Ladybord is a one-letter typo in the otherwise matching sequel title; sole PDF, distinct from What The Ladybird Heard."
+  },
+  {
+    "id": "sing_a_song_of_bottoms",
+    "reference_file": "Sing A Song Of Bottoms.pdf",
+    "reason": "Both .pdf and .doc.pdf have 36 pages and identical 2202-byte raw extracted text (SHA256 4467667442beb20caf3e84ba0558d172fe169589a1c21b75940c600b8c826bac); choose plain .pdf."
+  }
+]

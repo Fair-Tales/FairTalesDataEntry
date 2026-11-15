@@ -19,6 +19,7 @@ PACKAGE = Path(__file__).resolve().parent
 
 def build_parser():
     from .scan_inputs import DEFAULT_SCAN_ROOT
+    from .reference_inputs import DEFAULT_REFERENCE_ROOT
     parser = argparse.ArgumentParser(description="Frozen pilot reference-agreement harness (snapshot / extract / score)")
     commands = parser.add_subparsers(dest="command", required=True)
     snapshot = commands.add_parser("snapshot", help="Read-only Firestore/S3 export; never performs inference")
@@ -40,6 +41,10 @@ def build_parser():
     extract.add_argument("--config", type=Path, default=PACKAGE / "baseline.json")
     extract.add_argument("--inputs", choices=("renders", "scans"), default="renders")
     extract.add_argument("--scan-root", type=Path, default=DEFAULT_SCAN_ROOT)
+    extract.add_argument("--inputs-manifest", type=Path, help=TuningHelp.inputs_manifest)
+    extract.add_argument("--reference-root", type=Path, default=DEFAULT_REFERENCE_ROOT,
+                         help=TuningHelp.reference_root)
+    extract.add_argument("--published-text", type=Path, help=TuningHelp.published_text)
     extract.add_argument("--limit", type=int, help="Number of COMPLETE books (20 for the first subset)")
     extract.add_argument("--books", nargs="+", help="Exact book IDs; interpreted as a purposive subset")
     extract.add_argument("--challenge-books", nargs="+", help="Reviewed challenge IDs; sampled results are reported separately")
@@ -234,11 +239,29 @@ def _extract_loaded(args, loader):
     from .runner import configure_inputs, estimate, freeze_run, run_extract, validate_inputs
     from .sampling import select_books
     from .store import Ledger
-    requested = args.books
-    if not requested:
-        requested = loader.state.get('snapshot_book_ids')
-    manifest = _load_snapshot(args.snapshot, loader=loader, book_ids=requested,
-                              additional_ids=args.challenge_books)
+    paired_inputs = None
+    if args.inputs == 'scans':
+        from .inputs_manifest import load_manifest, extraction_manifest
+        if args.inputs_manifest is None:
+            raise ValueError(TuningErrors.inputs_manifest_required)
+        requested = args.books
+        if not requested:
+            saved = loader.run_record(args.out / 'run.json')
+            previous_inputs = saved.get('contract', {}).get('config', {}).get('inputs_manifest')
+            if previous_inputs is not None:
+                requested = [row['id'] for row in previous_inputs['books']]
+        if requested is not None:
+            requested = sorted(set(requested) | set(args.challenge_books or []))
+        paired_inputs = load_manifest(args.inputs_manifest, requested)
+        snapshot_ids = [row['id'] for row in paired_inputs['books']
+                        if row.get('reason') != 'missing_snapshot_id']
+        manifest = _load_snapshot(args.snapshot, loader=loader, book_ids=snapshot_ids)
+        input_manifest = extraction_manifest(manifest, paired_inputs)
+    else:
+        requested = args.books or loader.state.get('snapshot_book_ids')
+        manifest = _load_snapshot(args.snapshot, loader=loader, book_ids=requested,
+                                  additional_ids=args.challenge_books)
+        input_manifest = manifest
     config = read_json(args.config)
     required = read_json(PACKAGE / "baseline.json").get("settings", {})
     settings = config.get("settings", {})
@@ -252,16 +275,9 @@ def _extract_loaded(args, loader):
     if not 256 <= settings.get("extraction_max_tokens", 0) <= 8192:
         raise ValueError("Invalid extraction_max_tokens")
     validate_prices(config, executing=args.execute)
-    input_manifest = manifest
-    scans = None
-    if args.inputs == 'scans':
-        from .scan_inputs import inventory, scan_manifest
-        scanned = inventory(args.snapshot, [book['id'] for book in manifest['books']], args.scan_root)
-        if scanned['unmapped']:
-            raise ValueError(f"Unmapped scan inputs (no substitution): {scanned['unmapped']}")
-        scans = scanned['books']
-        input_manifest = scan_manifest(manifest, scans)
-    config = configure_inputs(config, args.inputs, scans=scans, scan_root=args.scan_root)
+    config = configure_inputs(config, args.inputs, inputs_manifest=paired_inputs,
+                              scan_root=args.scan_root, reference_root=args.reference_root,
+                              published_path=args.published_text)
     ledger_path = args.ledger or args.snapshot.parent / "spend.sqlite"
     saved_selection = args.out / "selection.json"
     if saved_selection.exists() and args.limit is None and args.books is None and args.challenge_books is None:
@@ -341,7 +357,7 @@ def _score_loaded(args, loader):
     from .reporting import snapshot_audit_description, write_reports
     run_config = loader.run_record(args.run / "run.json")
     if run_config.get('contract', {}).get('config', {}).get('inputs') == 'scans':
-        raise ValueError("Scan scoring needs the reference/page mapping from A3b/A3c")
+        raise ValueError(TuningErrors.scan_scoring_pending)
     manifest = _load_snapshot(args.snapshot, loader=loader,
                               book_ids=loader.state.get('snapshot_book_ids'))
     protocol = read_json(args.protocol)
@@ -392,7 +408,7 @@ def _score_loaded(args, loader):
         candidate_run = loader.run_record(args.compare_run / "run.json")
         other_contract = candidate_run.get("contract", {})
         if other_contract.get('config', {}).get('inputs') == 'scans':
-            raise ValueError("Scan scoring needs the reference/page mapping from A3b/A3c")
+            raise ValueError(TuningErrors.scan_scoring_pending)
         if other_contract.get("snapshot_hash") != contract.get("snapshot_hash"):
             raise ValueError("Comparison runs must use the same frozen snapshot")
         candidate = loader.predictions(args.compare_run / 'predictions.json')

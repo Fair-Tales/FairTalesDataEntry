@@ -11,9 +11,11 @@ import tempfile
 from scripts.import_pilot_data import normalise_title
 from .json_sources import JsonSources
 from .tuning import current_loader
+from .store import read_json
 from text_content.tuning import TuningErrors
 
 DEFAULT_SCAN_ROOT = Path("/media/storage/Gender in Children's Literature/Books")
+DEFAULT_OVERRIDES = Path(__file__).with_name('input_overrides.json')
 
 
 class UnmappedScan(ValueError):
@@ -72,27 +74,83 @@ def _pdf_page_count(run, path, book_id):
     return int(count[1])
 
 
-def load_scan(book_id, title, scan_root=DEFAULT_SCAN_ROOT):
+def _input_file(root, filename):
+    """One existing relative file, never a glob, list or directory."""
+    root = Path(root)
+    if not isinstance(filename, str) or not filename:
+        raise ValueError('Input override must name exactly one file')
+    relative = Path(filename)
+    path = root / relative
+    if (relative.is_absolute() or '..' in relative.parts
+            or not path.resolve().is_relative_to(root.resolve()) or not path.is_file()):
+        raise ValueError(f'Input file missing or outside its root: {filename}')
+    return path
+
+
+def _override_file(book_id, kind, root, overrides):
+    # Called only after exact resolution fails. Entries outside this cohort
+    # never cause filesystem access, even if they name missing files.
+    if book_id not in _loader().allowed:
+        return None
+    entries = read_json(DEFAULT_OVERRIDES) if overrides is None else overrides
+    key = f'{kind}_file'
+    matches = [row for row in entries if row.get('id') == book_id and key in row]
+    if not matches:
+        return None
+    if len(matches) != 1:
+        raise ValueError(f'Override must name exactly one {kind} file: {book_id}')
+    row = matches[0]
+    if set(row) != {'id', key, 'reason'} or not isinstance(row['reason'], str) or not row['reason'].strip():
+        raise ValueError(f'Override requires one file and a reason: {book_id}')
+    path = _input_file(root, row[key])
+    if path.suffix.lower() != '.pdf':
+        raise ValueError(f'Override must name one PDF: {book_id}')
+    return path, row['reason']
+
+
+def _scan_path(book_id, title, root):
+    key = normalise_title(title)
+    if not key:
+        raise UnmappedScan(book_id, 'missing_title')
+    folders = [path for path in root.iterdir()
+               if path.is_dir() and normalise_title(path.name) == key]
+    if len(folders) != 1:
+        raise UnmappedScan(book_id, 'missing_folder' if not folders else 'ambiguous_folder')
+    pdfs = [path for path in folders[0].iterdir()
+            if path.is_file() and path.suffix.lower() == '.pdf']
+    if len(pdfs) != 1:
+        raise UnmappedScan(book_id, 'missing_pdf' if not pdfs else 'ambiguous_pdf')
+    return pdfs[0]
+
+
+def load_scan(book_id, title, scan_root=DEFAULT_SCAN_ROOT, *, overrides=None):
     """Return ordered embedded JPEG bytes and their public inventory metadata.
 
     Match the importer's normalized title to exactly one immediate folder, then
     require exactly one PDF in it (any basename, case-insensitive extension).
-    Never prefer a same-named PDF over another candidate or fall back to renders.
+    Consult an explicit override only if that rule fails; never render a PDF.
     """
     def read():
         root = Path(scan_root)
-        key = normalise_title(title)
-        if not key:
-            raise UnmappedScan(book_id, 'missing_title')
-        folders = [path for path in root.iterdir()
-                   if path.is_dir() and normalise_title(path.name) == key]
-        if len(folders) != 1:
-            raise UnmappedScan(book_id, 'missing_folder' if not folders else 'ambiguous_folder')
-        pdfs = [path for path in folders[0].iterdir()
-                if path.is_file() and path.suffix.lower() == '.pdf']
-        if len(pdfs) != 1:
-            raise UnmappedScan(book_id, 'missing_pdf' if not pdfs else 'ambiguous_pdf')
-        path = pdfs[0]
+        resolution = {'resolved_by': 'exact'}
+        try:
+            path = _scan_path(book_id, title, root)
+        except UnmappedScan:
+            override = _override_file(book_id, 'scan', root, overrides)
+            if override is None:
+                raise
+            path, reason = override
+            resolution = {'resolved_by': 'override', 'resolution_reason': reason}
+        return {**load_scan_file(book_id, str(path.relative_to(root)), root), **resolution}
+
+    return _loader().load([book_id], 'scan', read)
+
+
+def load_scan_file(book_id, filename, scan_root=DEFAULT_SCAN_ROOT):
+    """Read the exact admitted file frozen in an inputs manifest."""
+    def read():
+        root = Path(scan_root)
+        path = _input_file(root, filename)
         run = _poppler(book_id, 'scan', ('pdfinfo', 'pdfimages'))
         page_count = _pdf_page_count(run, path, book_id)
         rows = [line.split() for line in run('pdfimages', '-list', path).splitlines()
@@ -109,6 +167,7 @@ def load_scan(book_id, title, scan_root=DEFAULT_SCAN_ROOT):
                 raise ValueError(f"Extracted scan images do not match PDF page order: {book_id}")
             pages = [item.read_bytes() for item in files]
         return {'id': book_id, 'scan_file': str(path.relative_to(root)),
+                'file_sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
                 'page_count': page_count,
                 'page_sha256': [hashlib.sha256(data).hexdigest() for data in pages],
                 'pages': pages}
