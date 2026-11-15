@@ -1,4 +1,4 @@
-"""Three independently runnable operations; score has no service dependencies."""
+"""Local evaluation operations; inventory and score have no service dependencies."""
 from __future__ import annotations
 
 import argparse
@@ -18,6 +18,7 @@ PACKAGE = Path(__file__).resolve().parent
 
 
 def build_parser():
+    from .scan_inputs import DEFAULT_SCAN_ROOT
     parser = argparse.ArgumentParser(description="Frozen pilot reference-agreement harness (snapshot / extract / score)")
     commands = parser.add_subparsers(dest="command", required=True)
     snapshot = commands.add_parser("snapshot", help="Read-only Firestore/S3 export; never performs inference")
@@ -37,6 +38,8 @@ def build_parser():
     extract.add_argument("--snapshot", type=Path, required=True)
     extract.add_argument("--out", type=Path, required=True, help="New run directory, or existing directory to resume")
     extract.add_argument("--config", type=Path, default=PACKAGE / "baseline.json")
+    extract.add_argument("--inputs", choices=("renders", "scans"), default="renders")
+    extract.add_argument("--scan-root", type=Path, default=DEFAULT_SCAN_ROOT)
     extract.add_argument("--limit", type=int, help="Number of COMPLETE books (20 for the first subset)")
     extract.add_argument("--books", nargs="+", help="Exact book IDs; interpreted as a purposive subset")
     extract.add_argument("--challenge-books", nargs="+", help="Reviewed challenge IDs; sampled results are reported separately")
@@ -66,7 +69,39 @@ def build_parser():
     audit = commands.add_parser("audit-tuning", help=TuningHelp.audit)
     audit.add_argument("--run", type=Path, required=True)
     audit.add_argument("--freeze-dir", type=Path, help=TuningHelp.freeze_dir)
+    inventory = commands.add_parser("inventory", help="Offline scan filenames, page counts and hashes only")
+    inventory.add_argument("--snapshot", type=Path, required=True)
+    inventory.add_argument("--out", type=Path, required=True, help="Inventory JSON file")
+    inventory.add_argument("--run", type=Path, required=True, help="Directory for the cohort admission record")
+    inventory.add_argument("--scan-root", type=Path, default=DEFAULT_SCAN_ROOT)
+    inventory.add_argument("--freeze-dir", type=Path, default=DEFAULT_FREEZE_DIR)
+    inventory.add_argument("--cohort", choices=("tune", "rehearsal", "proof"), default="tune")
     return parser
+
+
+def _inventory(args):
+    from collections import Counter
+    from .scan_inputs import inventory
+    with run_lock(args.run):
+        loader = TuningLoader(args.run, args.freeze_dir, cohort=args.cohort)
+        with loader.activate():
+            try:
+                result = inventory(args.snapshot, loader.allowed, args.scan_root)
+                atomic_json(args.out, result)
+                groups = ({'iterate': loader.iterate, 'check': loader.check}
+                          if args.cohort == 'tune' else {args.cohort: loader.allowed})
+                counts = {}
+                for name, ids in groups.items():
+                    mapped = [row for row in result['books'] if row['id'] in ids]
+                    unmapped = [row for row in result['unmapped'] if row['id'] in ids]
+                    counts[name] = {'mapped': len(mapped), 'unmapped': len(unmapped),
+                                    'pages': sum(row['page_count'] for row in mapped),
+                                    'unmapped_reasons': dict(Counter(row['reason'] for row in unmapped))}
+                counts['total_pages'] = sum(row['page_count'] for row in result['books'])
+                print(json.dumps(counts, indent=2))
+            finally:
+                loader.audit()
+    return 0
 
 
 def _load_snapshot(path, *, loader=None, book_ids=None, additional_ids=None):
@@ -196,7 +231,7 @@ def _extract(args):
 
 def _extract_loaded(args, loader):
     from .gateway import Gateway, validate_prices
-    from .runner import estimate, freeze_run, run_extract, validate_inputs
+    from .runner import configure_inputs, estimate, freeze_run, run_extract, validate_inputs
     from .sampling import select_books
     from .store import Ledger
     requested = args.books
@@ -217,22 +252,33 @@ def _extract_loaded(args, loader):
     if not 256 <= settings.get("extraction_max_tokens", 0) <= 8192:
         raise ValueError("Invalid extraction_max_tokens")
     validate_prices(config, executing=args.execute)
+    input_manifest = manifest
+    scans = None
+    if args.inputs == 'scans':
+        from .scan_inputs import inventory, scan_manifest
+        scanned = inventory(args.snapshot, [book['id'] for book in manifest['books']], args.scan_root)
+        if scanned['unmapped']:
+            raise ValueError(f"Unmapped scan inputs (no substitution): {scanned['unmapped']}")
+        scans = scanned['books']
+        input_manifest = scan_manifest(manifest, scans)
+    config = configure_inputs(config, args.inputs, scans=scans, scan_root=args.scan_root)
     ledger_path = args.ledger or args.snapshot.parent / "spend.sqlite"
     saved_selection = args.out / "selection.json"
     if saved_selection.exists() and args.limit is None and args.books is None and args.challenge_books is None:
         selection = loader.selection(saved_selection)
     else:
-        selection = select_books(manifest, limit=args.limit, books=args.books, seed=args.seed, challenge_books=args.challenge_books)
+        selection = select_books(input_manifest, limit=args.limit, books=args.books, seed=args.seed, challenge_books=args.challenge_books)
     if not selection.get("book_ids"):
         raise ValueError("No eligible books selected")
-    if any(row.get("issue") == "ambiguous_book_folder" for row in manifest.get("audit", []) if set(row.get("book_ids", [])) & set(selection.get("book_ids", []))):
-        raise ValueError("Selected books share an ambiguous source folder; resolve before extracting")
-    validate_inputs(args.snapshot, manifest, selection, loader=loader)
+    if args.inputs == 'renders':
+        if any(row.get("issue") == "ambiguous_book_folder" for row in manifest.get("audit", []) if set(row.get("book_ids", [])) & set(selection.get("book_ids", []))):
+            raise ValueError("Selected books share an ambiguous source folder; resolve before extracting")
+        validate_inputs(args.snapshot, manifest, selection, loader=loader)
     previous_path = args.out / "predictions.json"
     if not previous_path.exists():
         previous_path = args.out / "dry_run_predictions.json"
     previous = loader.predictions(previous_path) if previous_path.exists() else None
-    plan = estimate(manifest, selection, previous)
+    plan = estimate(input_manifest, selection, previous)
     print(json.dumps(plan, indent=2))
     print(f"Run cap: ${args.max_spend_usd:.2f}; shared monthly cap: ${args.monthly_cap_usd:.2f}. Ledger: {ledger_path}")
     # No credentials, SDK client, lookups or paid requests before this point.
@@ -259,7 +305,7 @@ def _extract_loaded(args, loader):
         if args.execute:
             client = _live_provider(args.secrets, config)
         gateway = Gateway(client, ledger, config, replicate=args.replicate, dry_run=not args.execute)
-        result = run_extract(args.snapshot, manifest, selection, args.out, gateway, config, loader=loader, dry_run=not args.execute)
+        result = run_extract(args.snapshot, input_manifest, selection, args.out, gateway, config, loader=loader, dry_run=not args.execute)
         from .reporting import report_calls
         atomic_json(args.out / "calls.json", report_calls(ledger.rows(), loader))
         if result.get('stop_reason'):
@@ -268,7 +314,7 @@ def _extract_loaded(args, loader):
             print(RUN_STOPPED.format(reason=reason, detail=detail), file=sys.stderr)
         if not args.execute:
             print("Estimate after local processing and response-cache replay:")
-            print(json.dumps(estimate(manifest, selection, result), indent=2))
+            print(json.dumps(estimate(input_manifest, selection, result), indent=2))
         print(f"Completed local stages; {gateway.paid_calls} paid calls, {gateway.cache_hits} response-cache hits. Incomplete: {result.get('incomplete')}")
         return 2 if args.execute and result.get("incomplete") else 0
     finally:
@@ -293,6 +339,9 @@ def _score(args):
 
 def _score_loaded(args, loader):
     from .reporting import snapshot_audit_description, write_reports
+    run_config = loader.run_record(args.run / "run.json")
+    if run_config.get('contract', {}).get('config', {}).get('inputs') == 'scans':
+        raise ValueError("Scan scoring needs the reference/page mapping from A3b/A3c")
     manifest = _load_snapshot(args.snapshot, loader=loader,
                               book_ids=loader.state.get('snapshot_book_ids'))
     protocol = read_json(args.protocol)
@@ -309,7 +358,6 @@ def _score_loaded(args, loader):
     if overlay:
         from .scoring import apply_overlay
         adjudicated = apply_overlay(manifest, overlay, convention_version=protocol.get("convention_version"))
-    run_config = loader.run_record(args.run / "run.json")
     from .store import digest
     contract = run_config.get("contract", {})
     if contract.get("snapshot_id") != manifest.get("snapshot_id") or contract.get("snapshot_hash") != digest(manifest):
@@ -343,6 +391,8 @@ def _score_loaded(args, loader):
                      cohort=args.cohort).audit()
         candidate_run = loader.run_record(args.compare_run / "run.json")
         other_contract = candidate_run.get("contract", {})
+        if other_contract.get('config', {}).get('inputs') == 'scans':
+            raise ValueError("Scan scoring needs the reference/page mapping from A3b/A3c")
         if other_contract.get("snapshot_hash") != contract.get("snapshot_hash"):
             raise ValueError("Comparison runs must use the same frozen snapshot")
         candidate = loader.predictions(args.compare_run / 'predictions.json')
@@ -369,7 +419,7 @@ def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        return {"snapshot": _snapshot, "extract": _extract, "score": _score,
+        return {"snapshot": _snapshot, "extract": _extract, "score": _score, "inventory": _inventory,
                 "audit-tuning": _audit_tuning}.get(args.command)(args)
     except (OSError, ValueError, TypeError, sqlite3.Error, EOFError, TuningRefused, TuningExposure) as exc:
         parser.exit(2, f"{type(exc).__name__}: {exc}\n")

@@ -144,6 +144,25 @@ def test_changed_content_replicate_and_request_version_invalidate_requests(confi
     assert len(provider.calls) == 4
 
 
+def test_input_source_separates_identical_requests(config, ledger_factory, tmp_path):
+    from scripts.extraction_eval.runner import configure_inputs
+
+    ledger = ledger_factory()
+    provider = FakeProvider(response(), response())
+    renders = configure_inputs(config, 'renders')
+    scans = configure_inputs(config, 'scans', scans=[], scan_root=tmp_path)
+    first = Gateway(provider, ledger, renders).create(**request())
+    legacy = Gateway(provider, ledger, config).create(**request())
+    second = Gateway(provider, ledger, scans).create(**request())
+    replay = Gateway(provider, ledger, scans).create(**request())
+    assert first._eval_key != second._eval_key
+    assert legacy._eval_key == first._eval_key
+    assert legacy._eval_cached is True
+    assert replay._eval_key == second._eval_key
+    assert replay._eval_cached is True
+    assert len(provider.calls) == 2
+
+
 @pytest.mark.parametrize('provider_reply', [TimeoutError('lost response'), response(usage=None),
                                           response(usage={'input_tokens': -1, 'output_tokens': 0})])
 def test_unknown_outcome_retains_reservation_and_never_repeats(provider_reply, config, ledger_factory):

@@ -29,6 +29,17 @@ def code_fingerprint():
     return {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in paths}
 
 
+def configure_inputs(config, inputs, *, scans=None, scan_root=None):
+    """Freeze source choice and namespace even text-only downstream requests."""
+    if inputs not in {'renders', 'scans'}:
+        raise ValueError(f"Unknown page inputs: {inputs}")
+    result = {**config, 'inputs': inputs}
+    if inputs == 'scans':
+        result.update(scan_root=str(Path(scan_root).resolve()), scan_inventory=scans,
+                      request_version={'base': config.get('request_version', '1'), 'inputs': inputs})
+    return result
+
+
 def freeze_run(out, snapshot, selection, config, replicate, cap, monthly_cap, ledger):
     loader = _require_loader()
     _admit_selection(snapshot, selection, loader)
@@ -252,7 +263,8 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
             from conventions import convention_metadata
             results = {"version": 2, "snapshot_id": manifest.get("snapshot_id"),
                        "run_id": getattr(getattr(gateway, "ledger", None), "run_id", None),
-                       "books": {}, "dry_run": dry_run, "conventions": convention_metadata()}
+                       "books": {}, "dry_run": dry_run, "conventions": convention_metadata(),
+                       "inputs": config.get('inputs', 'renders')}
             settings = config.get("settings", {})
             stop_reason = None
             current_book_id = None
@@ -316,6 +328,24 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                         continue
                     current_book_id = book_id
                     loader.load([book_id], "book", lambda: None)
+                    stage_prefix = book_id
+                    scan_pages = None
+                    if config.get('inputs') == 'scans':
+                        from .scan_inputs import load_scan, scan_metadata, scan_manifest
+                        scan = load_scan(book_id, book.get('title'), config['scan_root'])
+                        expected = next((row for row in config['scan_inventory'] if row['id'] == book_id), None)
+                        if scan_metadata(scan) != expected:
+                            raise ValueError(f"Scan inputs changed since inventory: {book_id}")
+                        book = scan_manifest({'books': [book]}, [scan])['books'][0]
+                        scan_pages = scan['pages']
+                        stage_prefix = f'{book_id}:scans:{digest(expected)}'
+
+                    def read_image(page):
+                        if scan_pages is not None:
+                            return loader.load([book_id], 'scan_page',
+                                               lambda: scan_pages[page['page_number'] - 1])
+                        return local_image(snapshot_dir, page, book_id=book_id)
+
                     if loader.cohort != "tune" or book_id not in loader.check:
                         progress(f"Book: {book.get('title', book_id)} ({len(book.get('pages', []))} pages)")
                     book_result = {"pages": {}}
@@ -323,17 +353,17 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                     pages = sorted(book.get("pages", []), key=lambda page: page.get("page_number", 0))
                     # Metadata sees original ordered images and NO reference page hints.
                     def metadata():
-                        images = [(page.get("page_number"), local_image(snapshot_dir, page, book_id=book_id)) for page in pages if page.get("image")]
+                        images = [(page.get("page_number"), read_image(page)) for page in pages if page.get("image")]
                         if not images:
                             raise ValueError("No images for metadata extraction")
                         value = core.extract_metadata(images, gateway, settings, gateway.record_usage, isbn)
                         status = 'failed' if value.get('metadata_extraction_status') == 'invalid_response' else 'completed'
                         return {"status": status, "value": value}
-                    book_result["metadata"] = perform(f"{book_id}:metadata", metadata, refresh_lookup=True)
+                    book_result["metadata"] = perform(f"{stage_prefix}:metadata", metadata, refresh_lookup=True)
                     for page in pages:
                         page_id = page.get("id")
                         def extract(page=page):
-                            result = core.extract_page(local_image(snapshot_dir, page, book_id=book_id), gateway, settings, gateway.record_usage)
+                            result = core.extract_page(read_image(page), gateway, settings, gateway.record_usage)
                             corrected = result.pop("corrected_bytes", None)
                             if corrected is not None:
                                 image_path = out / "images" / f"{hashlib.sha256(corrected).hexdigest()}.jpg"
@@ -349,7 +379,7 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                                     os.replace(temporary, image_path)
                                 result["corrected_path"] = str(image_path.resolve())
                             return result
-                        book_result["pages"][page_id] = perform(f"{book_id}:page:{page_id}", extract)
+                        book_result["pages"][page_id] = perform(f"{stage_prefix}:page:{page_id}", extract)
                     predicted_pages = [dict(book_result['pages'].get(page.get('id'), {}),
                                             page_number=page.get('page_number')) for page in pages]
                     page_stages_terminal = all(row.get('status') in {'completed', 'failed'} for row in predicted_pages)
@@ -363,12 +393,12 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                             if page.get('image'):
                                 corrected = prediction.get('corrected_path')
                                 image = (loader.load([book_id], "corrected_image", lambda: Path(corrected).read_bytes())
-                                         if corrected else local_image(snapshot_dir, page, book_id=book_id))
+                                         if corrected else read_image(page))
                                 images.append((page.get('page_number'), image))
                         return core.classify_book_context(predicted_pages, images, gateway, settings, gateway.record_usage)
 
                     if settings.get('story_context_enabled', False):
-                        book_result['story_context'] = perform(f'{book_id}:story_context', context)
+                        book_result['story_context'] = perform(f'{stage_prefix}:story_context', context)
                         from extraction_core import apply_context_classification
                         final_pages = apply_context_classification(predicted_pages, book_result['story_context'])
                         book_result['pages'] = {page.get('id'): result for page, result in zip(pages, final_pages)}
@@ -379,7 +409,7 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                         initial = book_result.get('metadata', {})
                         if initial.get('status') != 'completed':
                             return {'status': 'failed', 'error': 'Initial metadata is unavailable'}
-                        images = [(page.get('page_number'), local_image(snapshot_dir, page, book_id=book_id))
+                        images = [(page.get('page_number'), read_image(page))
                                   for page in pages if page.get('image')]
                         value = core.reconcile_metadata(initial.get('value', {}), predicted_pages, images,
                                                         gateway, settings, gateway.record_usage)
@@ -389,7 +419,7 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
 
                     if settings.get('metadata_reconciliation_enabled', False):
                         book_result['metadata_initial'] = book_result.get('metadata')
-                        book_result['metadata_reconciliation'] = perform(f'{book_id}:metadata_reconciliation', reconcile)
+                        book_result['metadata_reconciliation'] = perform(f'{stage_prefix}:metadata_reconciliation', reconcile)
                         if book_result['metadata_reconciliation'].get('status') == 'completed':
                             book_result['metadata'] = book_result['metadata_reconciliation']
                     def characters():
@@ -417,7 +447,7 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                                                    'included_pages': len(input_pages),
                                                    'eligible_story_pages': sum(row.get('status') == 'completed' and row.get('contains_story') is True for row in predicted_pages),
                                                    'unresolved_pages': sum(row.get('contains_story') is None for row in predicted_pages)}}
-                    book_result["characters"] = perform(f"{book_id}:characters", characters)
+                    book_result["characters"] = perform(f"{stage_prefix}:characters", characters)
                     atomic_json(out / ("dry_run_predictions.json" if dry_run else "predictions.json"), results)
                 results["incomplete"] = bool(stop_reason) or any(stage.get("status") not in {"completed", "failed"} for book in results["books"].values() for stage in [book.get("metadata", {}), book.get("characters", {}), *book.get("pages", {}).values()])
                 results["stop_reason"] = stop_reason

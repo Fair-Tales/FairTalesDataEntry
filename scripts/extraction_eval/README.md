@@ -1,7 +1,7 @@
 # Pilot extraction validation
 
-This CLI measures **agreement with a frozen imported pilot reference**. It has
-three separate operations, each resumable using the same output directory:
+This CLI measures **agreement with a frozen imported pilot reference**. Its
+snapshot, extraction and scoring operations use separate output directories:
 
 1. `snapshot` reads raw Firestore documents and canonical original S3 photos.
 2. `extract` reads the snapshot and writes local cached predictions. It can call
@@ -9,11 +9,34 @@ three separate operations, each resumable using the same output directory:
    or S3. `--dry-run` makes **no network calls**, including ISBN lookups.
 3. `score` reads local references and cached predictions only. It imports no
    application runtime, creates no service clients, and needs no credentials.
+4. `inventory` hashes original scans for one admitted cohort, without inference.
 
 Run commands from the repository root with the existing virtual environment.
 Keep the output directory outside this repository: images, text, responses and
 reports contain research data. No command invokes git. Do not use production
 credentials while testing; all harness tests use fakes and synthetic fixtures.
+
+## Original colour scans
+
+Use `extract --inputs scans --snapshot SNAPSHOT --out RUN` to read the original
+colour scans; `--inputs renders` is the legacy default. Requires system Poppler
+(`pdfinfo`, `pdfimages`), with a clear error if missing; no Python PDF dependency.
+`--scan-root` defaults to `/media/storage/Gender in Children's Literature/Books`.
+Titles use the importer's normalization (lowercase, `&` → `and`, punctuation →
+spaces): exactly one matching folder and exactly one PDF inside it, any basename.
+Missing/ambiguous matches are unmapped; no substitutions. Each PDF must contain
+one JPEG per page; embedded bytes are extracted in PDF order without re-encoding.
+The cohort gate runs before any PDF read. The source choice and ordered hashes
+are frozen in `run.json`; the source also separates request and stage caches.
+Scan page ids are `scan-1`, `scan-2`, …; scoring awaits A3b/A3c reference mapping.
+
+```bash
+.venv/bin/python -m scripts.extraction_eval inventory --snapshot SNAPSHOT --cohort tune --run INVENTORY_RUN --out scripts/extraction_eval/scan_inventory_tune.json
+```
+
+The JSON contains only ids, relative filenames, page counts/hashes and unmapped
+reasons. Console output gives iterate/check counts only; reference pages are not
+decoded. Keep the admission record (`--run`) separate from the sealed freeze.
 
 ## Cohort admissions
 

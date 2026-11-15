@@ -131,6 +131,77 @@ def test_snapshot_completed_resume_constructs_no_clients(offline_inputs, capsys)
     assert "25 books" in capsys.readouterr().out
 
 
+def test_scan_cli_uses_scan_pages_without_stored_renders(
+        offline_inputs, fake_core, tmp_path, capsys):
+    from PIL import Image
+    from scripts.extraction_eval.store import digest
+
+    snapshot, config = offline_inputs
+    source = read_json(snapshot / 'manifest.json')
+    source['books'][2]['pages'] = []
+    atomic_json(snapshot / 'manifest.json', source)
+    scan_root = tmp_path / 'scans'
+    folder = scan_root / 'Book 2'
+    folder.mkdir(parents=True)
+    with Image.new('RGB', (8, 10), 'red') as first, Image.new('RGB', (8, 10), 'blue') as second:
+        first.save(folder / 'Book 2.pdf', save_all=True, append_images=[second])
+    out = tmp_path / 'scan-run'
+    args = ['extract', '--snapshot', str(snapshot), '--out', str(out), '--config', str(config),
+            '--books', 'book-02', '--inputs', 'scans', '--scan-root', str(scan_root), '--dry-run']
+    assert cli.main(args) == 0
+    record = read_json(out / 'run.json')
+    contract = record['contract']
+    assert contract['config']['inputs'] == 'scans'
+    assert contract['config']['scan_inventory'][0]['page_count'] == 2
+    assert len(contract['config']['scan_inventory'][0]['page_sha256']) == 2
+    assert contract['selection']['page_count'] == 2
+    predictions = read_json(out / 'dry_run_predictions.json')
+    assert list(predictions['books']['book-02']['pages']) == ['scan-1', 'scan-2']
+    assert predictions['inputs'] == 'scans'
+    assert fake_core == []
+    # The frozen snapshot still describes the original reference, untouched.
+    loader_state = record['tuning']
+    loader = cli.TuningLoader(out, loader_state['freeze_dir'])
+    assert contract['snapshot_hash'] == digest(loader.snapshot(snapshot, ['book-02']))
+    assert cli.main(args) == 0
+    assert '0 paid calls' in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        cli.main(['score', '--snapshot', str(snapshot), '--run', str(out)])
+    assert 'A3b/A3c' in capsys.readouterr().err
+    with Image.new('RGB', (8, 10), 'green') as changed:
+        changed.save(folder / 'Book 2.pdf')
+    with pytest.raises(SystemExit):
+        cli.main(args)
+    assert 'Run inputs/settings/code/caps changed' in capsys.readouterr().err
+
+
+def test_inventory_cli_reports_counts_only(tmp_path, cohort_loader_factory, capsys):
+    from PIL import Image
+
+    loader = cohort_loader_factory(iterate=['book'], check=['check'])
+    snapshot = tmp_path / 'snapshot'
+    atomic_json(snapshot / 'manifest.json', {'books': [
+        {'id': 'book', 'title': 'Matched'}, {'id': 'check', 'title': 'Absent'},
+        {'id': 'heldout', 'title': 'Must never resolve'},
+    ]})
+    root = tmp_path / 'scans'
+    folder = root / 'Matched'
+    folder.mkdir(parents=True)
+    with Image.new('RGB', (8, 10), 'red') as page:
+        page.save(folder / 'Matched.pdf')
+    out = tmp_path / 'inventory.json'
+    assert cli.main(['inventory', '--snapshot', str(snapshot), '--out', str(out),
+                     '--run', str(tmp_path / 'inventory-run'), '--scan-root', str(root),
+                     '--freeze-dir', str(loader.freeze_dir), '--cohort', 'tune']) == 0
+    import json
+    counts = json.loads(capsys.readouterr().out)
+    assert counts['iterate'] == {'mapped': 1, 'unmapped': 0, 'pages': 1, 'unmapped_reasons': {}}
+    assert counts['check'] == {'mapped': 0, 'unmapped': 1, 'pages': 0,
+                               'unmapped_reasons': {'missing_folder': 1}}
+    assert counts['total_pages'] == 1
+    assert read_json(out)['unmapped'] == [{'id': 'check', 'reason': 'missing_folder'}]
+
+
 @pytest.mark.parametrize('provider', ['anthropic-messages', 'openai-responses'])
 def test_dry_run_limit_twenty_no_credentials_no_paid_calls_no_isbn(offline_inputs, fake_core, tmp_path, monkeypatch, capsys, provider):
     import utilities
