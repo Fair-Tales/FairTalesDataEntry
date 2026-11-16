@@ -84,6 +84,19 @@ def build_parser():
     inventory.add_argument("--scan-root", type=Path, default=DEFAULT_SCAN_ROOT)
     inventory.add_argument("--freeze-dir", type=Path, default=DEFAULT_FREEZE_DIR)
     inventory.add_argument("--cohort", choices=("tune", "rehearsal", "proof"), default="tune")
+    from .tuning_loop import MEASURES
+    from text_content.evaluation import TuningLoopText as T
+    noise = commands.add_parser('tuning-noise', help=T.noise_help)
+    noise.add_argument('--runs', type=Path, nargs='+', required=True, help=T.scored_help)
+    noise.add_argument('--out', type=Path, required=True)
+    attempt = commands.add_parser('tuning-attempt', help=T.attempt_help)
+    attempt.add_argument('--baseline', type=Path, required=True, help=T.scored_help)
+    attempt.add_argument('--candidate', type=Path, required=True, help=T.scored_help)
+    attempt.add_argument('--floors', type=Path, required=True)
+    attempt.add_argument('--target', choices=MEASURES, required=True, help=T.target_help)
+    attempt.add_argument('--hypothesis', required=True)
+    attempt.add_argument('--change', required=True)
+    attempt.add_argument('--log', type=Path, required=True, help=T.log_help)
     return parser
 
 
@@ -396,7 +409,7 @@ def _score_loaded(args, loader):
     if selection != contract.get("selection"):
         raise ValueError("Selection differs from the frozen run contract")
     if scans:
-        return _score_scans(args, contract, predictions, selection, manifest)
+        return _score_scans(args, contract, predictions, selection, manifest, run_record=run_config)
     ledger_path = contract.get("ledger")
     if ledger_path and Path(ledger_path).is_file():
         from .store import read_calls
@@ -443,7 +456,7 @@ def _score_loaded(args, loader):
     return 0
 
 
-def _score_scans(args, contract, predictions, selection, manifest):
+def _score_scans(args, contract, predictions, selection, manifest, *, run_record=None):
     from .alias_metrics import score_aliases
     from .inputs_manifest import scoring_inputs
     from .normalization import NORMALIZATION_VERSION
@@ -498,6 +511,29 @@ def _score_scans(args, contract, predictions, selection, manifest):
     atomic_json(out / 'book_scores.json', scores)
     atomic_json(out / 'summary.json', summary)
     _atomic_text(out / 'summary.md', scan_summary_markdown(summary['cohort_summary']))
+    if loader.cohort == 'tune' and run_record is not None:
+        from .tuning_loop import tuning_scores
+        from .store import digest
+        # Read only ledger totals, never request/response bodies for this report.
+        cost = None
+        ledger = contract.get('ledger')
+        if ledger and Path(ledger).is_file():
+            with sqlite3.connect(Path(ledger).resolve().as_uri() + '?mode=ro', uri=True) as db:
+                settled, outstanding = db.execute(
+                    "SELECT sum(cost)/1e9, sum(CASE WHEN state NOT IN ('completed','settled','failed') "
+                    "THEN reservation ELSE 0 END)/1e9 FROM calls WHERE run_id=?",
+                    (run_record['run_id'],)).fetchone()
+            cost = {'settled_usd': settled or 0, 'outstanding_reservations_usd': outstanding or 0,
+                    'per_book_usd': (settled or 0) / len(scores) if scores else None}
+        numeric = tuning_scores(
+            scores, selections, run_id=run_record['run_id'],
+            configuration_id=digest({'config': config, 'sources': contract.get('sources')}),
+            replicate=contract['replicate'], measurement_id=digest({
+                'snapshot_id': contract['snapshot_id'], 'text_output': args.text_output,
+                'normalization_version': NORMALIZATION_VERSION, 'scoring': 'scan-tuning-v1'}),
+            reference_hashes={row['id']: digest({'input': row, 'characters': references.get(row['id'])})
+                              for row in inputs['books']}, cost=cost)
+        atomic_json(out / 'tuning_scores.json', numeric)
     print(f"Offline report: {out / 'summary.json'}")
     return 0
 
@@ -507,9 +543,29 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         return {"snapshot": _snapshot, "extract": _extract, "score": _score, "inventory": _inventory,
-                "audit-tuning": _audit_tuning}.get(args.command)(args)
+                "audit-tuning": _audit_tuning, 'tuning-noise': _tuning_noise,
+                'tuning-attempt': _tuning_attempt}.get(args.command)(args)
     except (OSError, ValueError, TypeError, sqlite3.Error, EOFError, TuningRefused, TuningExposure) as exc:
         parser.exit(2, f"{type(exc).__name__}: {exc}\n")
+
+
+def _tuning_noise(args):
+    from .tuning_loop import noise_floors
+    from text_content.evaluation import TuningLoopText as T
+    floors = noise_floors([read_json(path) for path in args.runs])
+    atomic_json(args.out, floors)
+    print(T.floors_written.format(path=args.out, replicates=floors['replicates']))
+    return 0
+
+
+def _tuning_attempt(args):
+    from .tuning_loop import append_attempt, format_verdict
+    from text_content.evaluation import TuningLoopText as T
+    row = append_attempt(args.log, read_json(args.baseline), read_json(args.candidate),
+                         read_json(args.floors), args.target, args.hypothesis, args.change)
+    print(format_verdict(row))
+    print(T.logged.format(**row))
+    return 0
 
 
 def _audit_tuning(args):

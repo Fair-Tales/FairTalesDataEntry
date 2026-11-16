@@ -953,3 +953,120 @@ Dev20 explicitly recorded alias recall is **6/10 under equivalence normalisation
 across five books**, while strict raw-surface credit is **4/10**. Ten aliases make
 this a smoke test, not evidence of improvement; the legacy 88/106 name-variant
 measure includes canonical names and has a different meaning.
+
+### Tuning noise and attempts (A5f, offline)
+
+Scan `score` also writes `tuning_scores.json` for the tuning cohort: numeric
+per-book measures/counts, ids for machine pairing, frozen cohort and reference
+identities, configuration/code identity, replicate and run ids, and ledger cost
+per scored book. No titles, aliases, text or failure details enter that file.
+Treat Check's per-book records as machine inputs; read only the aggregate
+command output and attempt log. An absent ledger gives unknown cost (`null`),
+not zero. Ledger cost is the run's settled spend plus separately reported
+outstanding reservations; cache reuse can make a run cheaper than a fresh pass.
+
+First score two or more **fresh, unchanged** baseline replicates, with distinct
+`extract --replicate` values. These offline commands do no extraction, source
+reading, network access or spending:
+
+```bash
+.venv/bin/python -m scripts.extraction_eval tuning-noise \
+  --runs runs/baseline-1/reports/tuning_scores.json \
+         runs/baseline-2/reports/tuning_scores.json \
+         runs/baseline-3/reports/tuning_scores.json \
+  --out runs/noise.json
+
+.venv/bin/python -m scripts.extraction_eval tuning-attempt \
+  --baseline runs/last-accepted/reports/tuning_scores.json \
+  --candidate runs/candidate/reports/tuning_scores.json \
+  --floors runs/noise.json --target character_recall \
+  --hypothesis 'Recover missed characters without losing other agreement' \
+  --change 'Describe the one rule or example changed, and any stated cost gain' \
+  --log runs/attempts.jsonl
+```
+
+Name the target in the experiment plan **before** running the candidate; the
+command records that declaration but cannot verify when it was made. Targets
+are the five primaries, `alias_coverage`, `groundedness`,
+`inserted_text_per_100` or `unsuccessful_pages_per_100`. Fractions use 0–1 units;
+insertions and failed pages use counts per hundred, consistently with scoring.
+
+The floor is the **sample SD of the replicate set means**, separately for each
+measure and for Iterate and Check, with replicate count and panel size recorded.
+It is neither the between-book SD nor a standard error. Repeat runs must share
+configuration/code, measurement, references and book panels. The smaller noise
+panels in design §4 are supported; an attempt still requires all frozen 55
+Iterate and 20 Check books. Every comparison pairs the same books and gives
+each book equal weight. Shared undefined books are omitted and counted; a
+changed contributing panel or a wholly undefined required measure gives no
+verdict. Fewer than two replicates gives a null floor and no verdict, never a
+zero floor. Genuine identical replicate means can have a measured zero floor.
+
+Iterate's target must improve by **more than twice** its floor; each primary
+and automatic guardrail must avoid worsening by more than its own floor. On
+Check, the target and each primary must avoid worsening by more than Check's
+own floor. Groundedness and primaries improve upwards; insertions and failed
+pages improve downwards. Check guardrails other than the target are reported
+but do not add an unapproved acceptance clause. Counts alone cannot accept a
+change. Cost is reported, not gated: explain any increase's intended gain in
+the hypothesis/change.
+
+The command prints every clause and appends one JSON object to the shared log,
+including before/after counts, paired primary/guardrail/coverage means, costs,
+run ids, floor provenance, verdict and cumulative attempts/acceptances.
+Rejected and unscorable attempts remain and count towards 30. After acceptance,
+use that candidate as the next baseline; after rejection/no verdict, retain the
+incumbent. The log checks this chain and refuses to append once 15 changes are
+accepted or 30 attempts are logged. Keep one log for the whole tuning process.
+It uses an append and a directory lock, not a rewritten history.
+
+Stop earlier when no reachable error category remains. Before freeze, make the
+one fresh final-version versus fresh original-baseline confirmation in §5.10;
+these offline commands do not schedule it or claim it has happened. The pure
+`verdict()` function can compare fresh full-cohort scores without appending a
+further tuning attempt. Preserve that separate confirmation result.
+
+`comparison.py` is **unused by this tuning path**, including its registry,
+`compare_metrics()` bootstrap/ratio comparison and `point_gate_passed`
+zero-margin gates. Nothing was deleted: stored-render `score --compare-run`
+still calls `compare_metrics()`, and stored-render reporting still calls
+`comparison_protocol()` and `book_comparison_record()`.
+
+#### Worked example — made-up scores only
+
+This uses two synthetic books per set (production uses 55 and 20). Both baseline
+books have character recall 0.50. The unchanged replicate's Iterate mean is
+0.51 and Check mean 0.52: sample SDs are 0.00707107 and 0.0141421 respectively.
+The candidate's Iterate mean is 0.53 (106/200 characters, previously 100/200),
+Check stays 0.50, other means stay unchanged and cost stays $0.50/book.
+The +0.03 target gain exceeds twice Iterate's floor, 0.0141421.
+
+Printed verdict:
+
+```text
+accept: target character_recall
+iterate character_recall (target_gain): direction-adjusted change 0.03 > 0.0141421: pass
+iterate text_accuracy (no_regression): direction-adjusted change 0 >= -0.00707107: pass
+iterate character_recall (no_regression): direction-adjusted change 0.03 >= -0.00707107: pass
+iterate gender (no_regression): direction-adjusted change 0 >= -0.00707107: pass
+iterate human (no_regression): direction-adjusted change 0 >= -0.00707107: pass
+iterate protagonist (no_regression): direction-adjusted change 0 >= -0.00707107: pass
+iterate groundedness (no_regression): direction-adjusted change 0 >= -0.00707107: pass
+iterate inserted_text_per_100 (no_regression): direction-adjusted change 0 >= -0.00707107: pass
+iterate unsuccessful_pages_per_100 (no_regression): direction-adjusted change 0 >= -0.00707107: pass
+check text_accuracy (no_regression): direction-adjusted change 0 >= -0.0141421: pass
+check character_recall (no_regression): direction-adjusted change 0 >= -0.0141421: pass
+check gender (no_regression): direction-adjusted change 0 >= -0.0141421: pass
+check human (no_regression): direction-adjusted change 0 >= -0.0141421: pass
+check protagonist (no_regression): direction-adjusted change 0 >= -0.0141421: pass
+Logged attempt 1; accepted changes 1.
+```
+
+<details>
+<summary>Complete JSONL row from this synthetic example (one line)</summary>
+
+```json
+{"accepted_changes": 1, "alias_coverage": {"check": {"alias_coverage": {"after": 0.5, "before": 0.5, "changed_eligibility": false, "improvement": 0.0, "paired_books": 2, "undefined_books": 0}}, "iterate": {"alias_coverage": {"after": 0.5, "before": 0.5, "changed_eligibility": false, "improvement": 0.0, "paired_books": 2, "undefined_books": 0}}}, "attempt": 1, "baseline_run_id": "example-baseline", "candidate_run_id": "example-candidate", "change": "One synthetic character rule; cost unchanged", "clauses": [{"floor": 0.007071067811865481, "measure": "character_recall", "passed": true, "reason": "direction-adjusted change 0.03 > 0.0141421: pass", "rule": "target_gain", "set": "iterate"}, {"floor": 0.007071067811865481, "measure": "text_accuracy", "passed": true, "reason": "direction-adjusted change 0 >= -0.00707107: pass", "rule": "no_regression", "set": "iterate"}, {"floor": 0.007071067811865481, "measure": "character_recall", "passed": true, "reason": "direction-adjusted change 0.03 >= -0.00707107: pass", "rule": "no_regression", "set": "iterate"}, {"floor": 0.007071067811865481, "measure": "gender", "passed": true, "reason": "direction-adjusted change 0 >= -0.00707107: pass", "rule": "no_regression", "set": "iterate"}, {"floor": 0.007071067811865481, "measure": "human", "passed": true, "reason": "direction-adjusted change 0 >= -0.00707107: pass", "rule": "no_regression", "set": "iterate"}, {"floor": 0.007071067811865481, "measure": "protagonist", "passed": true, "reason": "direction-adjusted change 0 >= -0.00707107: pass", "rule": "no_regression", "set": "iterate"}, {"floor": 0.007071067811865481, "measure": "groundedness", "passed": true, "reason": "direction-adjusted change 0 >= -0.00707107: pass", "rule": "no_regression", "set": "iterate"}, {"floor": 0.007071067811865324, "measure": "inserted_text_per_100", "passed": true, "reason": "direction-adjusted change 0 >= -0.00707107: pass", "rule": "no_regression", "set": "iterate"}, {"floor": 0.007071067811865324, "measure": "unsuccessful_pages_per_100", "passed": true, "reason": "direction-adjusted change 0 >= -0.00707107: pass", "rule": "no_regression", "set": "iterate"}, {"floor": 0.014142135623730963, "measure": "text_accuracy", "passed": true, "reason": "direction-adjusted change 0 >= -0.0141421: pass", "rule": "no_regression", "set": "check"}, {"floor": 0.014142135623730963, "measure": "character_recall", "passed": true, "reason": "direction-adjusted change 0 >= -0.0141421: pass", "rule": "no_regression", "set": "check"}, {"floor": 0.014142135623730963, "measure": "gender", "passed": true, "reason": "direction-adjusted change 0 >= -0.0141421: pass", "rule": "no_regression", "set": "check"}, {"floor": 0.014142135623730963, "measure": "human", "passed": true, "reason": "direction-adjusted change 0 >= -0.0141421: pass", "rule": "no_regression", "set": "check"}, {"floor": 0.014142135623730963, "measure": "protagonist", "passed": true, "reason": "direction-adjusted change 0 >= -0.0141421: pass", "rule": "no_regression", "set": "check"}], "cost": {"after": {"outstanding_reservations_usd": 0, "per_book_usd": 0.5, "settled_usd": 2}, "before": {"outstanding_reservations_usd": 0, "per_book_usd": 0.5, "settled_usd": 2}, "judgement": "Reported only: any cost increase needs a stated gain in the hypothesis/change"}, "counts": {"check": {"alias_coverage": {"after": {"denominator": 200, "numerator": 100}, "before": {"denominator": 200, "numerator": 100}}, "character_recall": {"after": {"denominator": 200, "numerator": 100}, "before": {"denominator": 200, "numerator": 100}}, "gender": {"after": {"denominator": 200, "numerator": 100}, "before": {"denominator": 200, "numerator": 100}}, "groundedness": {"after": {"denominator": 200, "numerator": 100}, "before": {"denominator": 200, "numerator": 100}}, "human": {"after": {"denominator": 200, "numerator": 100}, "before": {"denominator": 200, "numerator": 100}}, "inserted_text_per_100": {"after": {"denominator": 200, "numerator": 4}, "before": {"denominator": 200, "numerator": 4}}, "protagonist": {"after": {"denominator": 200, "numerator": 100}, "before": {"denominator": 200, "numerator": 100}}, "text_accuracy": {"after": {"denominator": 200, "numerator": null}, "before": {"denominator": 200, "numerator": null}}, "unsuccessful_pages_per_100": {"after": {"denominator": 200, "numerator": 4}, "before": {"denominator": 200, "numerator": 4}}}, "iterate": {"alias_coverage": {"after": {"denominator": 200, "numerator": 100}, "before": {"denominator": 200, "numerator": 100}}, "character_recall": {"after": {"denominator": 200, "numerator": 106}, "before": {"denominator": 200, "numerator": 100}}, "gender": {"after": {"denominator": 200, "numerator": 100}, "before": {"denominator": 200, "numerator": 100}}, "groundedness": {"after": {"denominator": 200, "numerator": 100}, "before": {"denominator": 200, "numerator": 100}}, "human": {"after": {"denominator": 200, "numerator": 100}, "before": {"denominator": 200, "numerator": 100}}, "inserted_text_per_100": {"after": {"denominator": 200, "numerator": 4}, "before": {"denominator": 200, "numerator": 4}}, "protagonist": {"after": {"denominator": 200, "numerator": 100}, "before": {"denominator": 200, "numerator": 100}}, "text_accuracy": {"after": {"denominator": 200, "numerator": null}, "before": {"denominator": 200, "numerator": null}}, "unsuccessful_pages_per_100": {"after": {"denominator": 200, "numerator": 4}, "before": {"denominator": 200, "numerator": 4}}}}, "guardrails": {"check": {"groundedness": {"after": 0.5, "before": 0.5, "changed_eligibility": false, "improvement": 0.0, "paired_books": 2, "undefined_books": 0}, "inserted_text_per_100": {"after": 2, "before": 2, "changed_eligibility": false, "improvement": 0, "paired_books": 2, "undefined_books": 0}, "unsuccessful_pages_per_100": {"after": 2, "before": 2, "changed_eligibility": false, "improvement": 0, "paired_books": 2, "undefined_books": 0}}, "iterate": {"groundedness": {"after": 0.5, "before": 0.5, "changed_eligibility": false, "improvement": 0.0, "paired_books": 2, "undefined_books": 0}, "inserted_text_per_100": {"after": 2, "before": 2, "changed_eligibility": false, "improvement": 0, "paired_books": 2, "undefined_books": 0}, "unsuccessful_pages_per_100": {"after": 2, "before": 2, "changed_eligibility": false, "improvement": 0, "paired_books": 2, "undefined_books": 0}}}, "hypothesis": "Recover missed characters without other regression", "noise_run_ids": ["example-baseline", "example-replicate"], "primaries": {"check": {"character_recall": {"after": 0.5, "before": 0.5, "changed_eligibility": false, "improvement": 0.0, "paired_books": 2, "undefined_books": 0}, "gender": {"after": 0.5, "before": 0.5, "changed_eligibility": false, "improvement": 0.0, "paired_books": 2, "undefined_books": 0}, "human": {"after": 0.5, "before": 0.5, "changed_eligibility": false, "improvement": 0.0, "paired_books": 2, "undefined_books": 0}, "protagonist": {"after": 0.5, "before": 0.5, "changed_eligibility": false, "improvement": 0.0, "paired_books": 2, "undefined_books": 0}, "text_accuracy": {"after": 0.5, "before": 0.5, "changed_eligibility": false, "improvement": 0.0, "paired_books": 2, "undefined_books": 0}}, "iterate": {"character_recall": {"after": 0.53, "before": 0.5, "changed_eligibility": false, "improvement": 0.030000000000000027, "paired_books": 2, "undefined_books": 0}, "gender": {"after": 0.5, "before": 0.5, "changed_eligibility": false, "improvement": 0.0, "paired_books": 2, "undefined_books": 0}, "human": {"after": 0.5, "before": 0.5, "changed_eligibility": false, "improvement": 0.0, "paired_books": 2, "undefined_books": 0}, "protagonist": {"after": 0.5, "before": 0.5, "changed_eligibility": false, "improvement": 0.0, "paired_books": 2, "undefined_books": 0}, "text_accuracy": {"after": 0.5, "before": 0.5, "changed_eligibility": false, "improvement": 0.0, "paired_books": 2, "undefined_books": 0}}}, "target": "character_recall", "verdict": "accept"}
+```
+
+</details>

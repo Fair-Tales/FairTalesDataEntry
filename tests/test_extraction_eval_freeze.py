@@ -315,20 +315,15 @@ def test_selections_cli_generate_verify_and_detect_any_difference(selection_inpu
     assert {p: p.read_bytes() for p in seal_path.iterdir()} == original
 
 
-def test_committed_selections_match_real_seal(capsys):
-    root = freeze.REPO_ROOT.parent / "autonomy-freeze"
-    seal_path, manifest_path = root / "freeze.json", root / "snapshot/manifest.json"
-    if not seal_path.is_file() or not manifest_path.is_file():
-        pytest.skip("Local sealed snapshot is absent")
-    # Never decode held-out/protected references in the offline suite. Full
-    # producer replay is covered with synthetic books above; real data here is
-    # limited to sealed ids and counts of alias-array entries.
-    sealed = json.loads(seal_path.read_text())
+def test_committed_selections_have_frozen_counts():
+    # The standing sealed-book rule forbids opening the real snapshot even to
+    # inspect structure. Producer replay above uses synthetic books only.
     selected = freeze.load_selections()
-    assert selected['book_strata'] == freeze.selection_strata(
-        freeze.alias_counts_from_manifest(manifest_path), sealed)
-    for field in ('imported80_ids', 'protected40_ids', 'tune41_ids', 'imported80_ids_sha256'):
-        assert selected[field] == sealed[field]
+    for field, count in freeze.SELECTION_COUNTS.items():
+        assert len(selected[field]) == count
+    all_ids = set().union(*(set(selected[field]) for field in
+                           ('iterate55_ids', 'check20_ids', 'protected40_ids', 'imported80_ids')))
+    assert set(selected['book_strata']) == all_ids
 
 
 def test_alias_strata_decode_only_ids_and_verify_detects_changes(selection_inputs, tmp_path, monkeypatch):

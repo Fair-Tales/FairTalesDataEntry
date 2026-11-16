@@ -308,6 +308,19 @@ _SCAN_METRICS = {
 _SCAN_PRIMARIES = ('text_accuracy', 'character_recall', 'gender', 'human', 'protagonist')
 
 
+def scan_metric(book, name):
+    """Numeric projection shared by cohort summaries and tuning comparisons."""
+    path, value_key, numerator_key, denominator_key, _ = _SCAN_METRICS[name]
+    measure = book
+    for key in path:
+        measure = measure.get(key, {})
+    value = measure.get(value_key)
+    if book.get('status') == 'unavailable' and (name in _SCAN_PRIMARIES or name.startswith('strict_')):
+        value = 0.0
+    return {'value': value, 'numerator': measure.get(numerator_key),
+            'denominator': measure.get(denominator_key)}
+
+
 def summarize_scan_scores(scores, selections, *, cohort):
     """Count-only summary of already scored books; never opens source material."""
     from collections import Counter
@@ -331,19 +344,14 @@ def summarize_scan_scores(scores, selections, *, cohort):
                   'strata': dict(sorted(Counter(row['stratum'] for row in records).items())),
                   'metrics': {}}
         for name in names:
-            path, value_key, numerator_key, denominator_key, scale = _SCAN_METRICS[name]
+            _, _, numerator_key, _, scale = _SCAN_METRICS[name]
             values, denominators, numerators = [], [], []
             for book, record in zip(books, records):
-                measure = book
-                for key in path:
-                    measure = measure.get(key, {})
-                value = measure.get(value_key)
-                if book.get('status') == 'unavailable' and (name in _SCAN_PRIMARIES or name.startswith('strict_')):
-                    value = 0.0
-                values.append({**record, 'value': value})
-                denominators.append(measure.get(denominator_key))
+                measure = scan_metric(book, name)
+                values.append({**record, 'value': measure['value']})
+                denominators.append(measure['denominator'])
                 if numerator_key:
-                    numerators.append(measure.get(numerator_key))
+                    numerators.append(measure['numerator'])
             usable = [row['value'] for row in values if row['value'] is not None]
             known_items = [n for n in denominators if n is not None]
             known_numerators = [n for n in numerators if n is not None]
