@@ -629,10 +629,11 @@ class CharacterForm:
 
     gender_options = ["Female", "Male", "Non-specific", "Transgender"]
     gender_help = """
-        Please select character gender based only on pronouns. If it is not clear
-        because gendered pronouns are not used, please select `Non-specific`.
-        Please do not use the illustrations to infer gender and only select
-        `Transgender` if this is explicit in the text.
+        Code gender from what the text says about the character, such as pronouns
+        (she, he) and gendered words (mum, king, hen).
+        Select `Non-specific` when the text gives no such cue; never infer gender
+        from pictures or from what a character does or likes.
+        Select `Transgender` only when the text says so explicitly.
     """
 
     # TODO: confirm taxonomy with team
