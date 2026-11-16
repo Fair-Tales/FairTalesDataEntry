@@ -1,0 +1,51 @@
+# Baseline runs from colour scans (16 November 2026)
+
+Step 1 of the tuning loop (`planning/tuning_process_design_2026-11-10.md` §5):
+run the old prompts and the new on 30 Iterate books, then carry the better set
+to the other 25 Iterate books and the 20 Check books. Chris authorised the probe
+and both parts on 16 November (`AFFIRMATIVE`), about $80 in all, inside the $150
+monthly evaluation cap.
+
+## Set-up
+
+- **Code:** `claude-dev` at `8643d68`, checked out as a detached worktree in
+  `evaluation_runs/code-8643d68` so the runs do not see later edits.
+- **Arms:** `baseline.json` (old prompts, `legacy-v1`) and
+  `candidate_pipeline_v2.json` (new prompts, `rules-plus-icl`); both use Sonnet 5
+  for transcription, metadata and characters.
+- **Inputs:** original colour scans (`--inputs scans`) paired by
+  `inputs_manifest_tune.json`; all 75 tuning books are `ready` with Word-export
+  references.
+- **Ledger and caps:** a new ledger, `evaluation_runs/spend.sqlite` (ignored). The
+  evidence ledger is left untouched, because opening it would migrate it. The
+  evidence ledger records $15.05 of evaluation spend this calendar month (1,669
+  calls on 5 November), so the Anthropic cycle cap on the new ledger is lowered
+  to $134 (`--cycle-cap-usd 134`), keeping the month inside $150. Cycle start day
+  is still the placeholder 1.
+
+## Which 30 books
+
+The design names no rule for the 30, so they are drawn before any run. The pool
+is the 45 Iterate books that supplied no prompt example. Leave-one-out is wired,
+so a source book would only lose its own examples, but drawing outside the
+sources means both arms see identical example packs on every compared book.
+Within each alias stratum, take books in ascending SHA-256 of
+`tuning-baseline|20261116|<stratum>|<id>` (ties by UTF-8 id), allocated in
+proportion to the pool: 16 of 24 `alias_zero`, 14 of 21 `alias_positive`.
+
+Part 1 (30): born_to_be_a_butterfly, bottoms_up!, elmer_and_the_wind,
+elmer_on_stilts, father_christmas_needs_a_wee, giraffe_is_left_out,
+jesus'_christmas_party, kipper's_a_to_z, lenny_makes_a_wish,
+little_red_riding_hood, lost_in_snow, norman_the_slug_with_the_silly_shell,
+sharing_a_shell, supertato, tabby_mctat, ten_in_the_bed_and_other_counting_rhymes,
+ten_tall_giraffes, the_bad-tempered_ladybird, the_book_with_no_pictures, the_cave,
+the_little_bully, the_monstrous_tale_of_celery_crumble, the_pirates_next_door,
+the_rescue_party, the_same_but_different_too, the_three_little_pigs,
+the_wheels_on_the_bus, what_the_ladybird_heard_next, who_will_save_us, you_choose.
+
+Part 2: the other 25 Iterate books, including all ten example sources, and the
+20 Check books, with the better arm.
+
+## Results
+
+Recorded below as each run finishes.
