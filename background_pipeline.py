@@ -1,10 +1,11 @@
-"""Durable, bounded book extraction using the application's shared helpers.
+"""Durable book extraction using the application's shared helpers.
 
-One daemon scheduler per application process advances one book at a time. The
-queue contains job identifiers and explicit clients, never image lists. Raw
-sources, settings, page results and character suggestions survive browser and
+Interactive uploads each have a daemon worker; durable batch jobs share one
+serial scheduler per application process. The queue contains job identifiers
+and explicit clients, never image lists. Raw sources, settings, page results
+and character suggestions survive browser and
 process loss. Closing a browser does not stop a daemon; application shutdown
-can. Resuming after shutdown requires opening the batch again.
+can. Resuming after shutdown requires reopening the upload or batch.
 
 Entity persistence stays on the script thread. Operational jobs and claims use
 raw-client transactions; worker helpers receive a thread-local usage recorder.
@@ -709,6 +710,27 @@ def _detect_characters(db, job_id, client, settings):
 # Worker lifecycle (spawn / resume / cancel).
 # ---------------------------------------------------------------------------
 
+def _run_registered_worker(job_id, entry):
+    """Run either kind of worker with the same failure handling and cleanup."""
+    fs, db, client = entry['dependencies']
+    try:
+        data = _job_ref(db, job_id).get().to_dict() or {}
+        if data and not entry['cancel'].is_set() and data.get('status') not in ('cancelled', 'finalized'):
+            _run_worker(fs, db, client, data.get('ai_settings') or entry['settings'],
+                        job_id, data['s3_prefix'], data['page_count'], None, entry['cancel'])
+    except Exception as exc:  # final isolation boundary: logged and persisted, never silent
+        logger.exception('pipeline worker: job %s failed', job_id)
+        try:
+            _set_job_if_active(db, job_id, {'status': 'blocked', 'worker_error': str(exc)})
+        except _SERVICE_ERRORS as persistence_error:
+            logger.warning('pipeline worker: job %s status could not be saved: %s',
+                           job_id, persistence_error)
+    finally:
+        with _REGISTRY_LOCK:
+            if _ACTIVE_WORKERS.get(job_id) is entry:
+                _ACTIVE_WORKERS.pop(job_id, None)
+
+
 def _scheduler_loop():
     global _SCHEDULER_THREAD
     while True:
@@ -720,37 +742,34 @@ def _scheduler_loop():
             entry = _ACTIVE_WORKERS.get(job_id)
         if entry is None:
             continue
-        fs, db, client = entry['dependencies']
-        try:
-            data = _job_ref(db, job_id).get().to_dict() or {}
-            if data and not entry['cancel'].is_set() and data.get('status') not in ('cancelled', 'finalized'):
-                _run_worker(fs, db, client, data.get('ai_settings') or entry['settings'],
-                            job_id, data['s3_prefix'], data['page_count'], None, entry['cancel'])
-        except Exception as exc:  # final isolation boundary: logged and persisted, never silent
-            logger.exception('pipeline scheduler: job %s failed', job_id)
-            try:
-                _set_job_if_active(db, job_id, {'status': 'blocked', 'worker_error': str(exc)})
-            except _SERVICE_ERRORS as persistence_error:
-                logger.warning('pipeline scheduler: job %s status could not be saved: %s',
-                               job_id, persistence_error)
-        finally:
-            with _REGISTRY_LOCK:
-                if _ACTIVE_WORKERS.get(job_id) is entry:
-                    _ACTIVE_WORKERS.pop(job_id, None)
+        _run_registered_worker(job_id, entry)
 
 
 def _spawn_worker(fs, db, client, settings, job_id, s3_prefix, page_count, raw_bytes_list):
-    """Queue identifiers through the one-book process-wide admission limit."""
+    """Start interactive uploads directly; keep durable jobs on the serial queue."""
     global _SCHEDULER_THREAD
-    # Legacy callers pass bytes. Stage them before enqueueing so waiting jobs
-    # cannot retain whole books in RAM. New batch callers pass durable refs.
+    # Legacy callers pass bytes. Keep staging before dispatch so workers and
+    # queued jobs retain no image lists. New batch callers pass durable refs.
     if raw_bytes_list is not None:
         if not _stage_sources(fs, db, job_id, s3_prefix, page_count, raw_bytes_list,
                               lambda: (_job_ref(db, job_id).get().to_dict() or {}).get('status') == 'cancelled'):
             return None
+    data = _job_ref(db, job_id).get().to_dict() or {}
+    # Only the interactive photo flow stores a fingerprint, including legacy
+    # jobs. Read it from persistence so resume needs no browser bytes or flag.
+    interactive = bool(data.get('fingerprint')) and not data.get('batch_id')
     with _REGISTRY_LOCK:
         entry = _ACTIVE_WORKERS.get(job_id)
         if entry is not None:
+            return entry
+        if interactive:
+            entry = {'cancel': threading.Event(), 'dependencies': (fs, db, client),
+                     'settings': dict(settings)}
+            thread = threading.Thread(target=_run_registered_worker, args=(job_id, entry),
+                                      name=f'book-pipeline-{job_id}', daemon=True)
+            entry['thread'] = thread
+            _ACTIVE_WORKERS[job_id] = entry
+            thread.start()
             return entry
         if _SCHEDULER_THREAD is None or not _SCHEDULER_THREAD.is_alive():
             _SCHEDULER_THREAD = threading.Thread(target=_scheduler_loop,

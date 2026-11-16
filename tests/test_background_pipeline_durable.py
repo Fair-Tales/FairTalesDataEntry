@@ -276,7 +276,7 @@ def test_explicit_retry_invalidates_review_and_finalization(transaction_db):
     assert bp._page_ref(db, 'job1', 2).get().to_dict()['materialized_page'] == {'text': ''}
 
 
-def test_scheduler_bounds_all_jobs_and_retains_no_images(monkeypatch):
+def test_scheduler_bounds_batch_jobs_and_retains_no_images(monkeypatch):
     db, fs = FakeClient(), FakeFs()
     entered, finish = threading.Event(), threading.Event()
     state = {'active': 0, 'peak': 0}
@@ -293,17 +293,155 @@ def test_scheduler_bounds_all_jobs_and_retains_no_images(monkeypatch):
     monkeypatch.setattr(bp, '_run_worker', run)
     for name in ('one', 'two'):
         bp.create_or_get_job(fs, db, object(), SETTINGS, job_id=name,
-                            source_keys=['durable/1'], entered_by='alice')
+                            source_keys=['durable/1'], entered_by='alice', batch_id='batch')
     first = bp.resume_job(fs, db, object(), 'one')
-    assert entered.wait(3)
-    second = bp.resume_job(fs, db, object(), 'two')
-    assert first['thread'] is second['thread']
-    assert list(bp._WORK_QUEUE) == ['two']
-    finish.set()
-    first['thread'].join(timeout=3)
+    try:
+        assert entered.wait(3)
+        second = bp.resume_job(fs, db, object(), 'two')
+        assert first['thread'] is second['thread']
+        assert list(bp._WORK_QUEUE) == ['two']
+        assert calls == ['one']
+    finally:
+        finish.set()
+        first['thread'].join(timeout=3)
+    assert not first['thread'].is_alive()
     assert calls == ['one', 'two']
     assert state['peak'] == 1
     assert not bp._ACTIVE_WORKERS
+
+
+def test_interactive_uploads_process_concurrently(fast_stages, monkeypatch):
+    db, fs = FakeClient(), FakeFs()
+    entered = {raw: threading.Event() for raw in (b'alice', b'bob')}
+    finish = threading.Event()
+    calls, entries, links = [], [], []
+
+    def extract(image, *args, **kwargs):
+        calls.append(image)
+        entered[image].set()
+        assert finish.wait(3)
+        return 'ok', (image.decode(), True, 'story')
+
+    monkeypatch.setattr(uploader, 'attempt_page_extraction', extract)
+    try:
+        for raw in entered:
+            session = {}
+            link = bp.start_page_processing_job(
+                session, fs, db, object(), SETTINGS, [raw],
+                entered_by=raw.decode(), extracted_title=None)
+            links.append(link)
+            entries.append(bp._ACTIVE_WORKERS[link['job_id']])
+            assert entered[raw].wait(3)
+            # A rerun or another session resuming this live job reuses its worker.
+            assert bp.start_page_processing_job(
+                session, fs, db, object(), SETTINGS, [raw],
+                entered_by=raw.decode(), extracted_title=None) is link
+            assert bp.resume_job(fs, db, object(), link['job_id']) is entries[-1]
+        assert entries[0]['thread'] is not entries[1]['thread']
+        assert all(bp.worker_alive_for(link)() for link in links)
+        assert calls == [b'alice', b'bob']
+        assert not bp._WORK_QUEUE
+        assert bp._SCHEDULER_THREAD is None
+    finally:
+        finish.set()
+        for entry in entries:
+            entry['thread'].join(timeout=3)
+    for link in links:
+        assert not bp.worker_alive_for(link)()
+        assert bp.get_job_progress(db, link['job_id'])['status'] == 'complete'
+
+
+def test_interactive_upload_starts_while_batch_is_processing(fast_stages, monkeypatch):
+    db, fs = FakeClient(), FakeFs()
+    batch_entered, upload_entered, finish = (threading.Event() for _ in range(3))
+    entries = []
+    fs.store['durable/1'] = b'batch'
+
+    def extract(image, *args, **kwargs):
+        (batch_entered if image == b'batch' else upload_entered).set()
+        assert finish.wait(3)
+        return 'ok', (image.decode(), True, 'story')
+
+    monkeypatch.setattr(uploader, 'attempt_page_extraction', extract)
+    batch = bp.create_or_get_job(fs, db, object(), SETTINGS, job_id='batch_book',
+        source_keys=['durable/1'], entered_by='alice', batch_id='batch')
+    try:
+        entries.append(bp.resume_job(fs, db, object(), batch['job_id']))
+        assert batch_entered.wait(3)
+        upload = bp.start_page_processing_job({}, fs, db, object(), SETTINGS, [b'upload'],
+                                             entered_by='bob', extracted_title=None)
+        entries.append(bp._ACTIVE_WORKERS[upload['job_id']])
+        assert upload_entered.wait(3)
+        assert entries[0]['thread'] is not entries[1]['thread']
+        assert all(entry['thread'].is_alive() for entry in entries)
+        assert not bp._WORK_QUEUE
+    finally:
+        finish.set()
+        for entry in entries:
+            entry['thread'].join(timeout=3)
+    for link in (batch, upload):
+        assert not bp.worker_alive_for(link)()
+        assert bp.get_job_progress(db, link['job_id'])['status'] == 'complete'
+
+
+@pytest.mark.parametrize('resume', ['persisted', 'session', 'legacy_session'])
+def test_interactive_job_resumes_after_worker_failure(fast_stages, monkeypatch, resume):
+    db, fs = FakeClient(), FakeFs()
+    entered, finish = threading.Event(), threading.Event()
+    run_worker = bp._run_worker
+
+    def fail(*args):
+        entered.set()
+        assert finish.wait(3)
+        raise AttributeError('interrupted worker')
+
+    monkeypatch.setattr(bp, '_run_worker', fail)
+    link = bp.start_page_processing_job({}, fs, db, object(), SETTINGS, [b'page'],
+                                       entered_by='alice', extracted_title=None)
+    first = bp._ACTIVE_WORKERS[link['job_id']]
+    try:
+        assert entered.wait(3)
+    finally:
+        finish.set()
+        first['thread'].join(timeout=3)
+    assert not bp.worker_alive_for(link)()
+    assert link['job_id'] not in bp._ACTIVE_WORKERS
+    assert bp.get_job_progress(db, link['job_id'])['status'] == 'blocked'
+
+    # A later session has only the saved link and durable sources, no upload bytes.
+    fresh_db = FakeClient()
+    fresh_db.store = db.store
+    session = {bp.JOB_STATE_KEY: dict(link)}
+    recovered = bp.get_active_job(session, fresh_db, [b'page'])
+    assert recovered == link
+    if resume == 'legacy_session':
+        bp._job_ref(db, link['job_id']).set({'ai_settings': None}, merge=True)
+    received_settings, threads = [], []
+
+    def run(*args):
+        received_settings.append(args[3])
+        threads.append(threading.current_thread())
+        assert args[-2] is None
+        run_worker(*args)
+
+    monkeypatch.setattr(bp, '_run_worker', run)
+    # Capture before it can finish and remove itself from the registry.
+    with bp._REGISTRY_LOCK:
+        if resume == 'persisted':
+            second = bp.resume_job(fs, fresh_db, object(), link['job_id'])
+        else:
+            ui_settings = SETTINGS if resume == 'legacy_session' else dict(SETTINGS, extraction_max_edge=1000)
+            bp.ensure_worker_running(fs, fresh_db, object(), ui_settings, recovered)
+            second = bp._ACTIVE_WORKERS[link['job_id']]
+    second['thread'].join(timeout=3)
+    assert not second['thread'].is_alive()
+    assert second['thread'] is not first['thread']
+    assert threads == [second['thread']]
+    assert bp._SCHEDULER_THREAD is None
+    assert received_settings == [validate_settings(SETTINGS)]
+    assert bp.get_job_progress(fresh_db, link['job_id'])['status'] == 'complete'
+    assert bp._page_ref(fresh_db, link['job_id'], 1).get().to_dict()['text'] == 'page'
+    assert link['job_id'] not in bp._ACTIVE_WORKERS
 
 
 def test_worker_usage_uses_injected_raw_client_without_streamlit(monkeypatch):
