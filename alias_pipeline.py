@@ -12,7 +12,7 @@ import re
 import unicodedata
 from difflib import SequenceMatcher
 
-from scripts.extraction_eval.normalization import tokenize
+from text_normalization import tokenize
 
 ALIAS_SCHEMA_VERSION = "alias-mentions-v2"
 MATCHER_VERSION = "article-only-overlap-components-v1"

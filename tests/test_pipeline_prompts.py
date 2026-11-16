@@ -153,26 +153,79 @@ def test_committed_examples_are_iterate_books():
     assert all(row["book_id"] in selections["iterate55_ids"] for row in pack["examples"])
 
 
-def test_app_prompt_import_does_not_grow_harness_coupling():
+def test_app_imports_no_scripts_modules():
     result = subprocess.run([sys.executable, "-c", """
-import json
+import ast
+import importlib.abc
 from pathlib import Path
+import socket
 import sys
 
-# The live app must not depend on selections, even when that file is broken.
+class NoScripts(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        assert fullname != 'scripts' and not fullname.startswith('scripts.'), fullname
+
+sys.meta_path.insert(0, NoScripts())
+def no_network(*args, **kwargs):
+    raise AssertionError('App import attempted network access')
+socket.socket.connect = socket.socket.connect_ex = no_network
+
+# A broken evaluation input must have no effect on app startup/rendering.
 original = Path.open
 def checked_open(path, *args, **kwargs):
     assert path.name != 'selections.json', 'App import read evaluation selections'
     return original(path, *args, **kwargs)
 Path.open = checked_open
+
+import Home
+import utilities
+import background_pipeline
+import extraction_core
+import image_processing
+import alias_pipeline
+import alias_schema
 import text_content.ai_prompts
-print(json.dumps(sorted(name for name in sys.modules
-                        if name.startswith('scripts.extraction_eval.'))))
-"""], cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, check=True)
-    assert set(json.loads(result.stdout)) <= {
-        "scripts.extraction_eval.tuning", "scripts.extraction_eval.store",
-        "scripts.extraction_eval.openai_adapter", "scripts.extraction_eval.exposure",
-    }
+
+# Pages run UI/database work at module scope. Execute their import declarations
+# (including deferred imports), not their page bodies. All page files are covered,
+# so cross-page imports can be skipped here without skipping their dependencies.
+for path in sorted(Path('pages').glob('*.py')):
+    for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            names = ([node.module] if isinstance(node, ast.ImportFrom)
+                     else [alias.name for alias in node.names])
+            if any(name == 'pages' or name.startswith('pages.') for name in names):
+                continue
+            exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), 'exec'), {})
+
+from text_content.pipeline_prompts import RULES, current_loader, prompt_for
+assert current_loader() is None
+for stage in RULES:
+    assert prompt_for(stage, 'rules-only')
+    assert prompt_for(stage, 'rules-plus-icl')
+assert not [name for name in sys.modules
+            if name == 'scripts' or name.startswith('scripts.')]
+"""], cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_evaluation_example_hook_is_scoped_and_restored(cohort_loader_factory):
+    from contextvars import Context
+    from text_content.pipeline_prompts import current_loader
+    from scripts.extraction_eval.tuning import current_loader as harness_loader
+
+    outer = cohort_loader_factory()
+    inner = cohort_loader_factory()
+    assert current_loader() is None
+    with outer.activate():
+        assert current_loader() is harness_loader() is outer
+        assert Context().run(current_loader) is None
+        with pytest.raises(RuntimeError, match="synthetic failure"):
+            with inner.activate():
+                assert current_loader() is harness_loader() is inner
+                raise RuntimeError("synthetic failure")
+        assert current_loader() is harness_loader() is outer
+    assert current_loader() is harness_loader() is None
 
 
 @pytest.mark.parametrize("key", ["held_out_book_ids", "held_out_groups"])

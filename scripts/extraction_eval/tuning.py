@@ -28,7 +28,7 @@ class TuningExposure(RuntimeError):
 
 
 def load_selections(path=SELECTIONS_PATH):
-    # App prompt imports must not pull in the offline freeze machinery.
+    # Keep freeze's imports deferred to avoid a harness import cycle.
     from .freeze import load_selections as load
     return load(path)
 
@@ -221,9 +221,12 @@ class TuningLoader:
 
     @contextmanager
     def activate(self):
+        from text_content.pipeline_prompts import example_loader_context
+
         token = _active.set(self)
         try:
-            yield self
+            with example_loader_context(current_loader):
+                yield self
         finally:
             _active.reset(token)
 

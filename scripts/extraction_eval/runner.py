@@ -22,7 +22,7 @@ from .store import (BudgetStopped, CachedFailure, OutcomeUnknown, atomic_json,
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_PATHS = ("pipeline_config.py", "ai_runtime.py", "extraction_core.py", "utilities.py", "image_processing.py",
                 "text_content/ai_prompts.py", "conventions.py", "bibliography.py",
-                "character_evidence.py", "alias_schema.py", "alias_pipeline.py",
+                "character_evidence.py", "alias_schema.py", "alias_pipeline.py", "text_normalization.py",
                 "text_content/pipeline_prompts.py", "text_content/pipeline_examples.json",
                 "text_content/pipeline_runtime.py", "text_content/publication.py")
 

@@ -5,7 +5,7 @@ Canonical strings are lexical projections, never identity keys or mention patter
 import hashlib
 import json
 from collections.abc import Mapping
-from scripts.extraction_eval.normalization import normalize_name
+from text_normalization import normalize_name
 
 ALIAS_SCHEMA_VERSION = "alias-mentions-v2"
 CANONICAL_RULE_VERSION = "alias-canonical-v1"

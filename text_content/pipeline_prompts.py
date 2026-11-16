@@ -14,6 +14,23 @@ CHARACTER_PARTIAL = "Character response was incomplete; partial evidence retaine
 CHARACTER_STRUCTURE_INVALID = "Character response has an invalid structure; raw evidence retained."
 PROMPT_VARIANTS = ("legacy-v1", "rules-only", "rules-plus-icl")
 _evaluation_book = ContextVar("evaluation_prompt_book", default=None)
+_loader_hook = ContextVar("prompt_example_loader_hook", default=None)
+
+
+def current_loader():
+    """The app has no loader; evaluation supplies its own scoped hook."""
+    hook = _loader_hook.get()
+    return hook() if hook is not None else None
+
+
+@contextmanager
+def example_loader_context(hook):
+    """Install evaluation's loader lookup without importing the harness."""
+    token = _loader_hook.set(hook)
+    try:
+        yield
+    finally:
+        _loader_hook.reset(token)
 
 
 @contextmanager
@@ -452,7 +469,6 @@ photographs, alongside publisher, publisher_role, year, scope and quote.""",
 
 
 def load_example_pack(*, held_out_book_ids=(), held_out_groups=()):
-    from scripts.extraction_eval.tuning import current_loader
     path = Path(__file__).with_name("pipeline_examples.json")
     loader = current_loader()
     if loader:
@@ -477,8 +493,6 @@ def load_example_pack(*, held_out_book_ids=(), held_out_groups=()):
 
 
 def _stage_examples(stage, variant):
-    from scripts.extraction_eval.tuning import current_loader
-
     if variant not in PROMPT_VARIANTS:
         raise ValueError("Unknown prompt variant")
     if variant != "rules-plus-icl":
