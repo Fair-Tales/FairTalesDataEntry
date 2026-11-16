@@ -444,6 +444,7 @@ def _score_loaded(args, loader):
 
 
 def _score_scans(args, contract, predictions, selection, manifest):
+    from .alias_metrics import score_aliases
     from .inputs_manifest import scoring_inputs
     from .normalization import NORMALIZATION_VERSION
     from .scoring import score_book_text, score_character_recall, score_character_attributes
@@ -462,17 +463,22 @@ def _score_scans(args, contract, predictions, selection, manifest):
         score = score_book_text([row['reference_text'] or ''], [row['prediction_text']],
                                 text_output=args.text_output, forced_score=row['forced_score'])
         reference = references.get(row['id'], {})
-        prediction = predictions.get('books', {}).get(row['id'], {}).get('characters') or {}
+        book_prediction = predictions.get('books', {}).get(row['id'], {})
+        prediction = book_prediction.get('characters') or {}
         predicted = prediction.get('value')
         if row['status'] == 'unavailable' or prediction.get('status') != 'completed' or not isinstance(predicted, list):
             predicted = []
         characters = score_character_recall(reference.get('value') or [], predicted)
         characters.update(reference_status=reference.get('status', 'missing'),
                           prediction_status=prediction.get('status', 'pending'))
+        pages = [(page_id, page.get('text') or '')
+                 for page_id, page in book_prediction.get('pages', {}).items()
+                 if page.get('status') == 'completed']
         scores.append({**score, 'id': row['id'], 'status': row['status'],
                        'reason': row['reason'], 'failed_pages': row['failed_pages'],
                        'characters': characters,
-                       'attributes': score_character_attributes(characters)})
+                       'attributes': score_character_attributes(characters),
+                       'aliases': score_aliases(characters, pages)})
     summary = {'measure': 'book-token-edit-accuracy-v1', 'snapshot_id': contract['snapshot_id'],
                'text_output': args.text_output, 'normalization_version': NORMALIZATION_VERSION,
                'book_denominator': len(scores), 'book_scores': scores}

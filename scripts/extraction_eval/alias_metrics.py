@@ -12,7 +12,8 @@ from itertools import combinations, product
 
 from text_content.alias_metrics import AliasMetrics
 
-from .normalization import UNCERTAINTY, normalize_text, tokenize
+from .normalization import (CHARACTER_NORMALIZATION_VERSION, UNCERTAINTY,
+                            normalize_character_name, normalize_text, tokenize)
 
 FOUNDATION_VERSION = "alias-foundation-metrics-v1"
 GROUNDING_VERSION = "page-token-grounding-permissive-determiners-v1"
@@ -229,6 +230,126 @@ def _grounding_counts(ledger):
             "editorial_allowances": editorial, "editorial_rate": _ratio(editorial, denominator),
             "explained_support": _ratio(grounded + editorial, denominator), "unexplained_rate": _ratio(counts["ungrounded"] - editorial, denominator),
             "ocr_gap_diagnostics": dict(Counter(entry["ocr_gap_diagnostic"] for entry in ledger))}
+
+
+def score_aliases(characters, pages):
+    """Four descriptive per-book figures beside the scan character measure.
+
+    ``characters`` is score_character_recall's result; ``pages`` contains
+    (page id, completed pipeline text) pairs. Recall and extras use its fixed
+    one-to-one owner matching. Coverage uses only invariant owners. Indices in
+    the ledgers address the original casts, including duplicate character IDs.
+    """
+    from .scoring import _maximum_matching
+
+    refs, preds = (_entities(characters[side]) for side in ('reference', 'prediction'))
+    # Use indices for audit identity: imported entity IDs need not be unique.
+    for entities in (refs, preds):
+        for index, entity in enumerate(entities):
+            entity['id'] = str(index)
+
+    def surfaces(entity, aliases_only=False):
+        raw = entity['raw_aliases'] if aliases_only else [entity['name'], *entity['raw_aliases']]
+        return {normalize_character_name(name): name for name in raw if tokenize(name)}
+
+    ref_forms = [surfaces(entity) for entity in refs]
+    pred_forms = [surfaces(entity) for entity in preds]
+    owners = {pair['reference']: pair['prediction'] for pair in characters['matches']}
+    unresolved = {pair['reference'] for pair in characters['ambiguous_matches']}
+    edges = {r: [] for r in range(len(refs))}
+    for pair in characters['candidate_matches']:
+        edges[pair['reference']].append(pair['prediction'])
+    # An unmatched reference can replace a matched owner in another maximum.
+    for r in characters['unmatched_reference']:
+        for p in edges[r]:
+            remaining = {other: [candidate for candidate in options if candidate != p]
+                         for other, options in edges.items() if other != r}
+            if 1 + len(_maximum_matching(remaining)) == len(owners):
+                unresolved.add(r)
+                break
+
+    coverage = []
+    for r, p in owners.items():
+        if r in unresolved:
+            continue
+        primary = normalize_character_name(preds[p]['name'])
+        coverage.extend({'reference': r, 'prediction': p, 'surface': raw,
+                         'recovered': key in pred_forms[p]}
+                        for key, raw in ref_forms[r].items() if key != primary)
+    recovered = sum(row['recovered'] for row in coverage)
+    explicit = {'numerator': recovered, 'denominator': len(coverage),
+                'coverage': _ratio(recovered, len(coverage)), 'entries': coverage,
+                'unresolved_owner_count': len(unresolved),
+                'unresolved_owners': sorted(unresolved),
+                'unmatched_owners': [r for r in characters['unmatched_reference'] if r not in unresolved]}
+
+    recall_entries = []
+    for r, entity in enumerate(refs):
+        p = owners.get(r)
+        recall_entries.extend({'reference': r, 'prediction': p, 'surface': raw,
+                               'recovered': p is not None and key in pred_forms[p]}
+                              for key, raw in surfaces(entity, aliases_only=True).items())
+    recovered = sum(row['recovered'] for row in recall_entries)
+    recall = {'numerator': recovered, 'denominator': len(recall_entries),
+              'recall': _ratio(recovered, len(recall_entries)), 'entries': recall_entries}
+
+    inverse_owners = {p: r for r, p in owners.items()}
+    per_character, additional, duplicates = [], [], []
+    form_owners = {}
+    for p, entity in enumerate(preds):
+        r = inverse_owners.get(p)
+        known = ref_forms[r] if r is not None else {}
+        seen = set()
+        distinct = extra = repeated = 0
+        for field, raw in [('name', entity['name']), *(('alias', raw) for raw in entity['raw_aliases'])]:
+            key = normalize_character_name(raw)
+            if key in seen:
+                duplicates.append({'prediction': p, 'surface': raw, 'field': field})
+                repeated += 1
+                continue
+            seen.add(key)
+            distinct += 1
+            if key not in known:
+                extra += 1
+                additional.append({'prediction': p, 'reference': r, 'surface': raw, 'field': field,
+                                   **grounding_support(raw, pages)})
+        per_character.append({'prediction': p, 'reference': r,
+                              'distinct_forms': distinct, 'additional_forms': extra,
+                              'emitted_forms': 1 + len(entity['raw_aliases']), 'duplicates': repeated})
+        for key, raw in pred_forms[p].items():
+            form_owners.setdefault(key, []).append({'prediction': p, 'surface': raw})
+    grounded = sum(row['tier'] != 'ungrounded' for row in additional)
+    distinct = sum(row['distinct_forms'] for row in per_character)
+    emitted = sum(row['emitted_forms'] for row in per_character)
+    extras = {'numerator': len(additional), 'denominator': distinct,
+              'share': _ratio(len(additional), distinct), 'per_character': per_character,
+              'entries': additional,
+              'duplicates': {'numerator': len(duplicates), 'denominator': emitted,
+                             'share': _ratio(len(duplicates), emitted), 'entries': duplicates},
+              'grounding': {'numerator': grounded, 'denominator': len(additional),
+                            'share': _ratio(grounded, len(additional))},
+              'ambiguous_forms': [{'tokens': list(key[0]), 'possessors': list(key[1]), 'owners': rows}
+                                  for key, rows in form_owners.items() if len(rows) > 1]}
+
+    # Reuse M1's exact ledger and lexical checks, with names and aliases separate
+    # so alias-only historical results remain directly reproducible.
+    aliases = _grounding_ledger(preds, 'aliases', pages, pages, [])
+    names = _grounding_ledger(preds, 'name', pages, pages, [])
+
+    def grounding(ledger):
+        counts = _grounding_counts(ledger)
+        return {'numerator': counts['grounded'], 'denominator': counts['aliases'],
+                'share': counts['lexical_grounding'],
+                **{key: counts[key] for key in ('exact', 'determiner_stripped', 'ungrounded')},
+                'entries': ledger}
+
+    return {'measure': 'scan-alias-figures-v1',
+            'normalization_version': CHARACTER_NORMALIZATION_VERSION,
+            'owner_matching': 'character_recall_representative_maximum',
+            'explicit_alias_coverage': explicit, 'alias_recall': recall,
+            'additional_aliases': extras,
+            'groundedness': {'version': GROUNDING_VERSION, **grounding(names + aliases),
+                             'names': grounding(names), 'aliases': grounding(aliases)}}
 
 
 def _audit_key(surface, version):

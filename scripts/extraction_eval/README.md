@@ -73,8 +73,8 @@ strings (including wordless and failed pages) and forces unavailable books to
 zero. `score --snapshot SNAPSHOT --run RUN --out REPORTS` writes `summary.json`
 and `book_scores.json` for the selected books, including unavailable books in
 `book_denominator`. Scan reports contain this text measure and per-book character
-recall. Attribute/alias measures, book means/ranges, overlays and comparisons
-are not implemented here. Stored-render runs retain their existing scoring and
+recall, attributes and the four descriptive alias figures below. Book means/ranges,
+overlays and comparisons are not implemented here. Stored-render runs retain their existing scoring and
 reports, including forced-edge character credit, so the published 5 November
 baseline figures remain reproducible.
 Supply `extract --reference-root` / `--published-text` when their later scoring
@@ -115,7 +115,7 @@ Maximum one-to-one matching retains all strict edges, never only forced edges;
 accepted tolerant edges cannot displace strict ones. `matches` marks each pair
 `strict` or `tolerant`; its indices and `unmatched_reference` refer to the returned
 original `reference` and `prediction` casts. A representative maximum matching
-does not establish invariant ownership for the later alias measure.
+does not establish invariant ownership for explicit-alias coverage.
 
 Each scan book also has `attributes`, from `score_character_attributes(characters)`:
 separate gender, human and protagonist scores (`character-attribute-recall-v1`).
@@ -169,8 +169,86 @@ pairing.** `matches` and `strict_matches` expose each field's choices;
 `pairing_changes` lists reference characters assigned a prediction different from
 the character headline (including previously unmatched references). Dropping a
 pair for a wrong code is not a changed pairing. These additions apply only to
-scan-input scoring; stored-render scoring is unchanged. Alias figures and means
-and ranges across books remain separate work.
+scan-input scoring; stored-render scoring is unchanged. Means and ranges across
+books remain separate work (A5e).
+
+
+Each scan book's `aliases` result comes from
+`alias_metrics.score_aliases(characters, pages)` (`scan-alias-figures-v1`).
+All four figures have numerators, denominators and surface/owner audit entries.
+They are descriptive; explicit-alias coverage is a tuning target and groundedness
+is its guardrail. None gates character recall or is a headline.
+
+- `explicit_alias_coverage`: recorded names and aliases, deduplicated within each
+  owner using `normalize_character_name`, excluding the matched prediction's
+  primary name. Credit requires that complete surface explicitly on that prediction;
+  a fuller/shorter-name identity edge alone earns no coverage. Only owner pairs
+  present in **every** maximum matching enter. `unresolved_owners` includes
+  references unmatched in the selected maximum that can be matched in another;
+  `unmatched_owners` lists references unmatched in every maximum. Both are outside
+  this conditional coverage denominator.
+- `alias_recall`: deduplicated recorded aliases recovered as explicit names or
+  aliases on their matched prediction. Uses the character headline's fixed
+  one-to-one owner matching, with a one-to-one intersection of normalized surfaces
+  within each owner. Possessors remain significant. No recorded aliases means
+  denominator 0 and recall `null`, not perfect recall.
+- `additional_aliases`: distinct predicted **forms**, including primary names,
+  beyond all recorded names/aliases of the selected matched owner. Unmatched
+  predictions have no recorded forms. `field` distinguishes primary names from
+  explicit aliases. Case and initial a/an/the are ignored with the same frozen
+  character normalization; a form equal to the primary or an earlier alias is a
+  duplicate, not an addition. Counts per character reconcile emitted forms,
+  distinct forms, duplicates and additions. The addition share is additions over
+  distinct forms; the duplicate share is repeat rows over emitted forms.
+  `grounding` is grounded additions over additions. `ambiguous_forms` lists exact
+  normalized forms owned by multiple predictions, including primary names; subset
+  overlaps are not equality. Extras are never labelled errors. Recall and extras
+  use the representative owner assignment, explicitly labelled in `owner_matching`;
+  unlike coverage, their values may depend on an ambiguous assignment.
+- `groundedness`: names **plus** aliases found in completed pipeline page text,
+  using M1's `_grounding_ledger`, `_grounding_counts` and `grounding_support`.
+  Checks are whole-token and page-local, exact first, then dropping one determiner
+  (including possessives, for this existence check only). Missing/failed pages
+  supply no support; missing text can therefore explain an ungrounded form.
+  Editorial allowances do not count as lexical grounding. M1 deduplicates case
+  within an owner's alias field, but keeps primary-name and alias fields separate;
+  an alias equal to its primary is counted in both fields. This differs from the
+  additional-form duplicate rule. `names` and `aliases` components expose the split.
+  The guardrail always uses full stored predicted page text, independently of the
+  selected text-accuracy projection.
+
+Measured dev20 alias regression, reading only `dev20-run/predictions.json` and
+`dev20-snap/manifest.json` (20 exposed books; pooled counts, **not book means**):
+
+| Figure | Numerator / denominator | Other counts |
+|---|---:|---|
+| Explicit-alias coverage | 14/27 (51.85%) | 2 unresolved owners excluded |
+| Alias recall | 5/10 (50%) | 5 alias-positive books; 15 undefined books |
+| Additional forms | 125/212 distinct forms | 217 emitted forms; 5/217 duplicates |
+| Additional-form groundedness | 106/125 (84.8%) | 19 ungrounded; 0 ambiguous shared forms |
+| Names-and-aliases groundedness | 197/217 (90.78%) | 186 exact, 11 determiner-stripped, 20 ungrounded |
+| Alias-only M1 component | 104/112 (92.86%) | 95 exact, 9 determiner-stripped, 8 ungrounded |
+| Primary-name component | 93/105 (88.57%) | 91 exact, 2 determiner-stripped, 12 ungrounded |
+
+Coverage reproduces the 11 November 14/27 and two excluded owners (`worm`,
+`worms` in *Wiggling Worms at Work*). Recall differs from historical 6/10 by
+exactly `mother` in *The Ugly Duckling*: historical `normalize_name` removed
+`his` from predicted `his mother`; the ratified character normalization preserves
+that possessor and earns no credit. The other five recovered aliases are
+`cave dad`, `anemone`, `bristleworm`, `ugly duckling` and `the swans`.
+Additional forms comprise 92 explicit aliases and 33 primary names; among the
+explicit aliases alone 84/92 are grounded. Five duplicates equal their own
+primary names (four in *The Three Little Pigs*, one in *Santa Is Coming to Devon*).
+The historical 92.9% is **alias-only**, reproduced exactly by the M1 component;
+adding primary names explains the combined figure's different denominator and rate.
+
+The test contains per-book regression counts and skips when exposed evidence is
+absent. No new aggregate estimator is introduced. M1's alias-only top level is
+redundant for the scan combined guardrail once its components are reported; M2's
+pairwise/subset counts and M3's subset collision flags are not needed for these
+four scan figures. They and the historical audits remain intact because
+`score_alias_foundation`, stored-render reports and their consumers still use them.
+Scan reports are JSON written by `cli._score_scans`; `reporting.py` remains unchanged.
 
 Measured exposed dev20 regression (20 books, 96 recorded characters; pooled
 counts, **not** means across books):

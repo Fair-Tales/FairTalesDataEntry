@@ -233,6 +233,11 @@ def test_scan_cli_uses_scan_pages_without_stored_renders(
     assert score['characters']['strict_numerator'] == 1
     assert score['characters']['tolerant_numerator'] == score['characters']['denominator'] == 2
     assert score['characters']['tolerant_recall'] == 1
+    assert score['aliases']['explicit_alias_coverage']['numerator'] == 0
+    assert score['aliases']['explicit_alias_coverage']['denominator'] == 1
+    assert score['aliases']['alias_recall']['recall'] is None
+    assert score['aliases']['additional_aliases']['numerator'] == 1
+    assert score['aliases']['groundedness']['denominator'] == 2
     for result in score['attributes'].values():
         assert result['denominator'] == 2
         assert result['recall'] == 1
@@ -247,6 +252,7 @@ def test_scan_cli_uses_scan_pages_without_stored_renders(
     assert summary['book_scores'][0]['insertions'] == 0
     assert summary['book_scores'][0]['characters'] == score['characters']
     assert summary['book_scores'][0]['attributes'] == score['attributes']
+    assert summary['book_scores'][0]['aliases'] == score['aliases']
     assert read_json(projected / 'book_scores.json') == summary['book_scores']
     assert set(path.name for path in projected.iterdir()) == {'summary.json', 'book_scores.json'}
     with pytest.raises(SystemExit):
@@ -348,6 +354,8 @@ def test_scan_character_failure_retains_recorded_denominator(tmp_path, monkeypat
     assert characters['denominator'] == 1
     assert characters['strict_recall'] == characters['tolerant_recall'] == 0
     assert characters['unmatched_reference'] == [0]
+    assert book['aliases']['groundedness']['denominator'] == 0
+    assert book['aliases']['groundedness']['share'] is None
     for result in book['attributes'].values():
         assert result['denominator'] == 1
         assert result['recall'] == result['strict_recall'] == 0
