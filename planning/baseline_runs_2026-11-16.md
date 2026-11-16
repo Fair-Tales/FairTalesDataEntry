@@ -48,4 +48,28 @@ Part 2: the other 25 Iterate books, including all ten example sources, and the
 
 ## Results
 
-Recorded below as each run finishes.
+Recorded below as each run finishes. One book's scores say nothing about
+quality; the probes check the path, the accounting and the scoring.
+
+### Probes (`the_three_little_pigs`, 28 scan pages)
+
+| Run | Code | Paid | Outcome |
+|---|---|---|---|
+| Old prompts | `8643d68` | $0.51 (estimate $0.64) | 60 calls, all `end_turn`; served models as requested |
+| New prompts | `8643d68` | $0.59 | Metadata and character calls stopped at `max_tokens` with every output token spent thinking (4,096 and 8,192); no characters returned |
+| Old prompts | `e01cd1a` | $0.33 | All `end_turn`; character call 842 output tokens, 323 thinking |
+| New prompts | `e01cd1a` | $0.65 | All `end_turn`; character call 12,171 output tokens, 8,491 thinking; one page rejected by the strict parser as `invalid_response` (an invented "no text" region beside the real text), a genuine new-prompt failure |
+
+The second probe exposed a defect, not a prompt effect: Sonnet 5 thinks by
+default and `max_tokens` caps thinking and answer together. Commit `e01cd1a`
+(branch `impl/output-ceilings`) raises the whole-book stages to 20,000 output
+tokens and page transcription to 8,192 for both arms, so part 1 runs from
+`e01cd1a`, not `8643d68`. Character recall on the probe book moved from 4 of 8
+to 8 of 8 between the two old-prompt runs, whose page requests differed only in
+the output ceiling: single-book figures are noisy, which the noise calibration
+(design §4) exists to measure.
+
+Full-book cost from the probes: old prompts $0.51, new prompts $0.83, both arms
+$1.16 with rotation shared. Projected by pages: part 1 (1,130 pages, both arms)
+about $47; part 2 (1,593 pages) about $48 with the new prompts or $29 with the
+old. Probes so far $2.09. Part 1 per-run caps: $30 old, $36 new.
