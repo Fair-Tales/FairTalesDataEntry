@@ -34,7 +34,7 @@ from google.api_core.exceptions import GoogleAPIError, AlreadyExists, FailedPrec
 
 from utilities import (
     page_layout, check_authentication_status, is_team_or_above, entered_by_username,
-    validation_heartbeat_due, get_s3_filesystem,
+    validation_heartbeat_due, get_s3_filesystem, character_boolean_input,
 )
 from image_processing import load_page_image
 from data_structures import Book, Page, Character, Alias, EditLog
@@ -649,7 +649,8 @@ def characters_editor(book):
         )
         new_gender = st.selectbox(
             CharacterForm.gender_label, options=CharacterForm.gender_options,
-            index=_guarded_index(CharacterForm.gender_options, character.gender),
+            index=(None if character.gender is None else
+                   _guarded_index(CharacterForm.gender_options, character.gender)),
             key=f"validation_char_gender_{character_ref.id}",
         )
         new_ethnicity = st.selectbox(
@@ -662,15 +663,15 @@ def characters_editor(book):
             index=_guarded_index(CharacterForm.disability_options, character.disability),
             key=f"validation_char_disability_{character_ref.id}",
         )
-        new_protagonist = st.checkbox(
+        new_protagonist = character_boolean_input(
             CharacterForm.protagonist_label, value=character.protagonist,
             key=f"validation_char_protagonist_{character_ref.id}",
         )
-        new_human = st.checkbox(
+        new_human = character_boolean_input(
             CharacterForm.human_label, value=character.human,
             key=f"validation_char_human_{character_ref.id}",
         )
-        new_plural = st.checkbox(
+        new_plural = character_boolean_input(
             CharacterForm.plural_label, value=character.plural,
             key=f"validation_char_plural_{character_ref.id}",
         )

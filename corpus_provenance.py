@@ -54,17 +54,33 @@ def apply_page_extraction(page, outcome, payload):
         page.text, page.contains_story = payload[:2]
 
 
+def character_attribute_values(suggestion):
+    """Only actual model codes are data; absent or invalid codes stay null."""
+    from text_content import CharacterForm
+
+    gender = suggestion.get('gender')
+    return {
+        'gender': gender if gender in CharacterForm.gender_options else None,
+        **{field: suggestion.get(field) if type(suggestion.get(field)) is bool else None
+           for field in ('human', 'protagonist', 'plural')},
+    }
+
+
 def apply_detection_origin(entity, suggestion, *, reviewed=False, account=None):
     """Retain the producing call even when a reviewer changes individual values."""
     origin = suggestion.get('value_origin') or {
         'source': 'ai_pipeline', 'model': 'unknown', 'prompt_variant': 'unknown',
         'prompt_version': 'unknown', 'timestamp': datetime.now(timezone.utc).isoformat()}
     entity.source = 'ai_pipeline'
+    if entity.belongs_to_collection == 'characters':
+        suggestion = {**suggestion, **character_attribute_values(suggestion)}
     values = {}
     for field in entity.provenance_fields:
         if field not in suggestion:
             continue
         entry = dict(origin)
+        if suggestion[field] is None:
+            entry['status'] = 'not_supplied'
         if reviewed:
             entry['reviewed_by'] = account or 'unknown'
             entry['reviewed_at'] = datetime.now(timezone.utc).isoformat()

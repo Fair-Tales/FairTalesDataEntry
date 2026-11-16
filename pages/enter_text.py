@@ -11,7 +11,7 @@ from google.api_core.exceptions import GoogleAPIError
 from streamlit_dimensions import st_dimensions
 from utilities import (
     page_layout, confirm_submit, check_authentication_status,
-    detect_book_characters, clear_entity_form_state,
+    detect_book_characters, clear_entity_form_state, character_boolean_input,
     get_s3_filesystem, get_anthropic_client,
     consume_pending_character_autodetect, stage_character_redetect,
     consume_auto_run_detection,
@@ -1285,7 +1285,7 @@ def character_review_form(element):
             gender_index = (
                 CharacterForm.gender_options.index(suggestion['gender'])
                 if suggestion['gender'] in CharacterForm.gender_options
-                else 0
+                else None
             )
             gender = st.selectbox(
                 EnterText.review_gender_label,
@@ -1293,11 +1293,11 @@ def character_review_form(element):
                 index=gender_index,
                 key=f"rev_gender_{i}",
             )
-            human = st.checkbox(EnterText.review_human_label, value=suggestion['human'], key=f"rev_human_{i}")
-            protagonist = st.checkbox(
+            human = character_boolean_input(EnterText.review_human_label, value=suggestion['human'], key=f"rev_human_{i}")
+            protagonist = character_boolean_input(
                 EnterText.review_protagonist_label, value=suggestion['protagonist'], key=f"rev_prot_{i}"
             )
-            plural = st.checkbox(EnterText.review_plural_label, value=suggestion['plural'], key=f"rev_plural_{i}")
+            plural = character_boolean_input(EnterText.review_plural_label, value=suggestion['plural'], key=f"rev_plural_{i}")
             aliases = []
             for alias_index, raw_alias in enumerate(recorded_aliases(suggestion.get('aliases', []))):
                 aliases.append(st.text_input(

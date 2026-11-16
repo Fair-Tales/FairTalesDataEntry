@@ -38,7 +38,7 @@ class PageFailurePayload(tuple):
 
 
 def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
-                            vision_json_call=None, strict=False):
+                            vision_json_call=None, strict=True):
     """OCR one page image and return a classified outcome — with NO Firestore
     logging or session access, so it is callable from the background
     page-processing worker (#179), standalone evaluation, and
@@ -59,6 +59,9 @@ def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
     vision call and JPEG re-encoded below Claude's 10 MB per-image limit (#134).
     ``vision_json_call`` keeps the UI wrapper's injectable helper boundary
     without duplicating the algorithm.
+
+    Schema validation is always strict. ``strict`` remains accepted for older
+    callers, but cannot disable validation in production.
 
     A contradictory ``has_text=false`` never clears nonempty transcription.
     Preserve the raw response, flag the inconsistency and derive analytical
@@ -109,20 +112,23 @@ def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
         })
 
     raw_text = data.get('text')
-    if strict and (
-        not isinstance(data.get('has_text'), bool)
+    if (
+        'text' not in data
+        or not isinstance(data.get('has_text'), bool)
         or not isinstance(data.get('is_story_page'), bool)
         or not (isinstance(raw_text, str)
                 or (data.get('has_text') is False and raw_text is None))
     ):
         return 'error', PageFailurePayload(ExtractionErrorLog.ERROR_PARSE,
                          PAGE_SCHEMA_INVALID, {'raw_page_output': data, 'raw_response': raw,
-                            'value_origin': origin, 'prompt_manifest': manifest})
+                            'value_origin': origin, 'prompt_manifest': manifest,
+                            'failure_kind': 'invalid_response'})
     text = raw_text.strip() if isinstance(raw_text, str) else ''
     if not text and data.get('has_text') is not False:
         return 'error', PageFailurePayload(ExtractionErrorLog.ERROR_PARSE,
             PAGE_SCHEMA_INVALID, {'raw_page_output': data, 'raw_response': raw,
-                                  'value_origin': origin, 'prompt_manifest': manifest})
+                                  'value_origin': origin, 'prompt_manifest': manifest,
+                                  'failure_kind': 'invalid_response'})
     from conventions import convention_metadata, project_analysis_text
     flags = []
     if data.get('has_text') is False and text:
@@ -149,7 +155,8 @@ def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
         return 'error', PageFailurePayload(ExtractionErrorLog.ERROR_PARSE,
             PAGE_SCHEMA_INVALID, {'raw_page_output': data, 'raw_response': raw,
                                   'value_origin': origin, 'prompt_manifest': manifest,
-                                  'validation_flags': flags, 'page_schema_version': page_schema})
+                                  'validation_flags': flags, 'page_schema_version': page_schema,
+                                  'failure_kind': 'invalid_response'})
     details = {
         'page_schema_version': page_schema,
         'raw_page_output': data, 'raw_response': raw, 'value_origin': origin,
@@ -158,7 +165,7 @@ def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
         'has_text': bool(text), 'model_has_text': data.get('has_text'),
         'story_needs_context': data.get('story_needs_context') is True,
         'provisional_classification': {
-            'contains_story': bool(data.get('is_story_page', False)),
+            'contains_story': data['is_story_page'],
             'page_type': data.get('page_type', ''),
         },
         'validation_flags': flags,
@@ -167,7 +174,7 @@ def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
     }
     details.update(project_analysis_text({'text': text, **details}))
     return 'ok', PageExtractionPayload(
-        text, bool(data.get('is_story_page', False)), data.get('page_type', ''), details,
+        text, data['is_story_page'], data.get('page_type', ''), details,
     )
 
 

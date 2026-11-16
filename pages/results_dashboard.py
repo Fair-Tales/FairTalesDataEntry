@@ -61,9 +61,9 @@ for character in characters:
         continue
     if scope_ids is not None and _book_id(data.get("book")) not in scope_ids:
         continue
-    if data.get("human", True):
+    if data.get("human") is True:
         human_counts[gender] += 1
-    else:
+    elif data.get("human") is False:
         nonhuman_counts[gender] += 1
 
 combined_counts = {
@@ -86,9 +86,8 @@ def _render_chart(title, counts):
             "count": [counts[g] for g in gender_options],
         }
     )
-    # Percentage each bar represents of ALL characters in scope, so the human and
-    # non-human shares are directly comparable and together match the combined
-    # chart.
+    # Use characters with both codes supplied as the common denominator, so
+    # human and non-human shares together match the combined chart.
     chart_df["pct"] = chart_df["count"].apply(
         lambda c: (c / total_in_scope * 100) if total_in_scope else 0
     )

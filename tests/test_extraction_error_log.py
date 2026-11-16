@@ -162,7 +162,7 @@ def captured_log(monkeypatch):
 def test_extract_page_info_success_returns_tuple(session, captured_log, monkeypatch):
     monkeypatch.setattr(
         uploader, "vision_json",
-        lambda *a, **k: ({"text": "  hi  ", "is_story_page": True,
+        lambda *a, **k: ({"has_text": True, "text": "  hi  ", "is_story_page": True,
                           "page_type": "story"}, "raw"),
     )
     result = extract_page_info(b"img", client=object(), book=_FakeBook(),

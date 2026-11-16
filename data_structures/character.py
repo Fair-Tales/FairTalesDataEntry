@@ -2,7 +2,7 @@ import streamlit as st
 from datetime import datetime, timezone
 from text_content import CharacterForm
 from text_content.character_identity import CharacterIdentityText
-from utilities import load_character_dict, clear_entity_form_state
+from utilities import load_character_dict, clear_entity_form_state, character_boolean_input
 from google.api_core.exceptions import FailedPrecondition
 from .base_structure import DataStructureBase, Field
 from .corpus_provenance import CorpusProvenance
@@ -157,7 +157,7 @@ class Character(CorpusProvenance, DataStructureBase):
             key=f"character_form_name_{key_suffix}"
         )
 
-        gender_index = 0
+        gender_index = None if self.gender is None else 0
         if self.gender in CharacterForm.gender_options:
             gender_index = CharacterForm.gender_options.index(self.gender)
         self.gender = st.selectbox(
@@ -190,19 +190,19 @@ class Character(CorpusProvenance, DataStructureBase):
             key=f"character_form_disability_{key_suffix}"
         )
 
-        self.protagonist = st.checkbox(
+        self.protagonist = character_boolean_input(
             CharacterForm.protagonist_label,
             value=self.protagonist,
             help=CharacterForm.protagonist_help,
             key=f"character_form_protagonist_{key_suffix}"
         )
-        self.human = st.checkbox(
+        self.human = character_boolean_input(
             CharacterForm.human_label,
             value=self.human,
             help=CharacterForm.human_help,
             key=f"character_form_human_{key_suffix}"
         )
-        self.plural = st.checkbox(
+        self.plural = character_boolean_input(
             CharacterForm.plural_label,
             value=self.plural,
             help=CharacterForm.plural_help,

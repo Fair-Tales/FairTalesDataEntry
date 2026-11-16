@@ -626,6 +626,8 @@ class EnterText:
 class CharacterForm:
 
     header = "Please enter details of this character"
+    yes_label = "Yes"
+    no_label = "No"
 
     gender_options = ["Female", "Male", "Non-specific", "Transgender"]
     gender_help = """
@@ -741,7 +743,8 @@ class ResultsDashboard:
     intro = """
         Explore aggregated results for the books in our collection. This is an
         early preview — the first result type is a breakdown of character counts
-        by gender.
+        by gender. Counts and percentages include only characters with both
+        gender and human/non-human coding supplied.
     """
 
     gender_column_label = "Gender"
@@ -762,9 +765,9 @@ class ResultsDashboard:
     change_selection_button = "Choose / change books"
 
     empty_message = """
-        There are no characters in the current selection yet, so there is nothing
-        to chart. Enter some character data (or choose a different collection) and
-        check back.
+        There are no characters with both gender and human/non-human coding in
+        the current selection. Complete the missing coding (or choose a different
+        collection) and check back.
     """
 
     work_in_progress_header = "Work in progress"

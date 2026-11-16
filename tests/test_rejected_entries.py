@@ -276,6 +276,10 @@ def test_dashboard_counts_active_characters_only_and_never_aliases(context, monk
     store.put('characters/rejected', {'name': 'Gone', 'gender': 'Female', 'entry_status': 'rejected'})
     store.put('characters/superseded', {'gender': 'Female', 'entry_status': 'superseded'})
     store.put('characters/legacy', {'name': 'Legacy', 'gender': 'Male', 'human': False})
+    store.put('characters/unknown_human', {'gender': 'Female', 'human': None})
+    store.put('characters/missing_human', {'gender': 'Female'})
+    store.put('characters/invalid_human', {'gender': 'Female', 'human': 'false'})
+    store.put('characters/unknown_gender', {'gender': None, 'human': True})
     store.put('aliases/rejected', {'name': 'Gone alias', 'gender': 'Female', 'entry_status': 'rejected'})
     for name in ('title', 'write', 'button'):
         monkeypatch.setattr(st, name, lambda *a, **k: None)
@@ -309,3 +313,26 @@ def test_research_csv_excludes_retired_characters_and_aliases(context, monkeypat
         for collection, expected in [('characters', 'Mum'), ('aliases', 'Mother')]:
             rows = list(csv.DictReader(io.StringIO(archive.read(collection + '.csv').decode())))
             assert [row['name'] for row in rows] == [expected]
+
+
+def test_research_csv_null_codes_are_blank_and_false_remains_data(context, monkeypatch):
+    store, _, _, _, _ = context
+    fields = ('gender', 'human', 'protagonist', 'plural')
+    store.put('characters/unknown', {'name': 'Unknown', **dict.fromkeys(fields)})
+    store.put('characters/known', {'name': 'Known', 'gender': 'Non-specific',
+                                 'human': False, 'protagonist': False, 'plural': False})
+    monkeypatch.setattr(st, 'button', lambda *a, **k: True)
+    download = {}
+    monkeypatch.setattr(st, 'download_button', lambda **k: download.update(k))
+    module = ast.parse((ROOT / 'pages/admin.py').read_text())
+    node = next(node for node in module.body if isinstance(node, ast.If)
+                and 'admin_prepare_book_download_button' in ast.unparse(node.test))
+    exec(compile(ast.Module(body=[node], type_ignores=[]), 'pages/admin.py', 'exec'),
+         {'st': st, 'Admin': Admin, 'io': io, 'zipfile': zipfile, 'csv': csv})
+    with zipfile.ZipFile(io.BytesIO(download['data'])) as archive:
+        rows = list(csv.DictReader(io.StringIO(archive.read('characters.csv').decode())))
+    unknown = next(row for row in rows if row['name'] == 'Unknown')
+    known = next(row for row in rows if row['name'] == 'Known')
+    assert all(unknown[field] == '' for field in fields)
+    assert known['gender'] == 'Non-specific'
+    assert all(known[field] == 'False' for field in fields[1:])

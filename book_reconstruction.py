@@ -79,7 +79,7 @@ from s3_constants import (
     count_folder_pages,
 )
 from image_processing import exif_transpose_bytes
-from corpus_provenance import apply_page_extraction, apply_detection_origin
+from corpus_provenance import apply_page_extraction, apply_detection_origin, character_attribute_values
 from page_results import apply_page_correction
 from data_structures import (
     Book, Page, Character, Alias, Author, Illustrator, Publisher,
@@ -459,10 +459,8 @@ def _detect_and_create_characters(book, page_objs, client, progress):
             continue
         character = Character(book=book.get_ref())
         character.name = name
-        character.gender = suggestion.get("gender", "")
-        character.human = bool(suggestion.get("human", True))
-        character.protagonist = bool(suggestion.get("protagonist", False))
-        character.plural = bool(suggestion.get("plural", False))
+        for field, value in character_attribute_values(suggestion).items():
+            setattr(character, field, value)
 
         apply_detection_origin(character, suggestion)
 

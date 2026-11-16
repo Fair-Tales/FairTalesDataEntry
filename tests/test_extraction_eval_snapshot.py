@@ -75,6 +75,22 @@ def source():
     return backend
 
 
+def test_snapshot_null_character_codes_remain_missing(tmp_path, source):
+    from scripts.extraction_eval.scoring import score_character_attributes, score_character_recall
+
+    fields = ('gender', 'human', 'protagonist', 'plural')
+    source.documents['characters/story_fox']['data'].update(dict.fromkeys(fields))
+    manifest = create_snapshot(tmp_path, source)
+    characters = manifest['books'][0]['reference']['characters']['value']
+    assert len(characters) == 1
+    assert all(characters[0]['raw'][field] is None for field in fields)
+    scores = score_character_attributes(score_character_recall(characters, [
+        {'name': 'Fox', 'gender': 'Non-specific', 'human': False, 'protagonist': False}]))
+    for score in scores.values():
+        assert score['denominator'] == 0
+        assert score['excluded_reference_counts'] == {'absent': 1}
+
+
 def test_frozen_eligibility_wordless_nonstory_and_raw_schema(tmp_path, source):
     manifest = create_snapshot(tmp_path, source, audit=True)
     book = manifest.get("books")[0]

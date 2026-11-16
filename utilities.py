@@ -1568,6 +1568,18 @@ def _claude_json(client, prompt, max_tokens=1024, label="character_detection",
 CHARACTER_DETECTION_MAX_TOKENS = PIPELINE_SETTINGS_DEFAULTS['character_detection_max_tokens']
 
 
+def character_boolean_input(label, *, value, key, help=None):
+    """A research boolean may be unset; rendering it must not invent False."""
+    from text_content import CharacterForm
+
+    return st.selectbox(
+        label, options=[True, False],
+        index=(0 if value else 1) if type(value) is bool else None,
+        format_func=lambda choice: CharacterForm.yes_label if choice else CharacterForm.no_label,
+        key=key, help=help,
+    )
+
+
 def detect_book_characters(pages, client, progress_callback=None, model=None,
                            prompt_variant=None):
     """One whole-book call with lossless, evidence-bearing character suggestions.
@@ -1584,8 +1596,8 @@ def detect_book_characters(pages, client, progress_callback=None, model=None,
             when model is also omitted (foreground callers).
 
     Returns a list of character suggestion dicts, each with keys:
-        name (str), gender (one of CharacterForm.gender_options),
-        human (bool), plural (bool), protagonist (bool), aliases (list[str]).
+        name (str), gender (one of CharacterForm.gender_options or None),
+        human/plural/protagonist (bool or None), aliases (list[str]).
 
     The list-compatible result retains the full response, including unresolved
     mentions when no entities can be projected. Invalid evidence is flagged,
@@ -1630,13 +1642,12 @@ def detect_book_characters(pages, client, progress_callback=None, model=None,
     result.update(convention_metadata())
     result["prompt_manifest"] = prompt_request_manifest(
         "character_detection", prompt_variant, prompt)
-    from corpus_provenance import pipeline_origin
+    from corpus_provenance import pipeline_origin, character_attribute_values
     result['value_origin'] = pipeline_origin(result['prompt_manifest'],
         requested_model=model, served_model=served_model)
     raw_characters = result.get("characters", [])
     raw_characters = raw_characters if isinstance(raw_characters, list) else []
 
-    valid_genders = ["Female", "Male", "Non-specific", "Transgender"]
     suggestions = []
     for character in raw_characters:
         if not isinstance(character, dict):
@@ -1644,9 +1655,6 @@ def detect_book_characters(pages, client, progress_callback=None, model=None,
         name = str(character.get("name", "")).strip()
         if not name:
             continue
-        gender = character.get("gender", "Non-specific")
-        if gender not in valid_genders:
-            gender = "Non-specific"
         aliases = recorded_aliases(character.get("aliases", []))
         suggestions.append({
             **character,
@@ -1655,10 +1663,7 @@ def detect_book_characters(pages, client, progress_callback=None, model=None,
             "unresolved_mentions": result.get("unresolved_mentions", []),
             **convention_metadata(),
             "name": name,
-            "gender": gender,
-            "human": bool(character.get("human", True)),
-            "plural": bool(character.get("plural", False)),
-            "protagonist": bool(character.get("protagonist", False)),
+            **character_attribute_values(character),
             "aliases": aliases,
         })
 
