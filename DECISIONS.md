@@ -853,3 +853,20 @@ are pronouns, which alias matching cannot attribute under either coding.
 4. **Astra reviews the LLM pronoun handling for the language analysis** before
    that test, to check it is designed cleanly end to end.
 
+5. **The language-analysis repository owns character-language attribution**
+   (Chris, after the review, `planning/pronoun_handling_review_2026-11-16.md`):
+   speech, addressee, actions, descriptions and narration about a character,
+   with pronouns resolved by the model. The data-entry pipeline supplies the
+   paginated text and the cast (characters, aliases, identities) and stops
+   generating its own language relations, which nothing saved.
+
+6. **The pronoun pilot runs as the review designed it** once the evaluation key
+   exists: one full-book call per development book using the analysis
+   repository's action extraction with stricter rules for I/you/we, it, they
+   and groups; coverage against the 539 third-person and 416 first- and
+   second-person pronoun subjects; an agent check of 200 attributions. It
+   becomes a tuning target only at 95% or more correct with the lower end of
+   the 95% range above 90%, and no systematic failure on dialogue or groups.
+   Work in that repository first needs its own version-control protocol, which
+   it does not yet have.
+
