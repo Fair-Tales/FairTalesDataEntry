@@ -431,6 +431,8 @@ def _build_book(record, docs, copied, audit):
     characters, character_ids = [], set()
     for document in related.get("characters", []):
         char_id, raw = document.get("id"), document.get("data", {})
+        if raw.get('entry_status') in ('rejected', 'superseded', 'withdrawn'):
+            continue
         owner = _reference_path(raw.get("book"), "books")
         if owner != f"books/{book_id}":
             audit.append({"issue": "character_wrong_book", "book_id": book_id, "character_id": char_id})
@@ -440,6 +442,8 @@ def _build_book(record, docs, copied, audit):
     by_id = {c.get("id"): c for c in characters}
     for document in related.get("aliases", []):
         raw = document.get("data", {})
+        if raw.get('entry_status') in ('rejected', 'superseded', 'withdrawn'):
+            continue
         path = _reference_path(raw.get("character"), "characters")
         target = path.split("/", 1)[-1] if path else None
         if path == f"characters/{target}" and target in character_ids:

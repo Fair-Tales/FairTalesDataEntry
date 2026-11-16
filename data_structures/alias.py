@@ -180,6 +180,23 @@ class Alias(DataStructureBase):
             self._prepare_registration()
         return super().register_batched(batch, create_only=True)
 
+    def reactivate(self, snapshot, *, batch=None):
+        """Restore only this tuple using the new entry's canonical choice.
+
+        Keep raw/canonical history and correction links as history; reset the
+        effective attachment and provenance to the fresh entry's values.
+        """
+        self.check_collision_payload(snapshot)
+        existing = Alias.from_snapshot(snapshot)
+        self._prepare_registration()
+        updates = {key: getattr(self, key) for key in (
+            *canonical_bundle(self.name), 'source', 'provenance', 'effective_character')}
+        previous = {key: getattr(existing, key) for key in canonical_bundle(self.name)}
+        if previous != {key: updates[key] for key in previous}:
+            updates['canonical_history'] = [*existing.canonical_history, {
+                **previous, 'changed_at': datetime.now(timezone.utc)}]
+        return self._reactivate_from(existing, updates, batch=batch)
+
     def create_correction(self, surface, *, character=None, canonical_override=_UNCHANGED_OVERRIDE):
         """Atomically retain an original and add its linked corrective entry."""
         if not surface.strip():
@@ -249,13 +266,19 @@ class Alias(DataStructureBase):
         try:
             self.register()
         except AlreadyExists:
-            st.warning(AliasForm.character_exists)
-            return
+            snapshot = self.get_ref().get()
+            data = snapshot.to_dict() or {}
+            if data.get('entry_status') != 'rejected' or data.get('superseded_by'):
+                st.warning(AliasForm.character_exists)
+                return
+            self.reactivate(snapshot)
         st.session_state['now_entering'] = 'text'
         st.session_state.pop('current_alias', None)
         st.rerun()
 
     def delete(self):
         """Retire the attachment while preserving the recorded student surface."""
+        if self.entry_status in ('rejected', 'superseded', 'withdrawn'):
+            return
         self.update_fields_conditionally(
             {'entry_status': 'rejected'}, expected_update_time=self._expected_update_time())

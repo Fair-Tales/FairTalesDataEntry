@@ -223,12 +223,14 @@ class DataStructureBase(ABC):
             self.reading_from_db = previous_guard
 
     def update_fields_conditionally(self, updates, *, expected_update_time,
-                                    expected_raw_hash=None, firestore_client=None):
+                                    expected_raw_hash=None, firestore_client=None, batch=None):
         """One compare-and-swap write through the shared entity layer.
 
         The server update-time precondition rejects concurrent raw edits *and*
         overrides. A source hash check alone would leave a read/write race.
         No client, snapshot read, or retry is implicit when one is injected.
+        With a batch, return an acknowledgement for the caller to run only
+        after commit, just as register_batched does.
         """
         if expected_update_time is None:
             raise ValueError("A snapshot update_time is required for conditional updates")
@@ -243,10 +245,38 @@ class DataStructureBase(ABC):
             validate(updates)
         ref = (firestore_client.collection(self.belongs_to_collection).document(self.document_id)
                if firestore_client is not None else self.get_ref())
+        if batch is not None:
+            batch.update(ref, dict(updates), option=LastUpdateOption(expected_update_time))
+
+            def acknowledge():
+                self._adopt_fields(updates)
+                self._update_time = None
+            return acknowledge
         result = ref.update(dict(updates), option=LastUpdateOption(expected_update_time))
         self._adopt_fields(updates)
         self._update_time = getattr(result, 'update_time', None)
         return result
+
+    def _reactivate_from(self, existing, updates, *, batch=None):
+        """Apply a fresh entry to a rejected document, acknowledging only success."""
+        if self.is_registered or existing.entry_status != 'rejected':
+            raise ValueError("Reactivation requires a new entry and a rejected record")
+        if getattr(existing, 'superseded_by', None):
+            raise ValueError("A superseded record cannot be reactivated")
+        updates = {**updates, 'entry_status': self.fields['entry_status'],
+                   'last_updated': datetime.now(timezone.utc)}
+        result = existing.update_fields_conditionally(
+            updates, expected_update_time=existing._update_time, batch=batch)
+
+        def acknowledge():
+            if batch is not None:
+                result()
+            self._adopt_fields(existing.to_dict())
+            self._update_time = existing._update_time
+
+        if batch is not None:
+            return acknowledge
+        acknowledge()
 
     def save_to_db(self, *, data=None, create_only=False):
         payload = self.to_dict() if data is None else data

@@ -104,6 +104,28 @@ def test_five_metadata_only_shells_excluded(tmp_path, source):
     assert {book.get("title") for book in manifest.get("excluded_books")} == EXCLUDED_METADATA_ONLY_TITLES
 
 
+def test_reference_excludes_retired_characters_and_aliases_but_inventory_keeps_history(tmp_path, source):
+    source.documents['characters/story_fox']['data']['entry_status'] = 'accepted'
+    source.documents['aliases/story_freddy']['data']['entry_status'] = 'accepted'
+    source.add('characters', 'story_legacy', book='books/story', name='Legacy')
+    source.add('aliases', 'story_legacy_alias', book='books/story', name='Old pal',
+               character='characters/story_legacy')
+    for status in ('rejected', 'superseded', 'withdrawn'):
+        source.add('characters', status, book='books/story', name=status, entry_status=status)
+        source.add('aliases', status, book='books/story', name=status,
+                   character='characters/story_fox', entry_status=status)
+    # Even an active alias cannot bring a rejected parent back into reference.
+    source.add('aliases', 'orphan', book='books/story', name='Orphan',
+               character='characters/rejected', entry_status='accepted')
+    result = create_snapshot(tmp_path, source)
+    characters = result['books'][0]['reference']['characters']['value']
+    assert {row['name']: row['aliases'] for row in characters} == {
+        'Fox': ['Freddy'], 'Legacy': ['Old pal']}
+    inventory = json.loads((tmp_path / 'inventory.json').read_text())
+    for collection in ('characters', 'aliases'):
+        assert inventory['raw_documents'][f'{collection}/rejected']['data']['entry_status'] == 'rejected'
+
+
 def test_missing_text_and_image_only_page_are_missing_not_wordless(tmp_path, source):
     source.documents.get("pages/story_2").get("data").pop("text")
     source.image("Story", 5)

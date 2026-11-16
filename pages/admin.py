@@ -199,6 +199,9 @@ if st.button(Admin.prepare_book_download_button, key="admin_prepare_book_downloa
                 rows = []
                 for doc in docs:
                     d = doc.to_dict()
+                    if (collection_name in ('characters', 'aliases') and
+                            d.get('entry_status') in ('rejected', 'superseded', 'withdrawn')):
+                        continue
                     if collection_name == 'books':
                         from bibliography import export_publication_columns
                         d = {**d, **export_publication_columns(d)}

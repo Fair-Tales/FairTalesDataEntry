@@ -466,8 +466,12 @@ def _detect_and_create_characters(book, page_objs, client, progress):
         if st.session_state["firestore"].document_exists(
             collection="characters", doc_id=character.document_id
         ):
-            continue
-        character.register()
+            snapshot = character.get_ref().get()
+            if (snapshot.to_dict() or {}).get('entry_status') != 'rejected':
+                continue
+            character.reactivate(snapshot)
+        else:
+            character.register()
         character_ref = character.get_ref()
         book.add_character(character_ref)
         st.session_state.setdefault("character_dict", {})[name] = character_ref
@@ -482,8 +486,14 @@ def _detect_and_create_characters(book, page_objs, client, progress):
             if st.session_state["firestore"].document_exists(
                 collection="aliases", doc_id=alias.document_id
             ):
-                continue
-            alias.register()
+                snapshot = alias.get_ref().get()
+                alias.check_collision_payload(snapshot)
+                data = snapshot.to_dict() or {}
+                if data.get('entry_status') != 'rejected' or data.get('superseded_by'):
+                    continue
+                alias.reactivate(snapshot)
+            else:
+                alias.register()
             aliases_created += 1
 
     load_character_dict.clear()

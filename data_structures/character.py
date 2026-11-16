@@ -89,6 +89,24 @@ class Character(DataStructureBase):
             self._prepare_registration()
         return super().register_batched(batch, create_only=True)
 
+    def reactivate(self, snapshot, *, batch=None):
+        """Use fresh form/detection values, keeping identity and archival names.
+
+        In particular old codes, memberships, mentions and identity evidence
+        must not become live data again merely because the name was re-entered.
+        """
+        existing = Character.from_snapshot(snapshot)
+        if (snapshot.id != self.document_id or
+                getattr(existing.book, 'path', existing.book) !=
+                getattr(self.book, 'path', self.book)):
+            raise ValueError("Character reactivation must retain its book and storage ID")
+        retained = {'is_registered', 'book', 'storage_id', 'entity_id',
+                    'name_history', 'datetime_created', 'entered_by', 'last_updated'}
+        updates = {field: getattr(self, field) for field in self.fields if field not in retained}
+        if self.name != existing.name:
+            updates['name_history'] = [*existing.name_history, existing.name]
+        return self._reactivate_from(existing, updates, batch=batch)
+
     def _assign_field_bundle(self, field, value):
         if not self.__dict__.get('is_registered', False):
             return False
@@ -207,10 +225,14 @@ class Character(DataStructureBase):
             # This is a brand-new (unregistered) character, so the name assign
             # does not write through; it just sets the document id used below.
             self.name = name
-            if st.session_state.firestore.document_exists(
+            exists = st.session_state.firestore.document_exists(
                 collection='characters',
                 doc_id=self.document_id
-            ):
+            )
+            snapshot = self.get_ref().get() if exists else None
+            if snapshot is not None and (snapshot.to_dict() or {}).get('entry_status') == 'rejected':
+                self.reactivate(snapshot)
+            elif exists:
                 # Same-name add EDITS the existing character (#201). After the
                 # AI review has created the book's cast, re-entering a detected
                 # name used to show only a quiet warning — the Save button
@@ -226,24 +248,25 @@ class Character(DataStructureBase):
                 )
                 st.session_state['now_entering'] = 'manage'
                 st.rerun()
+                return
             else:
                 self.register()
-                character_ref = self.get_ref()
-                # Link the character to the book currently being edited so the
-                # book document holds the list of its characters.
-                current_book = st.session_state.get('current_book')
-                if current_book is not None:
-                    current_book.add_character(character_ref)
-                st.session_state['character_dict'][self.name] = character_ref
-                # Keep the book-scoped lookup (used for alias entry) in sync.
-                st.session_state.setdefault('book_character_dict', {})[self.name] = (
-                    character_ref
-                )
-                # Invalidate shared cache so new/other sessions re-read this
-                # character (this session sees it via the in-place update above).
-                load_character_dict.clear()
-                st.session_state['now_entering'] = 'text'
-                st.rerun()
+            character_ref = self.get_ref()
+            # Link the character to the book currently being edited so the
+            # book document holds the list of its characters.
+            current_book = st.session_state.get('current_book')
+            if current_book is not None:
+                current_book.add_character(character_ref)
+            st.session_state['character_dict'][self.name] = character_ref
+            # Keep the book-scoped lookup (used for alias entry) in sync.
+            st.session_state.setdefault('book_character_dict', {})[self.name] = (
+                character_ref
+            )
+            # Invalidate shared cache so new/other sessions re-read this
+            # character (this session sees it via the in-place update above).
+            load_character_dict.clear()
+            st.session_state['now_entering'] = 'text'
+            st.rerun()
 
     def edit_form(self):
         """Render an edit form for an existing (registered) character.

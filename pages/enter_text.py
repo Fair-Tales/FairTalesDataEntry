@@ -1059,9 +1059,13 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
 
     for character, name, alias_names in planned_characters:
         if character.document_id in existing_char_ids:
-            skipped.append(name)
-            continue
-        acknowledgements.append(character.register_batched(batch, create_only=True))
+            snapshot = character.get_ref().get()
+            if (snapshot.to_dict() or {}).get('entry_status') != 'rejected':
+                skipped.append(name)
+                continue
+            acknowledgements.append(character.reactivate(snapshot, batch=batch))
+        else:
+            acknowledgements.append(character.register_batched(batch, create_only=True))
         character_ref = character.get_ref()
         new_book_refs.append(character_ref)
         # Keep the session lookup dicts in sync (mirrors the manual flow) so the
@@ -1101,10 +1105,15 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
     )
     for alias in alias_objs:
         if alias.document_id in existing_alias_ids:
-            alias.check_collision_payload(alias.get_ref().get())
-            skipped_aliases.append(alias.name)
-            continue
-        acknowledgements.append(alias.register_batched(batch))
+            snapshot = alias.get_ref().get()
+            alias.check_collision_payload(snapshot)
+            data = snapshot.to_dict() or {}
+            if data.get('entry_status') != 'rejected' or data.get('superseded_by'):
+                skipped_aliases.append(alias.name)
+                continue
+            acknowledgements.append(alias.reactivate(snapshot, batch=batch))
+        else:
+            acknowledgements.append(alias.register_batched(batch))
         alias_count += 1
 
     # Link every newly created character to the book in ONE batched update rather

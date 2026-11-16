@@ -52,6 +52,8 @@ nonhuman_counts = {gender: 0 for gender in gender_options}
 
 for character in characters:
     data = character.to_dict()
+    if data.get('entry_status') in ('rejected', 'superseded', 'withdrawn'):
+        continue
     gender = data.get("gender")
     if gender not in gender_options:
         # Skip characters with no/unknown gender so the chart only shows the
