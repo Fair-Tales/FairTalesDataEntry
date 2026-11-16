@@ -113,10 +113,19 @@ def _review_session(book_id):
     return {}
 
 
+def _clear_review_pages():
+    """Start the next review with fresh records and freshly seeded widgets."""
+    st.session_state.pop('_validation_page_cache', None)
+    for page_number in st.session_state.pop('_validation_page_widget_books', {}):
+        st.session_state.pop(f'validation_page_text_{page_number}', None)
+        st.session_state.pop(f'validation_page_contains_{page_number}', None)
+
+
 def _forget_review(book_id):
     """Discard local selection only after a confirmed exit or missing book."""
     st.session_state.pop('_validation_book_id', None)
     st.session_state.pop('_validation_review_session', None)
+    _clear_review_pages()
     st.session_state.get('_validation_heartbeat', {}).pop(book_id, None)
     current = st.session_state.get('current_book')
     if current is not None and current.document_id == book_id:
@@ -295,6 +304,7 @@ def render_list():
             st.warning(Validation.book_no_longer_exists)
             return
         book = Book(db_object=snap.to_dict())
+        _clear_review_pages()
         st.session_state['_validation_book_id'] = book.document_id
         st.session_state['_validation_review_session'] = {
             'token': uuid4().hex,

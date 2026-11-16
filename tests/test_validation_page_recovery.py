@@ -92,8 +92,13 @@ class _Streamlit:
         self.widget_seeds = []
         self.notices = []
 
-    def selectbox(self, label, *, options, key):
+    def selectbox(self, label, *, options, key, **kwargs):
         return self.session_state.setdefault(key, options[0])
+
+    radio = selectbox
+
+    def toggle(self, label, *, value, key):
+        return self.session_state.get(key, value)
 
     def form(self, key):
         self.forms += 1
@@ -125,7 +130,7 @@ class _Streamlit:
     def _notice(self, *args, **kwargs):
         self.notices.append(args)
 
-    subheader = image = info = success = warning = error = caption = write = code = _notice
+    header = subheader = image = info = success = warning = error = caption = write = code = _notice
 
     def rerun(self):
         raise _Rerun()
@@ -168,6 +173,7 @@ def editor(monkeypatch):
         run_book=namespace["page_text_editor"],
         fs=firestore, state=state, st=fake_st, book=book, logs=logs,
         recovery=page_save_recovery.PageSaveRecovery("validation", "book_id", 1),
+        namespace=namespace,
     )
 
 
@@ -319,4 +325,72 @@ def test_switching_books_reseeds_existing_widget_keys(editor):
 
     assert editor.state["validation_page_text_1"] == ""
     assert editor.state["validation_page_contains_1"] is False
+    assert editor.fs.writes == []
+
+
+def _open_review(editor, monkeypatch):
+    snapshot = _Snapshot({"title": editor.book.title})
+    snapshot.id = editor.book.document_id
+    monkeypatch.setattr(editor.fs, "get_all_documents_stream",
+                        lambda **kwargs: iter([snapshot]), raising=False)
+    editor.fs.store["books/book_id"] = snapshot.to_dict()
+    monkeypatch.setitem(editor.namespace, "Book", lambda **kwargs: editor.book)
+    editor.st.clicked = "validation_open_review_button"
+    with pytest.raises(_Rerun):
+        editor.namespace["render_list"]()
+    editor.st.clicked = None
+
+
+@pytest.mark.parametrize("forget_first", [False, True])
+def test_reopening_review_reads_owner_correction_and_audits_it(editor, monkeypatch, forget_first):
+    editor.book.page_count = 3
+    editor.state["validation_page_select"] = 3
+    page = Page(page_number=3, book=editor.book.get_ref())
+    page.save_edits({"text": "Original text", "contains_story": False})
+    # The fixture's audit assertion is specific to page 1; capture page 3 here.
+    monkeypatch.setitem(editor.namespace, "_log", lambda *args: editor.logs.append(args))
+    editor.st.submitted = False
+    _open_review(editor, monkeypatch)
+    editor.run()
+    assert editor.state["validation_page_text_3"] == "Original text"
+
+    if forget_first:
+        editor.namespace["_forget_review"]("book_id")
+    editor.fs.store["pages/book_id_3"].update(text="Owner's correction", contains_story=True)
+    _open_review(editor, monkeypatch)
+    editor.run()
+
+    assert editor.state["validation_page_text_3"] == "Owner's correction"
+    assert editor.state["validation_page_contains_3"] is True
+    assert editor.fs.reads.count("pages/book_id_3") == 2
+    editor.state["validation_page_text_3"] = "Validator's correction"
+    editor.st.submitted = True
+    editor.run()
+    assert editor.fs.store["pages/book_id_3"]["text"] == "Validator's correction"
+    assert [record[3:] for record in editor.logs] == [
+        ("text", "Owner's correction", "Validator's correction")
+    ]
+
+
+def test_forgetting_review_clears_cached_pages_and_widgets(editor):
+    editor.st.submitted = False
+    editor.run()
+    assert editor.state["_validation_page_cache"]
+
+    editor.namespace["_forget_review"]("book_id")
+
+    assert "_validation_page_cache" not in editor.state
+    assert "_validation_page_widget_books" not in editor.state
+    assert "validation_page_text_1" not in editor.state
+    assert "validation_page_contains_1" not in editor.state
+
+
+def test_repeated_review_renders_reuse_cached_pages(editor, monkeypatch):
+    editor.st.submitted = False
+    _open_review(editor, monkeypatch)
+    editor.run()
+    editor.run()
+    editor.run()
+
+    assert editor.fs.reads.count("pages/book_id_1") == 1
     assert editor.fs.writes == []
