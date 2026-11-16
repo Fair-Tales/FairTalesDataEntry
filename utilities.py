@@ -106,9 +106,9 @@ def save_ai_settings(values):
     """Validate the entire partial update before writing any settings."""
     validated = validate_settings(values)
     clean = {key: validated[key] for key in values}
-    FirestoreWrapper(auth=False).set_document(
-        AI_SETTINGS_COLLECTION, AI_SETTINGS_DOCUMENT, clean, merge=True
-    )
+    from data_structures.edit_log import EditLog
+    EditLog.save_pipeline_settings(FirestoreWrapper(auth=False),
+                                   AI_SETTINGS_COLLECTION, AI_SETTINGS_DOCUMENT, clean)
     clear_ai_settings_cache()
 
 
@@ -510,12 +510,20 @@ def build_vision_content(images, prompt, *, downscale=True, max_edge=1568):
     return content
 
 
+class ModelJSON(dict):
+    """Parsed object with trusted provider metadata kept outside its JSON keys."""
+    def __init__(self, data, served_model):
+        super().__init__(data)
+        self.served_model = served_model
+
+
 class VisionReply(str):
     """String-compatible reply retaining provider completion status."""
 
-    def __new__(cls, text, failure_kind=None):
+    def __new__(cls, text, failure_kind=None, served_model=None):
         result = super().__new__(cls, text)
         result.failure_kind = failure_kind
+        result.served_model = served_model
         return result
 
 
@@ -562,9 +570,11 @@ def vision_text(client, images, prompt, *, model="claude-sonnet-4-6",
             max_tokens, model, label or "-",
         )
     text = first_text_block(response)
-    return (VisionReply(text.strip(), 'truncated_response'
-                        if getattr(response, 'stop_reason', None) == 'max_tokens' else None)
-            if text is not None else None)
+    stop = getattr(response, 'stop_reason', None)
+    failure = ('truncated_response' if stop == 'max_tokens' else
+               'refusal' if stop == 'refusal' else None)
+    return VisionReply(text.strip() if text is not None else '', failure,
+                       getattr(response, 'model', None))
 
 
 def vision_json(client, images, prompt, *, model="claude-sonnet-4-6",
@@ -605,7 +615,7 @@ def vision_json(client, images, prompt, *, model="claude-sonnet-4-6",
     except (json.JSONDecodeError, ValueError) as exc:
         if reject_partial:
             logger.warning('vision_json: incomplete or invalid JSON rejected (flow=%s): %s', label, exc)
-            return None, VisionReply(raw, 'invalid_json_response')
+            return None, VisionReply(raw, 'invalid_json_response', getattr(raw, 'served_model', None))
         # Malformed/truncated reply: try to recover the usable prefix before
         # giving up on the whole page (#183). A salvage is logged, not silent.
         salvaged = salvage_json(raw)
@@ -1531,7 +1541,8 @@ def _claude_json(client, prompt, max_tokens=1024, label="character_detection",
             raw_response=salvage_json(text), raw_text=text,
             failure_kind="truncated_response")
     try:
-        return json.loads(strip_json_fence(text))
+        data = json.loads(strip_json_fence(text))
+        return ModelJSON(data, getattr(response, 'model', None)) if isinstance(data, dict) else data
     except json.JSONDecodeError as exc:
         # Keep the salvage for inspection, but never mark a partial cast complete.
         salvaged = salvage_json(text)
@@ -1613,11 +1624,15 @@ def detect_book_characters(pages, client, progress_callback=None, model=None,
         prompt,
         **generation_request(settings, 'character_detection', model=model),
     )
+    served_model = getattr(result, 'served_model', None)
     validate_character_response_structure(result)
     result = validate_character_evidence(result, pages)
     result.update(convention_metadata())
     result["prompt_manifest"] = prompt_request_manifest(
         "character_detection", prompt_variant, prompt)
+    from corpus_provenance import pipeline_origin
+    result['value_origin'] = pipeline_origin(result['prompt_manifest'],
+        requested_model=model, served_model=served_model)
     raw_characters = result.get("characters", [])
     raw_characters = raw_characters if isinstance(raw_characters, list) else []
 
@@ -1635,6 +1650,7 @@ def detect_book_characters(pages, client, progress_callback=None, model=None,
         aliases = recorded_aliases(character.get("aliases", []))
         suggestions.append({
             **character,
+            "value_origin": result["value_origin"],
             "raw_alias_entries": character.get("aliases", []),
             "unresolved_mentions": result.get("unresolved_mentions", []),
             **convention_metadata(),

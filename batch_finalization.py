@@ -14,6 +14,7 @@ from google.cloud import firestore
 
 from background_pipeline import PIPELINE_JOBS_COLLECTION, _fields_to_result
 from data_structures import Page
+from corpus_provenance import apply_page_extraction
 from page_results import apply_page_correction
 from s3_constants import S3_BUCKET
 
@@ -123,10 +124,7 @@ def _materialize_page(book, db, job_id, page_number, result_fields, entered_by):
     outcome, payload, _method, corrected, uncertain = result
     page = Page(page_number=page_number, book=book.get_ref())
     apply_page_correction(page, corrected=corrected, rotation_uncertain=uncertain)
-    if outcome == 'ok':
-        page.text, page.contains_story, _page_type = payload
-        if getattr(payload, 'details', None):
-            page.extraction_evidence = payload.details
+    apply_page_extraction(page, outcome, payload)
     page.entered_by = entered_by
     page.datetime_created = datetime.now(timezone.utc)
     page.is_registered = True

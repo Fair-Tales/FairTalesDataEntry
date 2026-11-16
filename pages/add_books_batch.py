@@ -7,6 +7,7 @@ import streamlit as st
 
 from data_structures import Page, ExtractionErrorLog, log_extraction_error
 from image_processing import exif_transpose_bytes
+from corpus_provenance import apply_page_extraction
 from page_results import apply_page_correction
 from background_pipeline import _SERVICE_ERRORS
 from pages.uploader import (
@@ -84,21 +85,21 @@ def _process_group_pages(book, group_pages, fs, ai_client, status):
                                       rotation_uncertain=rotation_uncertain)
                 report(Uploader.substep_extracting)
                 try:
-                    text, is_story, _page_type = extract_page_info(
+                    extracted = extract_page_info(
                         bytes_for_extraction, ai_client,
                         book=book, page_number=page_number,
                         page_name=f"page_{page_number}.jpg",
                         flow=ExtractionErrorLog.FLOW_BATCH,
                     )
-                except PageExtractionError:
+                except PageExtractionError as exc:
+                    from extraction_core import PageFailurePayload
+                    apply_page_extraction(page, 'error', PageFailurePayload(exc.error_type, exc.error_message, exc.details))
                     # Detail already logged to extraction_errors; keep the
                     # blank page and record it for the user (#132).
                     page.register()
                     failed_pages.append(page_number)
                 else:
-                    if text:
-                        page.text = text
-                    page.contains_story = is_story
+                    apply_page_extraction(page, 'ok', extracted)
                     page.register()
             except _SERVICE_ERRORS as exc:
                 log_extraction_error(

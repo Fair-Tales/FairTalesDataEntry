@@ -98,7 +98,7 @@ def _page_save_succeeded(record):
         _page_recovery().stage_refresh(page)
 
 
-def _save_page_edits(changes, *, source='text'):
+def _save_page_edits(changes, *, source='text', extraction=None):
     page = st.session_state.current_page
     page_number = st.session_state.current_page_number
     draft = {
@@ -110,6 +110,7 @@ def _save_page_edits(changes, *, source='text'):
     }
     return _page_recovery().save(
         page, changes, source=source, draft=draft, on_saved=_page_save_succeeded,
+        extraction=extraction,
     )
 
 
@@ -233,7 +234,7 @@ def reextract_current_page(page_number):
 
     with st.spinner(EnterText.reextract_spinner):
         try:
-            text, is_story, _page_type = extract_page_info(
+            extracted = extract_page_info(
                 image_bytes, client,
                 book=book,
                 page_number=page_number,
@@ -249,8 +250,11 @@ def reextract_current_page(page_number):
 
     # Retain BOTH OCR results before either descriptor can write. Recovery
     # retries persistence only; it never repeats the paid extraction call.
+    from corpus_provenance import page_extraction_fields
+    text, is_story, _page_type = extracted
     if not _save_page_edits(
-        {'text': text, 'contains_story': is_story}, source='reextract'
+        {'text': text, 'contains_story': is_story}, source='reextract',
+        extraction=page_extraction_fields('ok', extracted)
     ):
         return False
     st.rerun()
@@ -942,6 +946,7 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
     chosen action. 'Merge into' folds a row's names into the target character's
     aliases instead of creating a separate character.
     """
+    from corpus_provenance import apply_detection_origin, human_origin
     book = book if book is not None else st.session_state['current_book']
     if suggestions is None:
         suggestions = st.session_state['_detected_characters']
@@ -950,9 +955,10 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
     # Preserve suggestion indices: equal display names do not establish identity.
     create_rows = {}
     for suggestion_index, (source, row) in enumerate(zip(suggestions, rows)):
+        row['_source'] = source
         if row['action'] == EnterText.review_action_create and row['name'].strip():
             row['_aliases'] = _parse_aliases(row['aliases'], row['name'].strip())
-            row['_source'] = source
+            row['_alias_sources'] = {name: source for name in row['_aliases']}
             create_rows[suggestion_index] = row
 
     # Existing characters already defined for this book are also valid merge
@@ -963,7 +969,7 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
     # Fold merged rows into a to-be-created character's alias list, or queue them
     # to be attached to an already-existing book character.
     unresolved = []
-    merge_into_existing = []  # list of (target_ref, target_name, [alias names])
+    merge_into_existing = []  # (target_ref, target_name, aliases, source suggestion)
     for row in rows:
         action = row['action']
         if action == EnterText.review_action_create or action == EnterText.review_action_skip:
@@ -982,8 +988,9 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
                     and alias not in target['_aliases']
                 ):
                     target['_aliases'].append(alias)
+                    target['_alias_sources'][alias] = row['_source']
         elif target_name in existing_chars:
-            merge_into_existing.append((existing_chars[target_name], target_name, extra))
+            merge_into_existing.append((existing_chars[target_name], target_name, extra, row['_source']))
         else:
             unresolved.append(row['name'].strip() or "(unnamed)")
 
@@ -1010,7 +1017,7 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
     book_ref = book.get_ref()
 
     # Build the characters we intend to create, de-duplicating by document id.
-    planned_characters = []  # (Character, name, [alias names])
+    planned_characters = []  # (Character, name, [(alias, source suggestion)])
     proposed_char_ids = []
     for row in create_rows.values():
         name = row['name'].strip()
@@ -1026,9 +1033,12 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
                       'unresolved_mentions', 'detection_audit'):
             if field in character.fields and field in row['_source']:
                 setattr(character, field, row['_source'][field])
+        apply_detection_origin(character, row['_source'], reviewed=True,
+                               account=st.session_state.get('username'))
         cid = character.document_id
         proposed_char_ids.append(cid)
-        planned_characters.append((character, name, row['_aliases']))
+        planned_characters.append((character, name, [(alias, row['_alias_sources'][alias])
+                                                     for alias in row['_aliases']]))
 
     # A shared proposed name is not evidence for identity. Keep every source
     # and decision in the audit, leave both unresolved, and report the conflict.
@@ -1055,7 +1065,7 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
     if audit_staged:
         acknowledgements.append(audit.register_batched(batch, create_only=True))
     new_book_refs = []
-    planned_aliases = []  # (character_ref, alias_name)
+    planned_aliases = []  # (character_ref, alias_name, source suggestion)
 
     for character, name, alias_names in planned_characters:
         if character.document_id in existing_char_ids:
@@ -1072,25 +1082,36 @@ def commit_detected_characters(rows, *, book=None, suggestions=None):
         # new character is immediately selectable for alias entry etc.
         pending_character_lookup[name] = character_ref
         created_count += 1
-        for alias_name in alias_names:
-            planned_aliases.append((character_ref, alias_name))
+        for alias_name, source in alias_names:
+            planned_aliases.append((character_ref, alias_name, source))
 
     # Aliases merged into already-existing book characters.
-    for target_ref, target_name, extra in merge_into_existing:
+    for target_ref, target_name, extra, source in merge_into_existing:
         for alias_name in extra:
             if not alias_name:
                 continue
-            planned_aliases.append((target_ref, alias_name))
+            planned_aliases.append((target_ref, alias_name, source))
 
     # IDs include identity and exact raw bytes. Same text under different
     # characters must survive; only an identical entry can be reused.
     alias_objs = []
     seen_alias_ids = set()
     skipped_aliases = []
-    for character_ref, alias_name in planned_aliases:
+    for character_ref, alias_name, source in planned_aliases:
         alias = Alias(book=book_ref)
         alias.character = character_ref  # a reference, stored directly
         alias.name = alias_name
+        originals = [source.get('name'), *_parse_aliases(source.get('aliases', []))]
+        if alias_name in originals:
+            apply_detection_origin(alias, {'name': alias_name, 'value_origin': source.get('value_origin')},
+                                   reviewed=True, account=st.session_state.get('username'))
+        else:
+            origin = human_origin(st.session_state.get('username'))
+            if source.get('value_origin'):
+                origin['generated_from'] = source['value_origin']
+            alias.value_provenance = {'name': origin}
+        alias.value_provenance = {**alias.value_provenance,
+                                  'character': human_origin(st.session_state.get('username'))}
         alias.source = 'reviewed_detection'
         alias.provenance = [{'review_audit_id': audit.document_id}]
         aid = alias.document_id

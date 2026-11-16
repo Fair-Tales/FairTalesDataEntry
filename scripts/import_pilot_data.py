@@ -844,6 +844,10 @@ def build_character_doc(
     """Build a ``characters`` document (mirrors data_structures/character.py)."""
     return {
         "is_registered": True,
+        "source": "original_study_import",
+        "value_provenance": {field: {"source": "original_study_import", "account": ENTERED_BY,
+                                     "timestamp": now}
+                             for field in ('name', 'gender', 'protagonist', 'human')},
         "book": book_ref,
         "name": name,
         "gender": gender,
@@ -864,6 +868,9 @@ def build_alias_doc(
     """Build an ``aliases`` document (mirrors data_structures/alias.py)."""
     return {
         "is_registered": True,
+        "source": "original_study_import",
+        "value_provenance": {field: {"source": "original_study_import", "account": ENTERED_BY,
+                                     "timestamp": now} for field in ('name', 'character')},
         "character": character_ref,
         "book": book_ref,
         "name": name,

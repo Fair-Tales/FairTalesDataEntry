@@ -79,6 +79,7 @@ from s3_constants import (
     count_folder_pages,
 )
 from image_processing import exif_transpose_bytes
+from corpus_provenance import apply_page_extraction, apply_detection_origin
 from page_results import apply_page_correction
 from data_structures import (
     Book, Page, Character, Alias, Author, Illustrator, Publisher,
@@ -394,22 +395,22 @@ def _process_pages(book, pages, client, fs, progress):
             )
 
             try:
-                text, is_story, _page_type = extract_page_info(
+                extracted = extract_page_info(
                     bytes_for_extraction, client,
                     book=book, page_number=page_number,
                     page_name=f"page_{page_number}.jpg",
                     flow=ExtractionErrorLog.FLOW_RECONSTRUCTION,
                 )
-            except PageExtractionError:
+            except PageExtractionError as exc:
+                from extraction_core import PageFailurePayload
+                apply_page_extraction(page, 'error', PageFailurePayload(exc.error_type, exc.error_message, exc.details))
                 # Detail already logged to extraction_errors; keep the blank page in
                 # the sequence and record it for the caller to surface (#132). A single
                 # failed page no longer aborts the whole reconstruction.
                 page.register()
                 failed_pages.append(page_number)
             else:
-                if text:
-                    page.text = text
-                page.contains_story = is_story
+                apply_page_extraction(page, 'ok', extracted)
                 page.register()
         except Exception as exc:  # noqa: BLE001 - isolation boundary, see comment above
             log_extraction_error(
@@ -463,6 +464,8 @@ def _detect_and_create_characters(book, page_objs, client, progress):
         character.protagonist = bool(suggestion.get("protagonist", False))
         character.plural = bool(suggestion.get("plural", False))
 
+        apply_detection_origin(character, suggestion)
+
         if st.session_state["firestore"].document_exists(
             collection="characters", doc_id=character.document_id
         ):
@@ -483,6 +486,8 @@ def _detect_and_create_characters(book, page_objs, client, progress):
             alias = Alias(book=book.get_ref())
             alias.character = character_ref
             alias.name = alias_name
+            apply_detection_origin(alias, {'name': alias_name, 'character': character_ref,
+                                           'value_origin': suggestion.get('value_origin')})
             if st.session_state["firestore"].document_exists(
                 collection="aliases", doc_id=alias.document_id
             ):

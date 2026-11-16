@@ -113,3 +113,30 @@ class EditLog:
                 'context': context,
             },
         )
+
+    @classmethod
+    def save_pipeline_settings(cls, wrapper, collection, document, values):
+        """Commit settings and their append-only diffs together using edit_log."""
+        from google.cloud import firestore
+        db = wrapper.connect_book()
+        ref = db.collection(collection).document(document)
+        editor = wrapper.username_to_doc_ref(st.session_state['username'])
+
+        @firestore.transactional
+        def save(transaction):
+            previous = ref.get(transaction=transaction).to_dict() or {}
+            timestamp = datetime.now(timezone.utc)
+            for field, value in values.items():
+                if field in previous and previous[field] == value:
+                    continue
+                transaction.set(db.collection(cls.COLLECTION).document(), {
+                    'book_id': None, 'book_title': None,
+                    'entity_type': 'pipeline_settings', 'entity_id': document,
+                    'field': field, 'old_value': cls._coerce(previous.get(field)),
+                    'new_value': cls._coerce(value), 'edited_by': editor,
+                    'entered_by': None, 'timestamp': timestamp,
+                    'context': 'pipeline_settings',
+                })
+            transaction.set(ref, values, merge=True)
+
+        save(db.transaction())

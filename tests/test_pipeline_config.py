@@ -113,6 +113,10 @@ def test_candidate_settings_survive_application_save_and_production_job(monkeypa
     monkeypatch.setattr(utilities, 'FirestoreWrapper', lambda **kwargs: SimpleNamespace(
         set_document=lambda *args, **kwargs: writes.append((args, kwargs))))
     monkeypatch.setattr(utilities, 'clear_ai_settings_cache', lambda: None)
+    from data_structures.edit_log import EditLog
+    monkeypatch.setattr(EditLog, 'save_pipeline_settings',
+                        lambda wrapper, collection, document, values:
+                        wrapper.set_document(collection, document, values, merge=True))
     utilities.save_ai_settings({'prompt_variant': 'rules-only', 'story_context_enabled': True})
     assert writes[0][0][2] == {'prompt_variant': 'rules-only', 'story_context_enabled': True}
     assert writes[0][1] == {'merge': True}

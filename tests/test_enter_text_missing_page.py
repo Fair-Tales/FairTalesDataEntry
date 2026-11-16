@@ -135,6 +135,11 @@ class _FakeFirestore:
     def username_to_doc_ref(self, username):
         return _FakeDocRef("users", username, self)
 
+    def update_fields(self, collection, document, values):
+        self.update_field_calls.extend((collection, document, field, value)
+                                       for field, value in values.items())
+        self.connect_book().collection(collection).document(document).update(values)
+
     def update_field(self, collection, document, field, value):
         self.update_field_calls.append((collection, document, field, value))
         self.connect_book().collection(collection).document(document).update({field: value})
@@ -380,7 +385,7 @@ def test_registered_edits_keep_write_through_path(session):
     session.firestore.writes.clear()
     page.save_edits({"text": "Edited text."})
     assert ("pages", page.document_id, "text", "Edited text.") in session.firestore.update_field_calls
-    assert [op for op, _, _ in session.firestore.writes] == ["update", "update"]
+    assert [op for op, _, _ in session.firestore.writes] == ["update"]
     assert page.pending_edits == {}
 
 
@@ -423,7 +428,7 @@ def test_registered_retry_keeps_only_unacknowledged_fields(session):
     session.firestore.update_field_calls.clear()
     page.retry_pending_edits()
     assert [field for _, _, field, _ in session.firestore.update_field_calls] == [
-        "contains_story", "last_updated",
+        "contains_story", "value_provenance", "last_updated",
     ]
 
 
@@ -563,7 +568,7 @@ def test_collision_reload_stages_both_widgets_and_blocks_stale_autosave(session,
 
 def test_recovery_does_not_catch_programming_errors(session, monkeypatch):
     page = _page()
-    def invalid_save(changes):
+    def invalid_save(changes, **kwargs):
         raise TypeError("Programming error")
     monkeypatch.setattr(page, "save_edits", invalid_save)
     with pytest.raises(TypeError, match="Programming error"):

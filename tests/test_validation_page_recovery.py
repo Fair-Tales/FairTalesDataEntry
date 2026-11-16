@@ -73,6 +73,11 @@ class _Firestore:
     def get_by_reference(self, collection, document_ref):
         return _Reference(self, collection, document_ref).get()
 
+    def update_fields(self, collection, document, values):
+        path = f"{collection}/{document}"
+        self.writes.append(("update", path, dict(values)))
+        self.store[path].update(values)
+
     def update_field(self, collection, document, field, value):
         path = f"{collection}/{document}"
         self.writes.append(("update", path, {field: value}))
@@ -210,7 +215,7 @@ def test_registered_page_writes_and_audits_only_changed_fields(editor):
     editor.run()
 
     assert [list(patch) for _, _, patch in editor.fs.writes] == [
-        ["text"], ["last_updated"]
+        ["text", "value_provenance", "extraction_status", "extraction_failure_kind", "last_updated"]
     ]
     assert [record[3:] for record in editor.logs] == [
         ("text", "Original", "Corrected")

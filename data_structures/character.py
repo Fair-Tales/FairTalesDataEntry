@@ -5,12 +5,16 @@ from text_content.character_identity import CharacterIdentityText
 from utilities import load_character_dict, clear_entity_form_state
 from google.api_core.exceptions import FailedPrecondition
 from .base_structure import DataStructureBase, Field
+from .corpus_provenance import CorpusProvenance
 
 
-class Character(DataStructureBase):
+class Character(CorpusProvenance, DataStructureBase):
+    provenance_fields = ('name', 'gender', 'ethnicity', 'disability', 'protagonist', 'human', 'plural', 'entity_kind', 'member_of')
 
     fields = {
         'is_registered': False,
+        'value_provenance': {},
+        'source': 'unknown',
         'book': None,
         'name': "",
         'storage_id': "",
@@ -95,6 +99,7 @@ class Character(DataStructureBase):
         In particular old codes, memberships, mentions and identity evidence
         must not become live data again merely because the name was re-entered.
         """
+        self._prepare_value_provenance()
         existing = Character.from_snapshot(snapshot)
         if (snapshot.id != self.document_id or
                 getattr(existing.book, 'path', existing.book) !=

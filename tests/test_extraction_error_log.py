@@ -219,19 +219,19 @@ def test_extract_page_info_null_text_on_wordless_page_returns_empty_string(
     assert captured_log == []  # a wordless page is not an extraction failure
 
 
-def test_extract_page_info_non_string_text_normalises_to_empty_string(
+def test_extract_page_info_non_string_text_is_not_a_successful_blank(
     session, captured_log, monkeypatch
 ):
-    """A non-string ``text`` (e.g. the model emitting a number/list by mistake)
-    must be normalised to ``""`` rather than crashing on ``.strip()``."""
+    """Malformed text is an extraction failure, not an explicit wordless page."""
     monkeypatch.setattr(
         uploader, "vision_json",
         lambda *a, **k: ({"has_text": True, "text": 123,
                           "is_story_page": False, "page_type": "blank"}, "raw"),
     )
-    result = extract_page_info(b"img", client=object(), book=_FakeBook(),
-                               page_number=4, flow="single")
-    assert result == ("", False, "blank")
+    with pytest.raises(PageExtractionError):
+        extract_page_info(b"img", client=object(), book=_FakeBook(),
+                          page_number=4, flow="single")
+    assert len(captured_log) == 1
 
 
 def test_extract_page_info_parse_failure_logs_and_raises(session, captured_log, monkeypatch):

@@ -2,6 +2,7 @@ import logging
 from functools import partial
 
 import streamlit as st
+from corpus_provenance import apply_page_extraction
 import anthropic
 from data_structures import Page, ExtractionErrorLog, log_extraction_error
 from image_processing import exif_transpose_bytes, correct_page_image, make_display_copy
@@ -53,10 +54,11 @@ class PageExtractionError(Exception):
     them, but the raw text is never shown to the user.
     """
 
-    def __init__(self, error_type, error_message):
+    def __init__(self, error_type, error_message, details=None):
         super().__init__(error_message)
         self.error_type = error_type
         self.error_message = error_message
+        self.details = details or {}
 
 
 def attempt_page_extraction(image_bytes, client, ai_settings, *, label):
@@ -106,7 +108,7 @@ def extract_page_info(image_bytes, client, *, book=None, page_number=None,
             flow=flow,
             model=ai_settings['extraction_model'],
         )
-        raise PageExtractionError(error_type, error_message)
+        raise PageExtractionError(error_type, error_message, getattr(payload, 'details', None))
     return payload
 
 
@@ -189,7 +191,7 @@ def _consume_background_result(result, page_number, model):
             flow=ExtractionErrorLog.FLOW_SINGLE,
             model=model,
         )
-        raise PageExtractionError(error_type, error_message)
+        raise PageExtractionError(error_type, error_message, getattr(payload, 'details', None))
     text, is_story, page_type = payload
     from extraction_core import ProcessedPagePayload
     return ProcessedPagePayload(payload, bool(corrected), bool(rotation_uncertain))
@@ -215,6 +217,8 @@ def _register_placeholder_page(page, page_number):
     """
     try:
         if not page.is_registered:
+            if getattr(page, 'extraction_status', 'unknown') == 'unknown':
+                apply_page_extraction(page, 'error', ('Error', 'Page processing failed'))
             page.register()
     except Exception as exc:  # noqa: BLE001 - best-effort fallback, see docstring
         logger.warning(
@@ -257,15 +261,15 @@ def _register_processed_page(page_number, produce, model):
         try:
             produced = produce()
             text, is_story, page_type, corrected, rotation_uncertain = produced
-        except PageExtractionError:
+        except PageExtractionError as exc:
+            from extraction_core import PageFailurePayload
+            apply_page_extraction(page, 'error', PageFailurePayload(exc.error_type, exc.error_message, exc.details))
             # Detail already logged to extraction_errors; keep the blank page in
             # the sequence and record it for the user (#132). ``corrected`` stays
             # None (unknown) so enter-text falls back to the S3 check for it.
             page.register()
             return 'failed', None
-        if text:
-            page.text = text
-        page.contains_story = is_story
+        apply_page_extraction(page, 'ok', produced)
         page.corrected = corrected
         page.rotation_uncertain = rotation_uncertain
         if getattr(produced, 'details', None):

@@ -35,6 +35,10 @@ class Field:
         if not instance.reading_from_db and hook is not None and hook(self._name, value):
             return
 
+        provenance_hook = getattr(instance, "_assign_provenanced_field", None)
+        if not instance.reading_from_db and provenance_hook is not None and provenance_hook(self._name, value):
+            return
+
         instance.__dict__[self._name] = value
 
         if not instance.reading_from_db:

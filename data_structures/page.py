@@ -1,12 +1,18 @@
 import streamlit as st
 from text_content import Instructions, Alerts
 from .base_structure import DataStructureBase, Field
+from .corpus_provenance import CorpusProvenance
 
 
-class Page(DataStructureBase):
+class Page(CorpusProvenance, DataStructureBase):
+    provenance_fields = ('text', 'contains_story')
 
     fields = {
         'is_registered': False,
+        # Missing per-value origins and pre-C1 extraction outcomes stay unknown.
+        'value_provenance': {},
+        'extraction_status': 'unknown',
+        'extraction_failure_kind': None,
         'book': None,
         'page_number': -1,
         'contains_story': False,
@@ -43,6 +49,7 @@ class Page(DataStructureBase):
     def __init__(self, db_object=None, page_number=None, book=None):
         # Recovery state belongs to this object only and is never serialized.
         self.pending_edits = {}
+        self.pending_extraction = None
         super().__init__(collection='pages', db_object=db_object)
         if db_object is None:
             self.page_number = page_number
@@ -55,7 +62,15 @@ class Page(DataStructureBase):
         # round-trip on every access of this hot-path property (#128).
         return f"{self.book.id}_{self.page_number}"
 
-    def save_edits(self, changes):
+    def _human_updates(self, changes):
+        if self.pending_extraction is not None:
+            provenance = {**self.value_provenance, **{
+                field: self.pending_extraction['value_provenance'][field]
+                for field in changes if field in self.provenance_fields}}
+            return {**changes, **self.pending_extraction, 'value_provenance': provenance}
+        return super()._human_updates(changes)
+
+    def save_edits(self, changes, *, extraction=None):
         """Persist text/story edits, retaining every unacknowledged field.
 
         Pending values must be recorded before a descriptor assignment: its
@@ -67,19 +82,27 @@ class Page(DataStructureBase):
         if set(changes) - {'text', 'contains_story'}:
             raise ValueError("Only text and contains_story edits are supported")
         self.pending_edits = dict(changes)
+        self.pending_extraction = extraction
         if not self.pending_edits:
             return
 
         if not self.is_registered:
+            self._adopt_fields(self._human_updates(changes))
             for field, value in self.pending_edits.items():
                 setattr(self, field, value)
             self.register(create_only=True)
             self.pending_edits.clear()
+            self.pending_extraction = None
             return
 
         for field, value in tuple(self.pending_edits.items()):
-            setattr(self, field, value)
+            # Explicit extraction must save call metadata even if text is unchanged.
+            if self.pending_extraction is not None:
+                self.update_record(field, value)
+            else:
+                setattr(self, field, value)
             del self.pending_edits[field]
+        self.pending_extraction = None
 
     def retry_pending_edits(self):
         """Retry pending persistence even when memory already has the value."""
@@ -88,6 +111,7 @@ class Page(DataStructureBase):
         if not self.is_registered:
             self.register(create_only=True)
             self.pending_edits.clear()
+            self.pending_extraction = None
             return
 
         for field, value in tuple(self.pending_edits.items()):
@@ -101,6 +125,7 @@ class Page(DataStructureBase):
                 self.reading_from_db = previous_guard
             self.update_record(field=field, value=value)
             del self.pending_edits[field]
+        self.pending_extraction = None
 
     def to_form(self):
         st.warning(Alerts.not_implemented)

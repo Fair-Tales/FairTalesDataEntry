@@ -33,7 +33,7 @@ class PageSaveRecovery:
             '_page_save_refresh', {}
         )
 
-    def save(self, page, changes, *, source, draft=None, audit=None, on_saved=None):
+    def save(self, page, changes, *, source, draft=None, audit=None, on_saved=None, extraction=None):
         """Start one operation, retaining intent before any descriptor writes."""
         if self.blocked or page.pending_edits:
             return False
@@ -51,7 +51,7 @@ class PageSaveRecovery:
             'status': 'saving',
         }
         st.session_state.setdefault('_page_save_recovery', {})[self.scope] = record
-        return self._attempt(lambda: page.save_edits(changes), record, on_saved)
+        return self._attempt(lambda: page.save_edits(changes, extraction=extraction), record, on_saved)
 
     def _attempt(self, write, record, on_saved):
         try:

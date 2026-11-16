@@ -79,9 +79,12 @@ def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
     if vision_json_call is None:
         from utilities import vision_json
         vision_json_call = vision_json
+    from corpus_provenance import pipeline_origin
+    prompt_variant = ai_settings.get('prompt_variant', PIPELINE_SETTINGS_DEFAULTS['prompt_variant'])
+    prompt = prompt_for('page_extraction', prompt_variant)
+    manifest = prompt_request_manifest('page_extraction', prompt_variant, prompt)
+    origin = pipeline_origin(manifest, requested_model=ai_settings['extraction_model'])
     try:
-        prompt_variant = ai_settings.get('prompt_variant', PIPELINE_SETTINGS_DEFAULTS['prompt_variant'])
-        prompt = prompt_for('page_extraction', prompt_variant)
         data, raw = vision_json_call(
             client, [image_bytes], prompt, downscale=True,
             **generation_request(ai_settings, 'extraction'),
@@ -89,8 +92,10 @@ def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
             label=label, reject_partial=True,
         )
     except anthropic.AnthropicError as exc:
-        return 'error', (type(exc).__name__, str(exc))
+        return 'error', PageFailurePayload(type(exc).__name__, str(exc), {
+            'failure_kind': 'provider_error', 'value_origin': origin, 'prompt_manifest': manifest})
 
+    origin['model'] = getattr(raw, 'served_model', None) or 'unknown'
     if not isinstance(data, dict):
         snippet = (raw or '').strip()
         message = (
@@ -98,7 +103,8 @@ def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
             if snippet else PAGE_REPLY_EMPTY
         )
         return 'error', PageFailurePayload(ExtractionErrorLog.ERROR_PARSE, message, {
-            'raw_page_output': data, 'raw_response': raw,
+            'raw_page_output': data, 'raw_response': raw, 'value_origin': origin,
+            'prompt_manifest': manifest,
             'failure_kind': getattr(raw, 'failure_kind', None),
         })
 
@@ -110,8 +116,13 @@ def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
                 or (data.get('has_text') is False and raw_text is None))
     ):
         return 'error', PageFailurePayload(ExtractionErrorLog.ERROR_PARSE,
-                         PAGE_SCHEMA_INVALID, {'raw_page_output': data, 'raw_response': raw})
+                         PAGE_SCHEMA_INVALID, {'raw_page_output': data, 'raw_response': raw,
+                            'value_origin': origin, 'prompt_manifest': manifest})
     text = raw_text.strip() if isinstance(raw_text, str) else ''
+    if not text and data.get('has_text') is not False:
+        return 'error', PageFailurePayload(ExtractionErrorLog.ERROR_PARSE,
+            PAGE_SCHEMA_INVALID, {'raw_page_output': data, 'raw_response': raw,
+                                  'value_origin': origin, 'prompt_manifest': manifest})
     from conventions import convention_metadata, project_analysis_text
     flags = []
     if data.get('has_text') is False and text:
@@ -137,10 +148,11 @@ def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
              or type(data.get('story_needs_context')) is not bool)):
         return 'error', PageFailurePayload(ExtractionErrorLog.ERROR_PARSE,
             PAGE_SCHEMA_INVALID, {'raw_page_output': data, 'raw_response': raw,
+                                  'value_origin': origin, 'prompt_manifest': manifest,
                                   'validation_flags': flags, 'page_schema_version': page_schema})
     details = {
         'page_schema_version': page_schema,
-        'raw_page_output': data, 'raw_response': raw,
+        'raw_page_output': data, 'raw_response': raw, 'value_origin': origin,
         'regions': regions if valid_regions else [],
         'regions_status': 'complete' if valid_regions else 'unavailable',
         'has_text': bool(text), 'model_has_text': data.get('has_text'),
@@ -151,7 +163,7 @@ def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
         },
         'validation_flags': flags,
         'conventions': convention_metadata(),
-        'prompt_manifest': prompt_request_manifest('page_extraction', prompt_variant, prompt),
+        'prompt_manifest': manifest,
     }
     details.update(project_analysis_text({'text': text, **details}))
     return 'ok', PageExtractionPayload(

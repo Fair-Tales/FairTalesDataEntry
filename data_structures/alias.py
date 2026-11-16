@@ -11,13 +11,17 @@ from alias_schema import (
     raw_surface_hash,
 )
 from .base_structure import DataStructureBase, Field
+from .corpus_provenance import CorpusProvenance
 
 _UNCHANGED_OVERRIDE = object()
 
 
-class Alias(DataStructureBase):
+class Alias(CorpusProvenance, DataStructureBase):
+    provenance_fields = ('name', 'character', 'effective_character', 'canonical_form')
     fields = {
-        'is_registered': False, 'character': None, 'book': None, 'name': "",
+        'is_registered': False,
+        'value_provenance': {},
+        'character': None, 'book': None, 'name': "",
         'canonical_form': "", 'canonical_source': "", 'canonical_override': False,
         'canonical_rule_version': "", 'canonical_input_hash': "",
         'alias_schema_version': ALIAS_SCHEMA_VERSION, 'storage_id': "",
@@ -186,11 +190,12 @@ class Alias(DataStructureBase):
         Keep raw/canonical history and correction links as history; reset the
         effective attachment and provenance to the fresh entry's values.
         """
+        self._prepare_value_provenance()
         self.check_collision_payload(snapshot)
         existing = Alias.from_snapshot(snapshot)
         self._prepare_registration()
         updates = {key: getattr(self, key) for key in (
-            *canonical_bundle(self.name), 'source', 'provenance', 'effective_character')}
+            *canonical_bundle(self.name), 'source', 'provenance', 'value_provenance', 'effective_character')}
         previous = {key: getattr(existing, key) for key in canonical_bundle(self.name)}
         if previous != {key: updates[key] for key in previous}:
             updates['canonical_history'] = [*existing.canonical_history, {
