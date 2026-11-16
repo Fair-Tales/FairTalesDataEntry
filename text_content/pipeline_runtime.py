@@ -1,5 +1,9 @@
 """Messages used by the offline pipeline runner and structured parsers."""
 
+PIPELINE_SETTINGS_OBJECT = "Pipeline settings must be an object."
+PIPELINE_SETTING_UNKNOWN = "Unknown pipeline setting: {key}"
+PIPELINE_SETTING_INVALID = "Invalid pipeline setting: {key}; expected {expected}"
+
 BILLING_UNVERIFIED = (
     "Paid extraction requires confirmed credit billing, organisation, "
     "project, and the SHA-256 fingerprint of the dedicated evaluation key."

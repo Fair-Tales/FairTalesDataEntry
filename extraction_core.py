@@ -7,6 +7,7 @@ need to initialize the application's dependency graph.
 """
 
 from ai_runtime import extraction_runtime
+from pipeline_config import PIPELINE_SETTINGS_DEFAULTS
 
 
 class PageExtractionPayload(tuple):
@@ -76,7 +77,7 @@ def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
         from utilities import vision_json
         vision_json_call = vision_json
     try:
-        prompt_variant = ai_settings.get('prompt_variant', 'rules-plus-icl')
+        prompt_variant = ai_settings.get('prompt_variant', PIPELINE_SETTINGS_DEFAULTS['prompt_variant'])
         prompt = prompt_for('page_extraction', prompt_variant)
         data, raw = vision_json_call(
             client, [image_bytes], prompt, downscale=True,
@@ -124,7 +125,7 @@ def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
         valid_regions = False
     if regions is not None and not valid_regions:
         flags.append('invalid_regions')
-    page_schema = ai_settings.get('page_schema_version', 'legacy-compatible-page-v1')
+    page_schema = ai_settings.get('page_schema_version', PIPELINE_SETTINGS_DEFAULTS['page_schema_version'])
     page_types = {'cover', 'title', 'copyright', 'dedication', 'contents', 'narrative',
                   'informational', 'wordless_narrative', 'endpaper', 'blank',
                   'glossary_index', 'supplemental_activity', 'other_back_matter', 'uncertain'}
@@ -235,7 +236,7 @@ def extract_characters(pages, client, settings, usage_sink):
         return detect_book_characters(
             sorted(story_pages), client,
             model=settings.get('character_detection_model'),
-            prompt_variant=settings.get('prompt_variant', 'rules-plus-icl'),
+            prompt_variant=settings.get('prompt_variant', PIPELINE_SETTINGS_DEFAULTS['prompt_variant']),
         )
 
 
@@ -262,15 +263,15 @@ def classify_book_context(pages, images, client, settings, usage_sink):
             or [number for number, _ in images] != numbers):
         return {**result, 'status': 'failed', 'error_type': 'context_input_coverage',
                 'error': CONTEXT_INVALID}
-    variant = settings.get('prompt_variant', 'rules-plus-icl')
+    variant = settings.get('prompt_variant', PIPELINE_SETTINGS_DEFAULTS['prompt_variant'])
     rows = [{'page_number': page.get('page_number'), 'image_position': index + 1,
              'text': page.get('text'), 'ocr_status': page.get('status', 'completed')}
             for index, page in enumerate(pages)]
     prompt = prompt_for('story_classification', variant) + CONTEXT_TARGET.format(
         pages_json=json.dumps(rows, ensure_ascii=False))
     result['prompt_manifest'] = prompt_request_manifest('story_classification', variant, prompt)
-    model = settings.get('story_context_model', 'claude-sonnet-5')
-    max_tokens = settings.get('story_context_max_tokens', 8192)
+    model = settings.get('story_context_model', PIPELINE_SETTINGS_DEFAULTS['story_context_model'])
+    max_tokens = settings.get('story_context_max_tokens', PIPELINE_SETTINGS_DEFAULTS['story_context_max_tokens'])
     limits = getattr(client, 'prices', {}).get(model) or settings.get('story_context_limits')
 
     class ContextLimit(ValueError):

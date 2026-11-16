@@ -23,6 +23,7 @@ from utilities import (
     save_ai_settings,
     get_api_usage_summary,
     AI_MODEL_ALLOWLIST,
+    AI_SETTINGS_DEFAULTS,
     AI_EDGE_MIN,
     AI_EDGE_MAX,
     AI_TOKENS_MIN,
@@ -58,7 +59,8 @@ def _model_index(key):
 st.header(AdminSettings.current_values_header)
 st.caption(AdminSettings.current_values_caption)
 current_col, _ = st.columns([2, 1])
-for field, value in settings.items():
+for field in AI_SETTINGS_DEFAULTS:
+    value = settings[field]
     label = field.replace('_', ' ').capitalize()
     current_col.markdown(f"**{label}:** {value}")
 
@@ -185,7 +187,7 @@ if st.button(AdminSettings.save_button, disabled=disabled,
     try:
         # save_ai_settings re-validates every value and clears the settings cache.
         save_ai_settings(new_values)
-    except GoogleAPIError as exc:
+    except (GoogleAPIError, ValueError) as exc:
         st.error(AdminSettings.save_error.format(error=exc))
     else:
         st.success(AdminSettings.save_success)
@@ -238,7 +240,7 @@ def _breakdown_rows(name_column, breakdown):
 
 try:
     usage_summary = get_api_usage_summary(days=AI_USAGE_SUMMARY_DAYS)
-except GoogleAPIError as exc:
+except (GoogleAPIError, ValueError) as exc:
     st.error(AdminSettings.usage_load_error.format(error=exc))
     usage_summary = None
 

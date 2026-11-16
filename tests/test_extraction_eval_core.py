@@ -10,6 +10,7 @@ from PIL import Image
 import image_processing
 import utilities
 from ai_runtime import current_runtime, extraction_runtime
+from pipeline_config import validate_settings
 from extraction_core import (
     attempt_page_extraction, extract_characters, extract_metadata, extract_page,
 )
@@ -229,11 +230,11 @@ def test_runtime_restores_dependencies_and_records_unknown_usage(isolated):
     with extraction_runtime(client=outer, settings=isolated,
                             usage_sink=lambda *args: usage.append(args)):
         assert utilities.get_anthropic_client() is outer
-        assert utilities.get_ai_settings() == isolated
-        with extraction_runtime(client=inner, settings={'frozen': True},
+        assert utilities.get_ai_settings() == validate_settings(isolated)
+        with extraction_runtime(client=inner, settings={'extraction_max_edge': 1024},
                                 usage_sink=lambda *args: None):
             assert utilities.get_anthropic_client() is inner
-            assert utilities.get_ai_settings() == {'frozen': True}
+            assert utilities.get_ai_settings() == validate_settings({'extraction_max_edge': 1024})
         assert utilities.get_anthropic_client() is outer
         utilities._log_usage(SimpleNamespace(), 'frozen-model', 'unknown-usage')
     assert len(usage) == 1

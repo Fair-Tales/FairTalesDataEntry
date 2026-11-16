@@ -9,6 +9,7 @@ import pytest
 import background_pipeline as bp
 import pages.uploader as uploader
 from pipeline_worker_runtime import worker_runtime
+from pipeline_config import validate_settings
 from test_background_pipeline import FakeClient, FakeFs, SETTINGS, _make_job
 from test_background_pipeline import fast_stages as fast_stages
 
@@ -314,7 +315,7 @@ def test_worker_usage_uses_injected_raw_client_without_streamlit(monkeypatch):
     response = SimpleNamespace(usage=SimpleNamespace(input_tokens=10, output_tokens=5))
     with worker_runtime(object(), SETTINGS, db, 'job1', 'batch1'):
         utilities.record_api_usage(response, SETTINGS['extraction_model'], 'batch_ocr')
-        assert utilities.get_ai_settings() == SETTINGS
+        assert utilities.get_ai_settings() == validate_settings(SETTINGS)
     assert any(key.startswith('api_usage/') for key in db.store)
     assert 'usage' in db.store['pipeline_jobs/job1']
     assert 'usage' in db.store['photo_batches/batch1']

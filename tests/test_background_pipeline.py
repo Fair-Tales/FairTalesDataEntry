@@ -142,7 +142,7 @@ def fast_stages(monkeypatch):
     )
     monkeypatch.setattr(
         bp, 'detect_book_characters',
-        lambda pages, client, progress_callback=None, model=None: [{'name': 'Tom'}],
+        lambda pages, client, progress_callback=None, model=None, prompt_variant=None: [{'name': 'Tom'}],
     )
 
     def _fake_claim(db, job_id, page_number, worker_id):
@@ -514,7 +514,7 @@ def test_worker_defers_detection_while_another_worker_owns_a_page(fast_stages, m
     detection_runs = []
     monkeypatch.setattr(
         bp, 'detect_book_characters',
-        lambda pages, client, progress_callback=None, model=None: (
+        lambda pages, client, progress_callback=None, model=None, prompt_variant=None: (
             detection_runs.append(list(pages)) or [{'name': 'Tom'}]
         ),
     )

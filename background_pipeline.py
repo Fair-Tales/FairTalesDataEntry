@@ -404,6 +404,7 @@ def _publish_page_artifacts(fs, db, job_id, prefix, number):
 def _run_worker(fs, db, client, settings, job_id, s3_prefix, page_count,
                 raw_bytes_list, cancel_event):
     """Advance one durable book; stage failures and page failures remain visible."""
+    settings = _validated_settings(settings)
     # This compatibility wrapper calls extraction_core internally; keeping its
     # injectable boundary preserves the existing single-upload test contract.
     from pages.uploader import attempt_page_extraction
@@ -806,26 +807,9 @@ def create_or_get_job(fs, db, client, ai_settings, *, job_id, source_keys,
 
 
 def _validated_settings(settings):
-    """Freeze existing validated app settings, rejecting malformed overrides."""
-    from utilities import (AI_SETTINGS_DEFAULTS, AI_SETTINGS_MODEL_KEYS,
-                           AI_MODEL_ALLOWLIST, AI_EDGE_MIN, AI_EDGE_MAX,
-                           AI_TOKENS_MIN, AI_TOKENS_MAX)
-    result = dict(AI_SETTINGS_DEFAULTS)
-    for key, value in dict(settings).items():
-        if key not in result:
-            continue
-        if key in AI_SETTINGS_MODEL_KEYS:
-            valid = value in AI_MODEL_ALLOWLIST
-        elif key.endswith('_max_edge'):
-            valid = isinstance(value, int) and not isinstance(value, bool) and AI_EDGE_MIN <= value <= AI_EDGE_MAX
-        elif key.endswith('_max_tokens'):
-            valid = isinstance(value, int) and not isinstance(value, bool) and AI_TOKENS_MIN <= value <= AI_TOKENS_MAX
-        else:
-            valid = isinstance(value, bool)
-        if not valid:
-            raise ValueError(f'Invalid pipeline setting: {key}')
-        result[key] = value
-    return result
+    """Freeze all known settings, refusing malformed or unknown overrides."""
+    from pipeline_config import validate_settings
+    return validate_settings(settings)
 
 
 def resume_job(fs, db, client, job_id):
@@ -840,6 +824,7 @@ def resume_job(fs, db, client, job_id):
     settings = data.get('ai_settings')
     if not settings:
         raise ValueError('Legacy job requires settings from the single-book resume flow')
+    settings = _validated_settings(settings)
     return _spawn_worker(fs, db, client, settings, job_id, data['s3_prefix'], data['page_count'], None)
 
 

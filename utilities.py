@@ -11,6 +11,7 @@ import hmac
 import inspect
 import json
 import logging
+from collections.abc import Mapping
 import random
 import re
 import time
@@ -25,175 +26,36 @@ from datetime import datetime, timezone, timedelta
 
 from ai_pricing import usage_field, usage_metrics
 from ai_runtime import current_runtime
+# Settings now live in pipeline_config; these names stay importable from
+# utilities for existing callers, so some are re-exports rather than used here.
+from pipeline_config import (  # noqa: F401
+    AI_SETTINGS_DEFAULTS, AI_SETTINGS_MODEL_KEYS, AI_MODEL_ALLOWLIST,
+    AI_EDGE_MIN, AI_EDGE_MAX, AI_TOKENS_MIN, AI_TOKENS_MAX,
+    EXTRACTION_MODEL, EXTRACTION_OCR_MAX_TOKENS, LOCATE_MAX_EDGE,
+    PIPELINE_SETTINGS_DEFAULTS, validate_settings,
+)
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Data-extraction model + resolution (issue #135).
-#
-# The DATA-EXTRACTION vision/OCR calls (page OCR, title/copyright/collection
-# metadata, #52 character detection) run on Claude Sonnet 5 rather than the
-# ``claude-sonnet-4-6`` used elsewhere. Sonnet 5 accepts a larger 2576px image
-# long edge (vs 1568px on Sonnet 4.6), so dense children's-book text is captured
-# at higher effective resolution for better OCR (Chris, 2026-07-03). The cheap
-# routing/QC calls (Haiku title/cover-page detection, rotation-angle +
-# crop-quality checks) deliberately KEEP their own models/resolution — only the
-# extraction calls opt in here.
-#
-# COST NOTE (corrected 2026-07-04): the higher edge is NOT free. A ~2576px page
-# image costs roughly 3x the input tokens of the ~1568px standard tier
-# (empirically ~5,300 vs ~1,568 input tokens for a full page) — the earlier
-# "SAME token rate" claim here was wrong (#135 comment). The extra resolution is
-# a deliberate accuracy-for-cost trade for OCR of dense text; it is kept because
-# dropping to 1568px measurably hurt OCR. ``EXTRACTION_MAX_EDGE`` is a single,
-# documented knob so the trade can be re-tuned in one place, and per-call token
-# usage is now logged (see ``_log_usage``) so a resolution/model cost regression
-# like this is visible instead of silent.
-#
-# Model id verified 2026-07-03 against the Anthropic models docs
-# (platform.claude.com/docs/en/about-claude/models/all-models): Claude Sonnet 5
-# is generally available with API id ``claude-sonnet-5``.
-EXTRACTION_MODEL = 'claude-sonnet-5'
-
-#: Long-edge pixel cap for EXTRACTION images (#135). Higher than the ~1568px
-#: default used by the cheap routing/QC vision calls so dense text is sent at
-#: higher resolution. ``downscale_for_vision`` still JPEG re-encodes below
-#: Claude's 10MB per-image byte cap (#134), so raising the edge cannot
-#: reintroduce the oversized-image rejection. Single documented knob for the
-#: resolution/cost trade (see the cost note above).
+# Legacy higher-resolution opt-in; the admin default remains 2000px.
 EXTRACTION_MAX_EDGE = 2576
 
-#: ``max_tokens`` for the page-OCR extraction reply. Dense picture-book pages can
-#: carry a lot of text and the Sonnet 5 tokenizer runs larger, so this is set
-#: comfortably above the 1024 default to avoid truncating a long page mid-JSON
-#: (which would otherwise surface as a generic parse failure). See the
-#: ``stop_reason == "max_tokens"`` truncation logging in ``vision_text``.
-EXTRACTION_OCR_MAX_TOKENS = 2048
-
-#: Long-edge pixel cap for the page-TYPE / cover CLASSIFICATION vision calls
-#: (``locate_key_pages`` / ``locate_cover_pages``). These only need to tell a
-#: cover/title/copyright page apart from an interior page — they do NOT OCR the
-#: text — so a much smaller image is plenty and sends far fewer image tokens
-#: across a whole-book multi-image request (#135 cost right-sizing).
-LOCATE_MAX_EDGE = 784
-
-
-# ---------------------------------------------------------------------------
-# Global, admin-editable AI-pipeline settings.
-#
-# The cost/quality-relevant Claude parameters above are the DEFAULTS. An admin
-# can override any of them GLOBALLY, without a code deploy, via a single plain
-# Firestore config document (collection ``settings``, doc ``ai_pipeline``) edited
-# from the admin AI-settings page. The doc is handled as a RAW DICT — the same
-# deliberate exception the ``User`` entity uses (#90) — rather than forced
-# through the ``DataStructureBase``/``Field`` write-through pattern, because it is
-# a single singleton config record, not a domain entity.
-#
-# Safety / backward-compatibility contract:
-#   * ``get_ai_settings()`` starts from ``AI_SETTINGS_DEFAULTS`` (today's
-#     constants) and overlays only the stored keys that VALIDATE, so an
-#     absent/empty/partial/corrupt doc behaves exactly as the hardcoded app did.
-#   * Every stored value is validated on read (models against a GA allow-list;
-#     resolutions/tokens against sane bounds) and an invalid value falls back to
-#     the default rather than being trusted (guarded lookup, #91).
-#   * The one intentional default change from the old constants is
-#     ``extraction_max_edge`` = 2000 (down from the ``EXTRACTION_MAX_EDGE`` 2576),
-#     an approved cost reduction; the constant is kept as-is for the higher-res
-#     opt-in and as documentation of the previous value.
-# ---------------------------------------------------------------------------
-
+# Admin settings remain one raw Firestore document. Definitions and validation
+# live in pipeline_config; public constants above remain import-compatible.
 AI_SETTINGS_COLLECTION = 'settings'
 AI_SETTINGS_DOCUMENT = 'ai_pipeline'
-
-#: Collection holding daily API usage/cost rollups (one doc per UTC day,
-#: id ``YYYY-MM-DD``). Written cheaply with atomic ``firestore.Increment`` on
-#: every AI call (see ``record_api_usage``) and surfaced read-only in the admin
-#: AI-settings page. See ``record_api_usage`` for the document schema.
 AI_USAGE_COLLECTION = 'api_usage'
-
-#: How many recent daily usage docs the admin summary reads back.
 AI_USAGE_SUMMARY_DAYS = 30
-
-#: Allow-list of the real, generally-available Claude model ids that may be
-#: selected for any pipeline call. A stored/selected model NOT in this tuple is
-#: rejected and the call falls back to the default model (#91 guarded lookup).
-#: Verified against the Anthropic models docs (2026-07): Opus 4.8, Sonnet 5,
-#: Sonnet 4.6 and Haiku 4.5 are the current GA ids.
-AI_MODEL_ALLOWLIST = (
-    'claude-opus-4-8',
-    'claude-sonnet-5',
-    'claude-sonnet-4-6',
-    'claude-haiku-4-5',
-)
-
-#: Sane bounds for the vision image long-edge (px) and extraction reply tokens.
-#: A stored value outside these bounds is treated as invalid and falls back to
-#: the default. The upper edge stays under what ``downscale_for_vision`` will
-#: JPEG-shrink below Claude's per-image byte cap (#134), so it can never
-#: reintroduce an oversized-image rejection.
-AI_EDGE_MIN = 512
-AI_EDGE_MAX = 4096
-AI_TOKENS_MIN = 256
-AI_TOKENS_MAX = 8192
-
-#: Effective defaults for every tunable key. Each mirrors today's hardcoded
-#: constant so an absent config doc is a no-op — EXCEPT ``extraction_max_edge``
-#: (approved 2576 -> 2000 cost reduction).
-AI_SETTINGS_DEFAULTS = {
-    # Models (validated against AI_MODEL_ALLOWLIST).
-    'extraction_model': EXTRACTION_MODEL,             # page OCR
-    'metadata_model': EXTRACTION_MODEL,               # title/copyright/collection
-    'character_detection_model': EXTRACTION_MODEL,    # #52 character detection
-    'locate_model': 'claude-haiku-4-5',               # locate key/cover pages
-    'rotation_model': 'claude-sonnet-4-6',            # get_rotation_angle
-    'crop_quality_model': 'claude-haiku-4-5',         # check_crop_quality
-    'theme_model': 'claude-sonnet-4-6',               # suggest_themes
-    # Resolutions / tokens (validated against the bounds above).
-    'extraction_max_edge': 2000,                      # approved: down from 2576
-    'extraction_max_tokens': EXTRACTION_OCR_MAX_TOKENS,  # 2048
-    'locate_max_edge': LOCATE_MAX_EDGE,               # 784
-    # Feature toggles (validated as bool).
-    'enable_rotation_correction': True,               # gate get_rotation_angle
-    'enable_crop_quality_gate': True,                 # gate check_crop_quality
-}
-
-#: The tunable keys grouped by validation type.
-AI_SETTINGS_MODEL_KEYS = (
-    'extraction_model', 'metadata_model', 'character_detection_model',
-    'locate_model', 'rotation_model', 'crop_quality_model', 'theme_model',
-)
-_AI_SETTINGS_EDGE_KEYS = ('extraction_max_edge', 'locate_max_edge')
-_AI_SETTINGS_TOKEN_KEYS = ('extraction_max_tokens',)
-_AI_SETTINGS_BOOL_KEYS = ('enable_rotation_correction', 'enable_crop_quality_gate')
-
-#: TTL for the cached read of the config doc. Short so an admin's save is picked
-#: up promptly by other sessions even without an explicit cache clear; the save
-#: path clears the cache immediately for the saving admin.
 _AI_SETTINGS_TTL_SECONDS = 60
-
-
-def _coerce_int(value):
-    """Best-effort int coercion for a stored numeric setting, or ``None``.
-
-    Accepts ints and numeric strings; rejects bools (``True``/``False`` are ints
-    in Python but are never valid resolutions/tokens) and anything unparseable.
-    """
-    if isinstance(value, bool):
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
 
 
 @st.cache_data(ttl=_AI_SETTINGS_TTL_SECONDS, show_spinner=False)
 def _read_ai_settings_doc():
     """Read the RAW stored AI-pipeline settings dict from Firestore (cached).
 
-    Returns ``{}`` when the doc is absent, empty, oddly-shaped, or the read
-    fails — every such case degrades to "use the defaults" rather than raising,
-    so the pipeline keeps working. A read error is logged, not swallowed (#127).
+    Returns ``{}`` when the doc is absent or the read fails, preserving the
+    default fallback. A read error is logged, not swallowed (#127).
     Validation of the individual values happens in ``get_ai_settings`` so the
     cached raw payload stays a faithful copy of what is stored.
     """
@@ -208,49 +70,27 @@ def _read_ai_settings_doc():
     if not doc.exists:
         return {}
     data = doc.to_dict()
-    return data if isinstance(data, dict) else {}
+    return data
 
 
 def get_ai_settings():
-    """Return the effective, validated AI-pipeline settings as a plain dict.
-
-    Starts from ``AI_SETTINGS_DEFAULTS`` and overlays each stored key ONLY when
-    its value validates (model in the GA allow-list; resolution/token within
-    bounds; toggle is a real bool). An invalid or missing stored value keeps the
-    default (guarded, #91), so an empty/absent/corrupt config doc reproduces the
-    previous hardcoded behaviour exactly (bar the approved 2000px edge default).
-
-    Cheap to call repeatedly: the Firestore read is cached (``_read_ai_settings_doc``)
-    and only the light validation runs per call. Call ``clear_ai_settings_cache``
-    after an admin save so the new values are read immediately.
-    """
+    """Overlay valid stored values on defaults; explicit runtime settings stay strict."""
     runtime = current_runtime()
     if runtime is not None:
-        # The standalone evaluator freezes/validates these before execution.
-        # In particular, never consult the Streamlit cache or Firestore here.
-        return dict(runtime.settings)
+        # No Streamlit cache or Firestore access inside workers/evaluation.
+        return validate_settings(runtime.settings, model_ids=getattr(runtime.client, 'prices', {}))
     stored = _read_ai_settings_doc()
-    settings = dict(AI_SETTINGS_DEFAULTS)
-    if not isinstance(stored, dict):
-        return settings
-    for key in AI_SETTINGS_DEFAULTS:
-        if key not in stored:
-            continue
-        value = stored[key]
-        if key in AI_SETTINGS_MODEL_KEYS:
-            if isinstance(value, str) and value in AI_MODEL_ALLOWLIST:
-                settings[key] = value
-        elif key in _AI_SETTINGS_EDGE_KEYS:
-            number = _coerce_int(value)
-            if number is not None and AI_EDGE_MIN <= number <= AI_EDGE_MAX:
-                settings[key] = number
-        elif key in _AI_SETTINGS_TOKEN_KEYS:
-            number = _coerce_int(value)
-            if number is not None and AI_TOKENS_MIN <= number <= AI_TOKENS_MAX:
-                settings[key] = number
-        elif key in _AI_SETTINGS_BOOL_KEYS:
-            if isinstance(value, bool):
-                settings[key] = value
+    if not isinstance(stored, Mapping):
+        return validate_settings(stored)
+    settings = validate_settings({})
+    for key, value in stored.items():
+        try:
+            validated = validate_settings({key: value})
+        except ValueError as exc:
+            logger.warning("get_ai_settings: ignoring stored setting %r=%r: %s",
+                           key, value, exc)
+        else:
+            settings[key] = validated[key]
     return settings
 
 
@@ -261,32 +101,9 @@ def clear_ai_settings_cache():
 
 
 def save_ai_settings(values):
-    """Persist admin-edited AI settings to the config doc, then clear the cache.
-
-    ``values`` is filtered to the known tunable keys and re-validated (via
-    ``get_ai_settings``'s rules) so nothing out of range or off the model
-    allow-list is ever written. Writes with ``merge=True`` so a partial update
-    never drops unrelated keys. Raises ``GoogleAPIError`` on a write failure so
-    the caller can surface it (per the error-handling convention).
-    """
-    clean = {}
-    for key in AI_SETTINGS_DEFAULTS:
-        if key not in values:
-            continue
-        value = values[key]
-        if key in AI_SETTINGS_MODEL_KEYS:
-            if isinstance(value, str) and value in AI_MODEL_ALLOWLIST:
-                clean[key] = value
-        elif key in _AI_SETTINGS_EDGE_KEYS:
-            number = _coerce_int(value)
-            if number is not None and AI_EDGE_MIN <= number <= AI_EDGE_MAX:
-                clean[key] = number
-        elif key in _AI_SETTINGS_TOKEN_KEYS:
-            number = _coerce_int(value)
-            if number is not None and AI_TOKENS_MIN <= number <= AI_TOKENS_MAX:
-                clean[key] = number
-        elif key in _AI_SETTINGS_BOOL_KEYS:
-            clean[key] = bool(value)
+    """Validate the entire partial update before writing any settings."""
+    validated = validate_settings(values)
+    clean = {key: validated[key] for key in values}
     FirestoreWrapper(auth=False).set_document(
         AI_SETTINGS_COLLECTION, AI_SETTINGS_DOCUMENT, clean, merge=True
     )
@@ -1714,7 +1531,7 @@ CHARACTER_DETECTION_MAX_TOKENS = 8192
 
 
 def detect_book_characters(pages, client, progress_callback=None, model=None,
-                           prompt_variant="rules-plus-icl"):
+                           prompt_variant=None):
     """One whole-book call with lossless, evidence-bearing character suggestions.
 
     Args:
@@ -1725,7 +1542,8 @@ def detect_book_characters(pages, client, progress_callback=None, model=None,
             ``character_detection_model``; the background pipeline (#179) passes
             it explicitly because ``get_ai_settings`` (a Streamlit cache) must
             not be called from the worker thread.
-        prompt_variant: frozen rules-only or rules-plus-icl request variant.
+        prompt_variant: explicit request variant, or the application setting
+            when model is also omitted (foreground callers).
 
     Returns a list of character suggestion dicts, each with keys:
         name (str), gender (one of CharacterForm.gender_options),
@@ -1742,6 +1560,13 @@ def detect_book_characters(pages, client, progress_callback=None, model=None,
     from conventions import convention_metadata
     from text_content.pipeline_prompts import prompt_for, prompt_request_manifest
 
+    if model is None:
+        settings = get_ai_settings()
+        model = settings['character_detection_model']
+        if prompt_variant is None:
+            prompt_variant = settings['prompt_variant']
+    if prompt_variant is None:
+        prompt_variant = PIPELINE_SETTINGS_DEFAULTS['prompt_variant']
     pages = list(pages)
     # Single call over the whole book — report a coarse 0 -> 1 so existing
     # progress UIs still update.
@@ -1758,7 +1583,7 @@ def detect_book_characters(pages, client, progress_callback=None, model=None,
         client,
         prompt,
         max_tokens=CHARACTER_DETECTION_MAX_TOKENS,
-        model=model or get_ai_settings()['character_detection_model'],
+        model=model,
     )
     validate_character_response_structure(result)
     result = validate_character_evidence(result, pages)
@@ -2175,7 +2000,7 @@ def locate_key_pages(pages, client):
     pages = list(pages)
     labels = [{"position": position, "page_number": _metadata_page_number(name, position)}
               for position, (name, _) in enumerate(pages, 1)]
-    prompt = prompt_for('locate_key_pages', ai_settings.get('prompt_variant', 'rules-plus-icl'))
+    prompt = prompt_for('locate_key_pages', ai_settings.get('prompt_variant', PIPELINE_SETTINGS_DEFAULTS['prompt_variant']))
     prompt += "\n" + T.image_labels.format(pages=json.dumps(labels, ensure_ascii=False))
     result, _raw = vision_json(
         client, [image for _, image in pages], prompt,
@@ -2311,7 +2136,7 @@ def extract_joint_metadata(pages, client, *, previous=None):
     labels = [{"position": position, "page_number": number}
               for position, (number, _) in enumerate(pages, 1)]
     ai_settings = get_ai_settings()
-    variant = ai_settings.get('prompt_variant', 'rules-plus-icl')
+    variant = ai_settings.get('prompt_variant', PIPELINE_SETTINGS_DEFAULTS['prompt_variant'])
     prompt = prompt_for('joint_metadata_extraction', variant) + "\n" + T.image_labels.format(
         pages=json.dumps(labels, ensure_ascii=False))
     if previous is not None:

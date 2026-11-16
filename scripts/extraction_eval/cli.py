@@ -263,13 +263,15 @@ def _extract(args):
 
 
 def _extract_loaded(args, loader):
-    from text_content.pipeline_prompts import PROMPT_VARIANTS
+    from pipeline_config import validate_settings
     from .gateway import Gateway, validate_prices
     from .runner import configure_inputs, estimate, freeze_run, run_extract, validate_inputs
     from .sampling import select_books
     from .store import Ledger
     from .billing import billing_provider, cycle_budgets
     config = read_json(args.config)
+    config['settings'] = validate_settings(
+        config.get('settings', {}), model_ids=config.get('pricing', {}).get('models', {}))
     budgets = cycle_budgets(config, args.cycle_cap_usd, required=args.execute)
     paired_inputs = None
     if args.inputs == 'scans':
@@ -294,20 +296,6 @@ def _extract_loaded(args, loader):
         manifest = _load_snapshot(args.snapshot, loader=loader, book_ids=requested,
                                   additional_ids=args.challenge_books)
         input_manifest = manifest
-    required = read_json(PACKAGE / "baseline.json").get("settings", {})
-    settings = config.get("settings", {})
-    for key, default in required.items():
-        value = settings.get(key)
-        if type(value) is not type(default):
-            raise ValueError(f"Missing/invalid frozen setting: {key}")
-    if settings["prompt_variant"] not in PROMPT_VARIANTS:
-        raise ValueError(f"Unknown prompt variant: {settings['prompt_variant']!r}; "
-                         f"choose one of {', '.join(PROMPT_VARIANTS)}")
-    for key in ("extraction_max_edge", "locate_max_edge"):
-        if not 512 <= settings.get(key, 0) <= 4096:
-            raise ValueError(f"Invalid resolution: {key}")
-    if not 256 <= settings.get("extraction_max_tokens", 0) <= 8192:
-        raise ValueError("Invalid extraction_max_tokens")
     validate_prices(config, executing=args.execute)
     config = configure_inputs(config, args.inputs, inputs_manifest=paired_inputs,
                               scan_root=args.scan_root, reference_root=args.reference_root,

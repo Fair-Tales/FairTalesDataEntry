@@ -15,11 +15,12 @@ from .tuning import current_loader
 from .outcomes import EvaluationFailure, normalize_outcome
 from text_content.pipeline_prompts import evaluation_prompt_context
 from text_content.tuning import TuningErrors
+from pipeline_config import validate_settings
 from .store import (BudgetStopped, CachedFailure, OutcomeUnknown, atomic_json,
                     canonical, digest)
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCE_PATHS = ("ai_runtime.py", "extraction_core.py", "utilities.py", "image_processing.py",
+SOURCE_PATHS = ("pipeline_config.py", "ai_runtime.py", "extraction_core.py", "utilities.py", "image_processing.py",
                 "text_content/ai_prompts.py", "conventions.py", "bibliography.py",
                 "character_evidence.py", "alias_schema.py", "alias_pipeline.py",
                 "text_content/pipeline_prompts.py", "text_content/pipeline_examples.json",
@@ -50,6 +51,8 @@ def configure_inputs(config, inputs, *, inputs_manifest=None, scan_root=None,
 
 
 def freeze_run(out, snapshot, selection, config, replicate, cap, cycle_cap, ledger):
+    config = {**config, 'settings': validate_settings(
+        config.get('settings', {}), model_ids=config.get('pricing', {}).get('models', {}))}
     loader = _require_loader()
     admitted = snapshot
     if config.get('inputs') == 'scans':
@@ -266,6 +269,8 @@ def cached_isbn_lookup(out, lookup, *, dry_run=False, capture_raw=False,
 
 def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, loader, dry_run=False, core=None, isbn_lookup=None, progress=print):
     """Extract and replay only after admission to the run's named cohort."""
+    settings = validate_settings(
+        config.get('settings', {}), model_ids=config.get('pricing', {}).get('models', {}))
     loader = _require_loader(loader)
     try:
         with loader.activate():
@@ -288,7 +293,6 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                        "run_id": getattr(getattr(gateway, "ledger", None), "run_id", None),
                        "books": {}, "dry_run": dry_run, "conventions": convention_metadata(),
                        "inputs": config.get('inputs', 'renders')}
-            settings = config.get("settings", {})
             stop_reason = None
             current_book_id = None
             isbn = cached_isbn_lookup(out, isbn_lookup, dry_run=dry_run, capture_raw=capture_lookup_raw,
@@ -477,7 +481,7 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                                 images.append((page.get('page_number'), image))
                         return core.classify_book_context(predicted_pages, images, gateway, settings, record_usage)
 
-                    if settings.get('story_context_enabled', False):
+                    if settings['story_context_enabled']:
                         book_result['story_context'] = perform(f'{stage_prefix}:story_context', context,
                                                                inputs=predicted_pages)
                         from extraction_core import apply_context_classification
@@ -498,7 +502,7 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                                   or value.get('metadata_finalization', {}).get('status') == 'failed')
                         return {'status': 'failed' if failed else 'completed', 'value': value}
 
-                    if settings.get('metadata_reconciliation_enabled', False):
+                    if settings['metadata_reconciliation_enabled']:
                         book_result['metadata_initial'] = book_result.get('metadata')
                         book_result['metadata_reconciliation'] = perform(f'{stage_prefix}:metadata_reconciliation', reconcile,
                             inputs={'metadata': book_result['metadata'], 'pages': predicted_pages})
@@ -510,7 +514,7 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                         # do not freeze a character stage on a partial budget-stopped book.
                         if any(row.get("status") not in {"completed", "failed"} for row in predicted_pages):
                             return {"status": "pending", "error": "Waiting for all page stages"}
-                        if (settings.get('story_context_enabled', False)
+                        if (settings['story_context_enabled']
                                 and book_result.get('story_context', {}).get('status') not in {'completed', 'failed'}):
                             return {'status': 'pending', 'error': 'Waiting for whole-book classification'}
                         value = core.extract_characters(predicted_pages, gateway, settings, record_usage)

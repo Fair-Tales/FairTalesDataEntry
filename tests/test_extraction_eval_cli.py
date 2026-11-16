@@ -147,16 +147,13 @@ def test_snapshot_completed_resume_constructs_no_clients(offline_inputs, capsys)
 
 
 @pytest.mark.parametrize("variant", [None, "", "unknown-variant", 1])
-def test_extract_requires_explicit_known_prompt_variant(
+def test_extract_refuses_invalid_prompt_variant(
         offline_inputs, tmp_path, monkeypatch, capsys, variant):
     from scripts.extraction_eval import runner
 
     snapshot, config_path = offline_inputs
     config = read_json(config_path)
-    if variant is None:
-        del config["settings"]["prompt_variant"]
-    else:
-        config["settings"]["prompt_variant"] = variant
+    config["settings"]["prompt_variant"] = variant
     atomic_json(config_path, config)
     monkeypatch.setattr(runner, "local_image", forbidden)
     monkeypatch.setattr("builtins.input", forbidden)
@@ -166,9 +163,7 @@ def test_extract_requires_explicit_known_prompt_variant(
                   "--config", str(config_path), "--books", "book-02", "--execute"])
     assert exc.value.code == 2
     error = capsys.readouterr().err
-    assert ("Missing/invalid frozen setting: prompt_variant" in error
-            if variant is None or not isinstance(variant, str)
-            else "Unknown prompt variant" in error)
+    assert "Invalid pipeline setting: prompt_variant" in error
     assert not (snapshot.parent / "spend.sqlite").exists()
 
 
