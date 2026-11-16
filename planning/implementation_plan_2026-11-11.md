@@ -53,6 +53,8 @@
 
 **Added 16 November (DECISIONS 021).** P2: run the candidate character stage on the twenty development books to test LLM pronoun handling for the language analysis, and have an agent check a sample of its character attributions against the text. About 20 cents; needs the evaluation key (A1a) and the adapter and configuration items it depends on. Preceded by an Astra review of how the pronoun handling is designed. Aliases are tuned for accuracy, not quantity, on three figures (coverage, groundedness and an agent-checked sample), so an agent alias check on the tuning books is added to the tuning measures.
 
+**Added 16 November (DECISIONS 021 item 5).** P3: remove the `language_relations` and `coreference_evidence` request from the candidate character-stage prompt, since the language-analysis repository owns character-language attribution and nothing in the data-entry app saves them. Do it before the tuning baseline, so the candidate is measured as it will be tuned; it is a prompt change, so it needs no production decision while production stays on the old prompts. **Status after the providers branch:** A1b, A8b, A9, A10, A11, A12 and A13 are done; A1a (Chris's account steps and each subscription's cycle start day) is what remains before the first billing probe.
+
 ## B. Before `claude-dev` can go to `main`
 
 | ID/reference | Change and files | Runnable acceptance → expected result | Depends; size |
