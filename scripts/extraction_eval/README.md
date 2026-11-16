@@ -30,7 +30,7 @@ missing or multiple override files are errors. Each PDF must contain
 one JPEG per page; embedded bytes are extracted in PDF order without re-encoding.
 The cohort gate runs before any PDF read. The source choice and ordered hashes
 are frozen in `run.json`; the source also separates request and stage caches.
-Scan page ids are `scan-1`, `scan-2`, …; whole-book text scoring awaits A5a.
+Scan page ids are `scan-1`, `scan-2`, …; `score` uses whole-book token edit accuracy.
 
 ## Original Word references
 
@@ -70,10 +70,39 @@ Scan runs embed the manifest in their frozen configuration and verify source
 hashes. Unavailable books stay selected, make no requests, and count in results.
 `inputs_manifest.scoring_inputs` prepares ordered whole-book reference/prediction
 strings (including wordless and failed pages) and forces unavailable books to
-zero. A5a must consume those rows for the selected ids, retain their denominator,
-and replace the current scan-scoring refusal; the old page metric cannot be used.
+zero. `score --snapshot SNAPSHOT --run RUN --out REPORTS` writes `summary.json`
+and `book_scores.json` for the selected books, including unavailable books in
+`book_denominator`. Scan reports currently contain only this text measure;
+character/attribute/alias measures, book means/ranges, overlays and comparisons
+are not implemented here. Render runs retain their existing scoring and reports.
 Supply `extract --reference-root` / `--published-text` when their later scoring
 paths differ from defaults or a published fallback was selected.
+
+The measure is `max(0, 1 - token_Levenshtein / reference_tokens)` on all pages
+joined in order with newlines, using the unchanged `pilot-normalization-v1`
+NFKC/casefold/apostrophe and Unicode tokenizer. Empty/empty scores 1;
+empty/nonempty scores 0. Failed, absent and abstained pages contribute no predicted
+tokens. Every score records reference/predicted token counts, substitutions,
+deletions, insertions and total edit distance. Minimum-edit ties resolve from the
+start as match, substitution, deletion, insertion. The exact alignment uses
+Python integer bit vectors without a new dependency or approximation.
+
+The inserted-text guardrail uses that same alignment: insertions per 100 reference
+tokens, including predictions on reference-empty pages. With zero reference
+tokens the rate is `null` (undefined), while all inserted tokens are counted.
+Unavailable books have accuracy 0 and `forced_score=0`; their unknown components
+and rate are `null`, not invented counts.
+
+`score --text-output stored` is the default: compare all stored page text.
+`--text-output analysis_without_illustration_lettering` explicitly selects
+`project_analysis_text(..., include_illustration_lettering=False)`, retaining
+narrative/informational regions and dropping tagged illustration lettering and
+paratext. The existing projection keeps unclassified/malformed-region text intact.
+The choice is recorded in the summary and every book score, together with the
+normalization version; it does not require new extraction. Stored text is the
+recommended convention to freeze: it exposes all added text to the guardrail
+without allowing a predicted region label to hide it. This recommendation does
+not ratify the choice.
 
 For rehearsal/proof, run the same command with that explicit cohort before any
 predictions, using frozen rules. Software reads only admitted files; nobody needs

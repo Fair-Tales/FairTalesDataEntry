@@ -206,9 +206,34 @@ def test_scan_cli_uses_scan_pages_without_stored_renders(
     assert contract['snapshot_hash'] == digest(loader.snapshot(snapshot, ['book-02']))
     assert cli.main(args) == 0
     assert '0 paid calls' in capsys.readouterr().out
+    predictions['books']['book-02']['pages'] = {
+        'scan-2': {'status': 'completed', 'text': 'Added lettering', 'regions': [
+            {'kind': 'illustration_lettering', 'text': 'Added lettering'}]},
+        'scan-1': {'status': 'completed', 'text': 'A synthetic reference'},
+    }
+    atomic_json(out / 'predictions.json', predictions)
+    score_args = ['score', '--snapshot', str(snapshot), '--run', str(out)]
+    assert cli.main(score_args) == 0
+    summary = read_json(out / 'reports' / 'summary.json')
+    assert summary['book_denominator'] == 1
+    assert summary['text_output'] == 'stored'
+    score = summary['book_scores'][0]
+    assert score['reference_tokens'] == 3
+    assert score['insertions'] == 2
+    assert score['accuracy'] == pytest.approx(1 / 3)
+    assert score['inserted_text_per_100_reference_tokens'] == pytest.approx(200 / 3)
+    projected = tmp_path / 'projected-report'
+    assert cli.main([*score_args, '--out', str(projected), '--text-output',
+                     'analysis_without_illustration_lettering']) == 0
+    summary = read_json(projected / 'summary.json')
+    assert summary['text_output'] == 'analysis_without_illustration_lettering'
+    assert summary['book_scores'][0]['accuracy'] == 1
+    assert summary['book_scores'][0]['insertions'] == 0
+    assert read_json(projected / 'book_scores.json') == summary['book_scores']
+    assert set(path.name for path in projected.iterdir()) == {'summary.json', 'book_scores.json'}
     with pytest.raises(SystemExit):
-        cli.main(['score', '--snapshot', str(snapshot), '--run', str(out)])
-    assert 'A5a' in capsys.readouterr().err
+        cli.main([*score_args, '--compare-run', str(out)])
+    assert 'per-book text only' in capsys.readouterr().err
     with Image.new('RGB', (8, 10), 'green') as changed:
         changed.save(folder / 'Book 2.pdf')
     with pytest.raises(SystemExit):
@@ -265,6 +290,13 @@ def test_scan_cli_keeps_unavailable_book_without_dispatch(
     output = capsys.readouterr().out
     assert '"unavailable_books": 1' in output
     assert '"estimated_usd": 0.0' in output
+    atomic_json(out / 'predictions.json', result)
+    assert cli.main(['score', '--snapshot', str(snapshot), '--run', str(out)]) == 0
+    summary = read_json(out / 'reports' / 'summary.json')
+    assert summary['book_denominator'] == 1
+    assert summary['book_scores'][0]['id'] == 'book-02'
+    assert summary['book_scores'][0]['accuracy'] == 0
+    assert summary['book_scores'][0]['forced_score'] == 0
 
 
 def test_inventory_cli_reports_counts_only(tmp_path, cohort_loader_factory, capsys):

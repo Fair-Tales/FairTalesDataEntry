@@ -23,7 +23,9 @@ class TuningErrors:
     expected_object = "Expected a JSON object"
     expected_array = "Expected a JSON array"
     inputs_manifest_required = "Scan extraction requires --inputs-manifest from the frozen file mappings"
-    scan_scoring_pending = "Scan scoring requires the whole-book text measure in A5a; the frozen inputs manifest supplies its book-level inputs"
+    scan_text_only = "Scan scoring currently supports per-book text only; overlays, equivalences and run comparisons are not implemented"
+    text_output_scans_only = "--text-output applies only to scan scoring; render scoring retains its existing conventions"
+    scan_selection_missing = "Inputs manifest is missing a selected book"
 
 
 class TuningHelp:
@@ -34,3 +36,4 @@ class TuningHelp:
     inputs_manifest = "Frozen scan/reference files, hashes and availability for this cohort"
     reference_root = "Directory containing the Word exports named in the inputs manifest"
     published_text = "Published text file, only for fallbacks already frozen in the inputs manifest"
+    text_output = "Scan text measure: stored page text (default), or analysis projection excluding tagged illustration lettering and paratext; recorded in scores"

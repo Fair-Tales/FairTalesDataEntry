@@ -2,8 +2,8 @@
 
 Reference eligibility is a property of the snapshot. Metadata additionally
 excludes fields whose ISBN enrichment could not be measured due to lookup failure.
-All returned objects are JSON serializable. None denotes an undefined metric,
-never a perfect score for two empty sets.
+All returned objects are JSON serializable. None denotes an undefined metric.
+The whole-book text measure explicitly scores two empty token sequences as 1.
 """
 
 from __future__ import annotations
@@ -17,12 +17,57 @@ from text_content.alias_metrics import AliasMetrics
 from text_content.evaluation import EvaluationText
 
 from .alias_metrics import aggregate_alias_foundation, score_alias_foundation
-from .normalization import (UNCERTAINTY, character_similarity, edit_distance,
+from .normalization import (NORMALIZATION_VERSION, UNCERTAINTY, character_similarity, edit_distance, edit_operations,
                             normalize_name, normalize_text, token_counts, tokenize)
 from .statistics import bootstrap_books
 
 ELIGIBLE = {"observed", "verified"}
 UNRUN = {"pending", "dispatched", "budget_stopped", "outcome_unknown", "unknown_outcome"}
+TEXT_OUTPUTS = ('stored', 'analysis_without_illustration_lettering')
+
+
+def prediction_page_text(page, text_output='stored'):
+    """Select the recorded output convention; failed/abstained pages add no text."""
+    if text_output not in TEXT_OUTPUTS:
+        raise ValueError(f'Unknown text output: {text_output}')
+    text, status = _prediction(page, 'text')
+    if status != 'completed' or not isinstance(text, str):
+        return ''
+    if text_output != 'stored' and isinstance(page, dict):
+        from conventions import project_analysis_text
+        return project_analysis_text(page, include_illustration_lettering=False)['analysis_text']
+    return text
+
+
+def score_book_text(reference_pages, prediction_pages, *, text_output='stored', forced_score=None):
+    """Ordered whole-book token edit accuracy and insertions per 100 reference tokens.
+
+    Pages need not correspond. Prediction pages may be strings or extraction
+    records. An unavailable book has forced_score=0 and unknown components, not
+    invented zero counts. With zero reference tokens the insertion rate is None
+    (undefined); its insertion count and the specified accuracy remain reported.
+    """
+    if text_output not in TEXT_OUTPUTS:
+        raise ValueError(f'Unknown text output: {text_output}')
+    result = {'text_output': text_output, 'normalization_version': NORMALIZATION_VERSION,
+              'alignment_tie_order': ['match', 'substitution', 'deletion', 'insertion'],
+              'forced_score': forced_score}
+    if forced_score is not None:
+        if forced_score != 0:
+            raise ValueError('Unavailable text score must be zero')
+        return {**result, 'accuracy': 0.0, **dict.fromkeys((
+            'reference_tokens', 'predicted_tokens', 'substitutions', 'deletions',
+            'insertions', 'edit_distance', 'inserted_text_per_100_reference_tokens'))}
+    reference = tokenize('\n'.join(reference_pages))
+    prediction = tokenize('\n'.join(prediction_page_text(page, text_output)
+                                    for page in prediction_pages))
+    counts = edit_operations(reference, prediction)
+    distance = sum(counts.values())
+    return {**result, **counts, 'reference_tokens': len(reference),
+            'predicted_tokens': len(prediction), 'edit_distance': distance,
+            'accuracy': max(0.0, 1 - distance / len(reference)) if reference else float(not prediction),
+            'inserted_text_per_100_reference_tokens':
+                100 * counts['insertions'] / len(reference) if reference else None}
 
 
 def apply_overlay(manifest, overlay, *, convention_version=None):

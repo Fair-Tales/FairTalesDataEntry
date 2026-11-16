@@ -147,13 +147,16 @@ def _manifest_reference(row, reference_root, published_path):
 
 
 def scoring_inputs(inputs, predictions, reference_root=DEFAULT_REFERENCE_ROOT, *,
-                   published_path=None):
+                   published_path=None, text_output='stored'):
     """A5a's input contract, NOT a metric. One row per book, even without output.
 
     Join all ordered pages with newlines (no story/wordless filtering). Failed
     pages contribute empty text and their numbers; A5a measures the omissions.
     Unavailable books must use forced_score=0 and remain in the denominator.
     """
+    from .scoring import TEXT_OUTPUTS, prediction_page_text
+    if text_output not in TEXT_OUTPUTS:
+        raise ValueError(f'Unknown text output: {text_output}')
     rows = _rows(inputs)
     result = []
     for book_id, row in rows.items():
@@ -167,7 +170,7 @@ def scoring_inputs(inputs, predictions, reference_root=DEFAULT_REFERENCE_ROOT, *
             for number in range(1, row['scan']['page_count'] + 1):
                 page = pages.get(f'scan-{number}', {})
                 if page.get('status') == 'completed' and isinstance(page.get('text'), str):
-                    texts.append(page['text'])
+                    texts.append(prediction_page_text(page, text_output))
                 else:
                     texts.append('')
                     item['failed_pages'].append(number)

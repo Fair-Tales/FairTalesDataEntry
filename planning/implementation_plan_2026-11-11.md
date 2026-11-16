@@ -45,6 +45,8 @@
 
 **Limit found in A4.** `legacy-v1` replays page text and character detection byte for byte, but not the old metadata workflow: the separate title-page and copyright-page calls were since replaced by one joint stage, and the key-page lookup changed how it labels images. B1 therefore cannot restore the old title, author and publisher behaviour by prompts alone; that needs a decision when B1 is reached.
 
+**Open for Chris before the freeze, raised by A5a.** The text measure can compare either everything the pipeline stores for a page, or a second version with tagged illustration lettering removed. The default is everything stored, and the choice is recorded in every score. Astra recommends freezing on everything stored, so that text the pipeline adds cannot be hidden from the inserted-text figure by labelling it as lettering. Against that, the team's Word text may not include lettering printed inside pictures, in which case real text the pipeline reads would count against it. The baseline on the tuning books will show how much the two figures differ; decide then, before the rehearsal.
+
 ## B. Before `claude-dev` can go to `main`
 
 | ID/reference | Change and files | Runnable acceptance → expected result | Depends; size |

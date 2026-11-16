@@ -414,3 +414,102 @@ def test_replicate_variation_keeps_all_responses_and_story_flips():
     assert result["sample_standard_deviation"] > 0
     with pytest.raises(ValueError, match="unique"):
         replicate_variation(rows + [rows[0]])
+
+
+@pytest.mark.parametrize('reference,prediction,accuracy,substitutions,deletions,insertions', [
+    (['A fox', '', 'runs home'], ['A fox', '', 'runs home'], 1, 0, 0, 0),
+    ([''], [''], 1, 0, 0, 0),
+    ([''], ['invented new words'], 0, 0, 0, 3),
+    (['one two'], [''], 0, 0, 2, 0),
+    (['one two'], ['one six'], .5, 1, 0, 0),
+    (['one two', 'three four'], ['one two', {'status': 'failed', 'text': 'three four'}], .5, 0, 2, 0),
+    (['one two'], [{'status': 'abstained', 'text': 'one two'}], 0, 0, 2, 0),
+    (['one two'], [None], 0, 0, 2, 0),
+    (['one two', ''], ['one two', 'fabricated'], .5, 0, 0, 1),
+    (['one two'], ['two one'], 0, 2, 0, 0),
+    (['ＣＡＴ’S café', 'DOG‘S'], ["cat's CAFÉ dog's"], 1, 0, 0, 0),
+    (['one', 'two'], ['one two'], 1, 0, 0, 0),
+])
+def test_whole_book_text(reference, prediction, accuracy, substitutions, deletions, insertions):
+    from scripts.extraction_eval.scoring import score_book_text
+    score = score_book_text(reference, prediction)
+    assert score['accuracy'] == accuracy
+    assert (score['substitutions'], score['deletions'], score['insertions']) == (
+        substitutions, deletions, insertions)
+    assert score['edit_distance'] == substitutions + deletions + insertions
+    assert score['predicted_tokens'] - score['reference_tokens'] == insertions - deletions
+    expected_rate = 100 * insertions / score['reference_tokens'] if score['reference_tokens'] else None
+    assert score['inserted_text_per_100_reference_tokens'] == expected_rate
+    assert score['text_output'] == 'stored'
+    assert score['normalization_version'] == 'pilot-normalization-v1'
+
+
+def test_unavailable_text_is_zero_even_with_no_reference_or_output():
+    from scripts.extraction_eval.scoring import score_book_text
+    score = score_book_text([], [], forced_score=0)
+    assert score['accuracy'] == 0
+    assert score['reference_tokens'] is None
+    assert score['insertions'] is None
+    assert score['forced_score'] == 0
+
+
+def test_book_text_projection_is_explicit_and_preserves_unclassified_text():
+    from scripts.extraction_eval.scoring import score_book_text
+    pages = [{'status': 'completed', 'text': 'Story\n\nSIGN\n\nCredit', 'regions': [
+        {'kind': 'narrative', 'text': 'Story'},
+        {'kind': 'illustration_lettering', 'text': 'SIGN'},
+        {'kind': 'paratext', 'text': 'Credit'},
+    ]}, {'status': 'completed', 'text': 'Unclassified'}]
+    stored = score_book_text(['Story Unclassified'], pages)
+    projected = score_book_text(['Story Unclassified'], pages,
+                                text_output='analysis_without_illustration_lettering')
+    assert stored['insertions'] == 2
+    assert stored['accuracy'] == 0
+    assert projected['accuracy'] == 1
+    assert projected['text_output'] == 'analysis_without_illustration_lettering'
+    with pytest.raises(ValueError, match='Unknown text output'):
+        score_book_text([], [], text_output='typo')
+
+
+def test_exact_alignment_matches_full_matrix_with_forward_ties():
+    from itertools import product
+    from scripts.extraction_eval.normalization import edit_distance, edit_operations
+
+    def oracle(a, b):
+        n, m = len(a), len(b)
+        costs = [[0] * (m + 1) for _ in range(n + 1)]
+        for i in range(n, -1, -1):
+            for j in range(m, -1, -1):
+                if i == n or j == m:
+                    costs[i][j] = n - i + m - j
+                else:
+                    costs[i][j] = min(costs[i+1][j+1] + (a[i] != b[j]),
+                                      costs[i+1][j] + 1, costs[i][j+1] + 1)
+        i = j = 0
+        counts = dict(substitutions=0, deletions=0, insertions=0)
+        while i < n and j < m:
+            if a[i] == b[j]:
+                i, j = i + 1, j + 1
+            elif costs[i][j] == 1 + costs[i+1][j+1]:
+                counts['substitutions'] += 1
+                i, j = i + 1, j + 1
+            elif costs[i][j] == 1 + costs[i+1][j]:
+                counts['deletions'] += 1
+                i += 1
+            else:
+                counts['insertions'] += 1
+                j += 1
+        counts['deletions'] += n - i
+        counts['insertions'] += m - j
+        return counts
+
+    sequences = [p for n in range(5) for p in product('ab', repeat=n)]
+    for a in sequences:
+        for b in sequences:
+            actual = edit_operations(a, b)
+            assert actual == oracle(a, b), (a, b)
+            assert sum(actual.values()) == edit_distance(a, b)
+    # Exercise integer masks beyond a machine word, with every edit kind.
+    a = list(range(180))
+    b = [900, *a[:20], 901, *a[21:90], *a[92:], 902]
+    assert edit_operations(a, b) == oracle(a, b)

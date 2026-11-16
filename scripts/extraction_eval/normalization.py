@@ -62,3 +62,64 @@ def edit_distance(reference, prediction) -> int:
 def character_similarity(reference: str, prediction: str) -> float:
     denominator = max(len(reference), len(prediction))
     return 1 - edit_distance(reference, prediction) / denominator if denominator else 1.0
+
+
+def edit_operations(reference, prediction) -> dict[str, int]:
+    """Exact Levenshtein counts; ties from the start: match, substitute, delete, insert.
+
+    Myers' bit-vector recurrence packs each DP row's adjacent cost differences
+    into two integers. Reversed sequences give suffix costs for forward traceback.
+    Python integer operations avoid the quadratic Python cell loop; retained rows
+    use two bits per cell (plus integer overhead), not a matrix of Python ints.
+    Tokens must be hashable. Normalization is deliberately left to the caller.
+    """
+    n, m = len(reference), len(prediction)
+    counts = dict(substitutions=0, deletions=0, insertions=0)
+    if reference == prediction:
+        return counts
+    if not n or not m:
+        return dict(substitutions=0, deletions=n, insertions=m)
+    mask = (1 << m) - 1
+    matches = {}
+    for j, token in enumerate(reversed(prediction)):
+        matches[token] = matches.get(token, 0) | (1 << j)
+    positive, negative = mask, 0
+    rows = [(positive, negative)]
+    for token in reversed(reference):
+        equal = matches.get(token, 0)
+        vertical = equal | negative
+        horizontal = (((equal & positive) + positive) ^ positive) | equal
+        plus = negative | ~(horizontal | positive)
+        minus = positive & horizontal
+        plus = (plus << 1) | 1
+        minus <<= 1
+        positive = (minus | ~(vertical | plus)) & mask
+        negative = plus & vertical
+        rows.append((positive, negative))
+
+    def cost(i, j):
+        positive, negative = rows[n - i]
+        prefix = (1 << (m - j)) - 1
+        return n - i + (positive & prefix).bit_count() - (negative & prefix).bit_count()
+
+    i = j = 0
+    remaining = cost(0, 0)
+    while i < n and j < m:
+        if reference[i] == prediction[j]:
+            i += 1
+            j += 1
+            continue
+        if cost(i + 1, j + 1) == remaining - 1:
+            counts['substitutions'] += 1
+            i += 1
+            j += 1
+        elif cost(i + 1, j) == remaining - 1:
+            counts['deletions'] += 1
+            i += 1
+        else:
+            counts['insertions'] += 1
+            j += 1
+        remaining -= 1
+    counts['deletions'] += n - i
+    counts['insertions'] += m - j
+    return counts

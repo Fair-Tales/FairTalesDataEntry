@@ -71,6 +71,9 @@ def build_parser():
     score.add_argument("--compare-run", type=Path, help="Paired book-cluster comparison against another local run")
     score.add_argument("--freeze-dir", type=Path, help=TuningHelp.freeze_dir)
     score.add_argument("--cohort", choices=("tune", "rehearsal", "proof"), default="tune", help=TuningHelp.cohort)
+    from .scoring import TEXT_OUTPUTS
+    score.add_argument('--text-output', choices=TEXT_OUTPUTS, default='stored',
+                       help=TuningHelp.text_output)
     audit = commands.add_parser("audit-tuning", help=TuningHelp.audit)
     audit.add_argument("--run", type=Path, required=True)
     audit.add_argument("--freeze-dir", type=Path, help=TuningHelp.freeze_dir)
@@ -360,8 +363,11 @@ def _score(args):
 def _score_loaded(args, loader):
     from .reporting import snapshot_audit_description, write_reports
     run_config = loader.run_record(args.run / "run.json")
-    if run_config.get('contract', {}).get('config', {}).get('inputs') == 'scans':
-        raise ValueError(TuningErrors.scan_scoring_pending)
+    scans = run_config.get('contract', {}).get('config', {}).get('inputs') == 'scans'
+    if scans and (args.adjudications or args.equivalences or args.compare_run):
+        raise ValueError(TuningErrors.scan_text_only)
+    if not scans and getattr(args, 'text_output', 'stored') != 'stored':
+        raise ValueError(TuningErrors.text_output_scans_only)
     manifest = _load_snapshot(args.snapshot, loader=loader,
                               book_ids=loader.state.get('snapshot_book_ids'))
     protocol = read_json(args.protocol)
@@ -389,6 +395,8 @@ def _score_loaded(args, loader):
     selection = loader.selection(args.run / "selection.json")
     if selection != contract.get("selection"):
         raise ValueError("Selection differs from the frozen run contract")
+    if scans:
+        return _score_scan_text(args, contract, predictions, selection)
     ledger_path = contract.get("ledger")
     if ledger_path and Path(ledger_path).is_file():
         from .store import read_calls
@@ -412,7 +420,7 @@ def _score_loaded(args, loader):
         candidate_run = loader.run_record(args.compare_run / "run.json")
         other_contract = candidate_run.get("contract", {})
         if other_contract.get('config', {}).get('inputs') == 'scans':
-            raise ValueError(TuningErrors.scan_scoring_pending)
+            raise ValueError(TuningErrors.scan_text_only)
         if other_contract.get("snapshot_hash") != contract.get("snapshot_hash"):
             raise ValueError("Comparison runs must use the same frozen snapshot")
         candidate = loader.predictions(args.compare_run / 'predictions.json')
@@ -432,6 +440,34 @@ def _score_loaded(args, loader):
         atomic_json(out / "comparison.json", comparison)
     print(f"Offline report: {out / 'summary.json'}")
     print(snapshot_audit_description(manifest))
+    return 0
+
+
+def _score_scan_text(args, contract, predictions, selection):
+    from .inputs_manifest import scoring_inputs
+    from .normalization import NORMALIZATION_VERSION
+    from .scoring import score_book_text
+    config = contract['config']
+    inputs = config['inputs_manifest']
+    selected = set(selection['book_ids'])
+    inputs = {**inputs, 'books': [row for row in inputs['books'] if row['id'] in selected]}
+    if {row['id'] for row in inputs['books']} != selected:
+        raise ValueError(TuningErrors.scan_selection_missing)
+    rows = scoring_inputs(inputs, predictions, config['reference_root'],
+                          published_path=config.get('published_path'), text_output=args.text_output)
+    scores = []
+    for row in rows:
+        score = score_book_text([row['reference_text'] or ''], [row['prediction_text']],
+                                text_output=args.text_output, forced_score=row['forced_score'])
+        scores.append({**score, 'id': row['id'], 'status': row['status'],
+                       'reason': row['reason'], 'failed_pages': row['failed_pages']})
+    summary = {'measure': 'book-token-edit-accuracy-v1', 'snapshot_id': contract['snapshot_id'],
+               'text_output': args.text_output, 'normalization_version': NORMALIZATION_VERSION,
+               'book_denominator': len(scores), 'book_scores': scores}
+    out = args.out or args.run / 'reports'
+    atomic_json(out / 'book_scores.json', scores)
+    atomic_json(out / 'summary.json', summary)
+    print(f"Offline report: {out / 'summary.json'}")
     return 0
 
 
