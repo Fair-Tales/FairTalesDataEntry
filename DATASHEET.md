@@ -101,7 +101,7 @@ deposition service or public correction process is established here.
 
 ## Open questions for Chris
 
-The distribution questions above remain for Chris and the university services;
-the [codebook](CODEBOOK.md) also asks whether the placeholder ethnicity and
-disability categories should be settled before research use. No additional
-decision is needed to document the present corpus.
+The distribution questions above remain for Chris and the university services.
+The ethnicity and disability categories stay provisional until someone plans to
+analyse them (see the [codebook](CODEBOOK.md)). No additional decision is needed
+to document the present corpus.
