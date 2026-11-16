@@ -446,7 +446,7 @@ def _score_loaded(args, loader):
 def _score_scans(args, contract, predictions, selection, manifest):
     from .inputs_manifest import scoring_inputs
     from .normalization import NORMALIZATION_VERSION
-    from .scoring import score_book_text, score_character_recall
+    from .scoring import score_book_text, score_character_recall, score_character_attributes
     config = contract['config']
     inputs = config['inputs_manifest']
     selected = set(selection['book_ids'])
@@ -471,7 +471,8 @@ def _score_scans(args, contract, predictions, selection, manifest):
                           prediction_status=prediction.get('status', 'pending'))
         scores.append({**score, 'id': row['id'], 'status': row['status'],
                        'reason': row['reason'], 'failed_pages': row['failed_pages'],
-                       'characters': characters})
+                       'characters': characters,
+                       'attributes': score_character_attributes(characters)})
     summary = {'measure': 'book-token-edit-accuracy-v1', 'snapshot_id': contract['snapshot_id'],
                'text_output': args.text_output, 'normalization_version': NORMALIZATION_VERSION,
                'book_denominator': len(scores), 'book_scores': scores}

@@ -117,6 +117,101 @@ accepted tolerant edges cannot displace strict ones. `matches` marks each pair
 original `reference` and `prediction` casts. A representative maximum matching
 does not establish invariant ownership for the later alias measure.
 
+Each scan book also has `attributes`, from `score_character_attributes(characters)`:
+separate gender, human and protagonist scores (`character-attribute-recall-v1`).
+Each headline restricts the character headline's **candidate edges** to equal
+valid codes, takes a maximum matching, and divides by all recorded characters
+with a valid code for that field. `recall`, `numerator` and `denominator` report
+that figure; `strict_recall` and `strict_numerator` use strict edges only, with
+the same denominator. A missing character or absent/invalid predicted code earns
+zero. An absent or unmapped recorded code leaves only that field's denominator
+and is listed in `excluded_reference` and counted by reason in
+`excluded_reference_counts`; it is neither a match nor a miss. An empty eligible
+denominator gives `null`.
+
+Codes follow `text_content/forms.py` and `scripts/PILOT_IMPORT.md`:
+
+| Field | Accepted recorded codes → pipeline code |
+|---|---|
+| Gender | `F` → `Female`, `M` → `Male`, `NGS` → `Non-specific`; the exact four codebook labels `Female`, `Male`, `Non-specific`, `Transgender` also pass through. |
+| Human | `H` → `true`, `NH` → `false` after stripping whitespace; booleans pass through. |
+| Protagonist | Integer `1` → `true`, `0` → `false`; booleans pass through. The source key `is_protagonist` is used only if `protagonist` is absent. |
+
+Recorded fields are read from the snapshot's `raw` object, with explicit top-level
+fields taking precedence. Predictions must contain the exact gender labels and
+actual booleans at top level; strings such as `"False"`, numeric booleans and
+source abbreviations are invalid predictions. Null, missing and blank values are
+absent. There is no truthiness conversion, case folding or fallback to an import
+default: `NBT`, `NO`, `NGS` in human, and other unmapped codes are excluded on the
+recorded side. This cannot recover an original code already overwritten by an
+import fallback; a stored valid code is compared as recorded. `plural`,
+`ethnicity` and `disability` are not scored: their import defaults were not human
+codes. Overall gender agreement does **not** validate the absent Transgender
+category.
+
+`matched_pair_agreement` is a different, descriptive number: equal valid codes
+among the fixed pairs selected by the **character** headline, divided by those
+pairs with a valid recorded code. `strict_matched_pair_agreement` does the same
+on its strict pairs (accepted tolerant edges are isolated, so they cannot change
+the strict pairing). Both include counts, disagreements and a confusion table:
+rows are recorded codes, columns are predicted codes, boolean labels are
+`"False"`/`"True"`, and explicit `absent`, `unmapped` (recorded) and `invalid`
+(predicted) categories retain every pair. Zero cells are included; the table
+always sums to `matched_pairs`, including excluded recorded codes. Omissions,
+additions and ambiguous identities stay in the accompanying `characters`
+result: `unmatched_reference`, `unmatched_prediction`, `ambiguous_candidates`
+(rejected tolerant candidates) and `ambiguous_matches` (selected pairs that can
+be replaced in another maximum matching). All indices refer to the original casts.
+
+**Restricting edges to equal values before matching lets each field pick its own
+most favourable pairing. The three headlines need not come from one consistent
+pairing.** `matches` and `strict_matches` expose each field's choices;
+`pairing_changes` lists reference characters assigned a prediction different from
+the character headline (including previously unmatched references). Dropping a
+pair for a wrong code is not a changed pairing. These additions apply only to
+scan-input scoring; stored-render scoring is unchanged. Alias figures and means
+and ranges across books remain separate work.
+
+Measured exposed dev20 regression (20 books, 96 recorded characters; pooled
+counts, **not** means across books):
+
+| Field | Headline /96 | Strict /96 | Agreement on headline pairs /90 | Agreement on strict pairs /82 |
+|---|---:|---:|---:|---:|
+| Gender | 81 (84.375%) | 73 (76.042%) | 81 (90.000%) | 73 (89.024%) |
+| Human | 70 (72.917%) | 63 (65.625%) | 70 (77.778%) | 63 (76.829%) |
+| Protagonist | 83 (86.458%) | 77 (80.208%) | 83 (92.222%) | 77 (93.902%) |
+
+All three historical strict agreement counts reproduce. Excluded recorded codes:
+0 for every field. Changed pairings: 0 for every field, 0 characters in their
+union. Character recall is 90/96 (93.750%) headline, 82/96 (85.417%) strict;
+there are 6 omissions and 15 additions, 9 rejected ambiguous tolerant candidates
+and 1 ambiguous selected pair (`worm` → `Worms` in *Wiggling Worms at Work*).
+The omissions are `elves` and `old reindeer` (*Santa Is Coming to Devon*),
+`older girl` (*The Enormous Crocodile*), `Dad` (*The Storm Whale*),
+`beautiful birds` (*The Ugly Duckling*) and `worms` (*Wiggling Worms at Work*).
+
+Dev20 headline-pair confusion tables (recorded rows → predicted columns):
+
+| Gender | Female | Male | Non-specific | Transgender |
+|---|---:|---:|---:|---:|
+| Female | 18 | 0 | 2 | 0 |
+| Male | 0 | 36 | 4 | 0 |
+| Non-specific | 1 | 2 | 27 | 0 |
+| Transgender | 0 | 0 | 0 | 0 |
+
+| Field / recorded | False | True |
+|---|---:|---:|
+| Human / False | 54 | 19 |
+| Human / True | 1 | 16 |
+| Protagonist / False | 66 | 1 |
+| Protagonist / True | 6 | 17 |
+
+Each field's table sums to 90; all absent/unmapped/invalid rows and columns are
+zero here. The regression reads only `<evidence>/dev20-run/predictions.json` and
+`<evidence>/dev20-snap/manifest.json`, using `evidence_dir()`, and skips if either
+is absent. It pins the counts above and reports named strict disagreements on
+failure; it never rewrites evidence.
+
 `score --text-output stored` is the default: compare all stored page text.
 `--text-output analysis_without_illustration_lettering` explicitly selects
 `project_analysis_text(..., include_illustration_lettering=False)`, retaining

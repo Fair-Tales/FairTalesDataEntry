@@ -434,18 +434,120 @@ def score_character_recall(recorded, predicted):
     strict_pairs = _maximum_matching(strict)
     pairs = _maximum_matching(edges)
     matched_refs = {r for r, _ in pairs}
+    matched_preds = {p for _, p in pairs}
     denominator = len(recorded)
     return {'measure': 'character-recall-v1',
             'normalization_version': CHARACTER_NORMALIZATION_VERSION,
             'reference': recorded, 'prediction': predicted,
             'matches': [{'reference': r, 'prediction': p,
                          'kind': 'strict' if p in strict[r] else 'tolerant'} for r, p in pairs],
+            'candidate_matches': [{'reference': r, 'prediction': p,
+                                   'kind': 'strict' if p in strict[r] else 'tolerant'}
+                                  for r, options in edges.items() for p in options],
+            'ambiguous_matches': [{'reference': r, 'prediction': p} for r, p in pairs
+                                  if len(_maximum_matching(edges, (r, p))) == len(pairs)],
             'strict_numerator': len(strict_pairs), 'tolerant_numerator': len(pairs),
             'denominator': denominator,
             'strict_recall': _ratio(len(strict_pairs), denominator),
             'tolerant_recall': _ratio(len(pairs), denominator),
             'unmatched_reference': [r for r in range(denominator) if r not in matched_refs],
+            'unmatched_prediction': [p for p in range(len(predicted)) if p not in matched_preds],
             'ambiguous_candidates': ambiguous}
+
+
+def _attribute_code(character, field, *, recorded):
+    """Canonical code or an explicit missing/invalid label; never import defaults."""
+    character = character if isinstance(character, dict) else {}
+    raw = character.get('raw')
+    values = {**(raw if isinstance(raw, dict) else {}), **character} if recorded else character
+    value = values.get(field)
+    if recorded and field == 'protagonist' and field not in values:
+        value = values.get('is_protagonist')
+    if value is None or isinstance(value, str) and not value.strip():
+        return 'absent'
+    if field == 'gender' and isinstance(value, str):
+        if recorded:
+            value = {'F': 'Female', 'M': 'Male', 'NGS': 'Non-specific'}.get(value, value)
+        if value in ('Female', 'Male', 'Non-specific', 'Transgender'):
+            return value
+    elif field in ('human', 'protagonist'):
+        if type(value) is bool:
+            return str(value)
+        if recorded and field == 'human' and isinstance(value, str):
+            code = {'H': 'True', 'NH': 'False'}.get(value.strip())
+            if code is not None:
+                return code
+        if recorded and field == 'protagonist' and type(value) is int and value in (0, 1):
+            return str(bool(value))
+    return 'unmapped' if recorded else 'invalid'
+
+
+def _attribute_agreement(field, refs, preds, pairs):
+    """Descriptive agreement on fixed identity pairs, excluding uncoded references."""
+    codes = ('Female', 'Male', 'Non-specific', 'Transgender') if field == 'gender' else ('False', 'True')
+    confusion = {ref: dict.fromkeys((*codes, 'absent', 'invalid'), 0)
+                 for ref in (*codes, 'absent', 'unmapped')}
+    eligible, agreeing = 0, 0
+    disagreements = []
+    for r, p in pairs:
+        confusion[refs[r]][preds[p]] += 1
+        if refs[r] in ('absent', 'unmapped'):
+            continue
+        eligible += 1
+        agreeing += refs[r] == preds[p]
+        if refs[r] != preds[p]:
+            disagreements.append({'reference': r, 'prediction': p})
+    return {'matched_pairs': len(pairs), 'denominator': eligible,
+            'excluded_reference': len(pairs) - eligible, 'numerator': agreeing,
+            'agreement': _ratio(agreeing, eligible),
+            'confusion': confusion,
+            'disagreements': disagreements}
+
+
+def score_character_attributes(characters):
+    """Equal-code maximum matchings on score_character_recall's exact graphs.
+
+    Each field chooses its own most favourable pairing, which need not agree
+    with the character headline or the other fields. Absent/unmapped recorded
+    codes leave that field's denominator; absent/invalid predictions earn zero.
+    Agreement among fixed identity pairs is descriptive, not the headline.
+    """
+    identity = [(pair['reference'], pair['prediction']) for pair in characters['matches']]
+    strict_identity = [(pair['reference'], pair['prediction']) for pair in characters['matches']
+                       if pair['kind'] == 'strict']
+    identity_map = dict(identity)
+    result = {}
+    for field in ('gender', 'human', 'protagonist'):
+        refs = [_attribute_code(char, field, recorded=True) for char in characters['reference']]
+        preds = [_attribute_code(char, field, recorded=False) for char in characters['prediction']]
+        excluded = [{'reference': r, 'reason': code} for r, code in enumerate(refs)
+                    if code in ('absent', 'unmapped')]
+        denominator = len(refs) - len(excluded)
+        edges = {r: [] for r, code in enumerate(refs) if code not in ('absent', 'unmapped')}
+        strict = {r: [] for r in edges}
+        for pair in characters['candidate_matches']:
+            r, p = pair['reference'], pair['prediction']
+            if r in edges and refs[r] == preds[p]:
+                edges[r].append(p)
+                if pair['kind'] == 'strict':
+                    strict[r].append(p)
+        pairs, strict_pairs = _maximum_matching(edges), _maximum_matching(strict)
+        result[field] = {
+            'measure': 'character-attribute-recall-v1',
+            'numerator': len(pairs), 'strict_numerator': len(strict_pairs),
+            'denominator': denominator, 'recall': _ratio(len(pairs), denominator),
+            'strict_recall': _ratio(len(strict_pairs), denominator),
+            'excluded_reference': excluded,
+            'excluded_reference_counts': dict(Counter(item['reason'] for item in excluded)),
+            'matches': [{'reference': r, 'prediction': p} for r, p in pairs],
+            'strict_matches': [{'reference': r, 'prediction': p} for r, p in strict_pairs],
+            'pairing_changes': [{'reference': r, 'character_prediction': identity_map.get(r),
+                                 'attribute_prediction': p}
+                                for r, p in pairs if identity_map.get(r) != p],
+            'matched_pair_agreement': _attribute_agreement(field, refs, preds, identity),
+            'strict_matched_pair_agreement': _attribute_agreement(field, refs, preds, strict_identity),
+        }
+    return result
 
 
 def match_characters(reference, prediction, equivalences=None):

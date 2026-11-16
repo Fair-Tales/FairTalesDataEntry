@@ -173,7 +173,9 @@ def test_scan_cli_uses_scan_pages_without_stored_renders(
     source = read_json(snapshot / 'manifest.json')
     source['books'][2]['pages'] = []
     source['books'][2]['reference']['characters'] = {
-        'status': 'observed', 'value': [{'name': 'cat'}, {'name': 'Rabbit'}]}
+        'status': 'observed', 'value': [
+            {'name': name, 'raw': {'gender': 'Female', 'human': False, 'protagonist': True}}
+            for name in ('cat', 'Rabbit')]}
     atomic_json(snapshot / 'manifest.json', source)
     scan_root = tmp_path / 'scans'
     folder = scan_root / 'Book 2'
@@ -214,7 +216,9 @@ def test_scan_cli_uses_scan_pages_without_stored_renders(
         'scan-1': {'status': 'completed', 'text': 'A synthetic reference'},
     }
     predictions['books']['book-02']['characters'] = {
-        'status': 'completed', 'value': [{'name': 'The Old Cat'}, {'name': 'Rabbit'}]}
+        'status': 'completed', 'value': [
+            {'name': name, 'gender': 'Female', 'human': False, 'protagonist': True}
+            for name in ('The Old Cat', 'Rabbit')]}
     atomic_json(out / 'predictions.json', predictions)
     score_args = ['score', '--snapshot', str(snapshot), '--run', str(out)]
     assert cli.main(score_args) == 0
@@ -229,6 +233,11 @@ def test_scan_cli_uses_scan_pages_without_stored_renders(
     assert score['characters']['strict_numerator'] == 1
     assert score['characters']['tolerant_numerator'] == score['characters']['denominator'] == 2
     assert score['characters']['tolerant_recall'] == 1
+    for result in score['attributes'].values():
+        assert result['denominator'] == 2
+        assert result['recall'] == 1
+        assert result['strict_recall'] == 0.5
+        assert result['matched_pair_agreement']['agreement'] == 1
     projected = tmp_path / 'projected-report'
     assert cli.main([*score_args, '--out', str(projected), '--text-output',
                      'analysis_without_illustration_lettering']) == 0
@@ -237,6 +246,7 @@ def test_scan_cli_uses_scan_pages_without_stored_renders(
     assert summary['book_scores'][0]['accuracy'] == 1
     assert summary['book_scores'][0]['insertions'] == 0
     assert summary['book_scores'][0]['characters'] == score['characters']
+    assert summary['book_scores'][0]['attributes'] == score['attributes']
     assert read_json(projected / 'book_scores.json') == summary['book_scores']
     assert set(path.name for path in projected.iterdir()) == {'summary.json', 'book_scores.json'}
     with pytest.raises(SystemExit):
@@ -329,13 +339,18 @@ def test_scan_character_failure_retains_recorded_denominator(tmp_path, monkeypat
     contract = {'snapshot_id': 'fixture', 'config': {
         'inputs_manifest': {'books': [{'id': 'book'}]}, 'reference_root': tmp_path}}
     manifest = {'books': [{'id': 'book', 'reference': {'characters': {
-        'status': 'observed', 'value': [{'name': 'cat'}]}}}]}
+        'status': 'observed', 'value': [
+            {'name': 'cat', 'gender': 'Female', 'human': False, 'protagonist': True}]}}}]}
     predictions = {'books': {'book': {'characters': prediction}}}
     assert cli._score_scans(args, contract, predictions, {'book_ids': ['book']}, manifest) == 0
-    characters = read_json(tmp_path / 'book_scores.json')[0]['characters']
+    book = read_json(tmp_path / 'book_scores.json')[0]
+    characters = book['characters']
     assert characters['denominator'] == 1
     assert characters['strict_recall'] == characters['tolerant_recall'] == 0
     assert characters['unmatched_reference'] == [0]
+    for result in book['attributes'].values():
+        assert result['denominator'] == 1
+        assert result['recall'] == result['strict_recall'] == 0
 
 
 def test_inventory_cli_reports_counts_only(tmp_path, cohort_loader_factory, capsys):
