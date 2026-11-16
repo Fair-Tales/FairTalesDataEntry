@@ -39,7 +39,7 @@ def settings():
     return {**utilities.AI_SETTINGS_DEFAULTS,
             'story_context_model': 'fixture',
             'story_context_limits': {'max_images': 100, 'max_request_bytes': 32000000,
-                                     'max_input_tokens': 200000, 'max_output_tokens': 8192}}
+                                     'max_input_tokens': 200000, 'max_output_tokens': 20000}}
 
 
 def decision(number=3, story=True):

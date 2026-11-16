@@ -17,13 +17,14 @@ from text_content.pipeline_runtime import (
 )
 
 EXTRACTION_MODEL = 'claude-sonnet-5'
-EXTRACTION_OCR_MAX_TOKENS = 2048
+EXTRACTION_OCR_MAX_TOKENS = 8192
 LOCATE_MAX_EDGE = 784
 AI_MODEL_ALLOWLIST = (
     'claude-opus-4-8', 'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-haiku-4-5',
 )
 AI_EDGE_MIN, AI_EDGE_MAX = 512, 4096
-AI_TOKENS_MIN, AI_TOKENS_MAX = 256, 8192
+# Stay below the SDK's default-timeout non-streaming limit: 128000 * 600 / 3600 ≈ 21333.
+AI_TOKENS_MIN, AI_TOKENS_MAX = 256, 20000
 
 # Existing public admin defaults, re-exported by utilities for its callers.
 AI_SETTINGS_DEFAULTS = {
@@ -42,9 +43,9 @@ AI_SETTINGS_DEFAULTS = {
 }
 # One group per pipeline stage. Rotation's three probes share one group.
 STAGE_MAX_TOKENS = {
-    'extraction': 2048, 'metadata': 4096, 'character_detection': 8192,
+    'extraction': EXTRACTION_OCR_MAX_TOKENS, 'metadata': 20000, 'character_detection': 20000,
     'locate': 128, 'rotation': 16, 'crop_quality': 16, 'theme': 512,
-    'story_context': 8192,
+    'story_context': 20000,
 }
 OPENAI_OUTPUT_FLOOR = 25000
 GENERATION_DEFAULTS = {
@@ -155,7 +156,7 @@ PIPELINE_SETTINGS_DEFAULTS = {
     'page_schema_version': 'legacy-compatible-page-v1',
     'story_context_enabled': False,
     'story_context_model': EXTRACTION_MODEL,
-    'story_context_max_tokens': AI_TOKENS_MAX,
+    'story_context_max_tokens': STAGE_MAX_TOKENS['story_context'],
     'story_context_limits': None,
     'metadata_reconciliation_enabled': False,
 }

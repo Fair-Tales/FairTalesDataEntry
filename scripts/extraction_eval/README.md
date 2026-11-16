@@ -605,14 +605,17 @@ no temperature is added.
 
 | Stage prefix | Default model | Maximum output tokens |
 |---|---|---:|
-| `extraction` | `claude-sonnet-5` | 2048 |
-| `metadata` | `claude-sonnet-5` | 4096 |
-| `character_detection` | `claude-sonnet-5` | 8192 |
+| `extraction` | `claude-sonnet-5` | 8192 |
+| `metadata` | `claude-sonnet-5` | 20000 |
+| `character_detection` | `claude-sonnet-5` | 20000 |
 | `locate` | `claude-haiku-4-5` | 128 |
 | `rotation` (all three probes) | `claude-sonnet-4-6` | 16 |
 | `crop_quality` | `claude-haiku-4-5` | 16 |
 | `theme` (application only) | `claude-sonnet-4-6` | 512 |
-| `story_context` | `claude-sonnet-5` | 8192 |
+| `story_context` | `claude-sonnet-5` | 20000 |
+
+These ceilings leave room for Sonnet 5's default adaptive thinking and the answer within the same token budget, with the 20,000 settings bound below the installed SDK's default-timeout non-streaming limit of approximately 21,333 tokens (128,000 × 600 / 3,600).
+In the 16 November 2026 paid probe on one development book with the new prompts and `candidate_pipeline_v2.json`, joint metadata exhausted 4,096 tokens and character detection exhausted 8,192 entirely on thinking, both stopping at `max_tokens` without an answer (character recall 0), while one page used 1,697 of its 2,048 tokens under the new page schema.
 
 Thinking and effort default to the explicit sentinel `"default"`, meaning
 **omit the API option**, as before A9. This retains the exact old request body

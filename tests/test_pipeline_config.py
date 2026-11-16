@@ -25,7 +25,7 @@ def test_current_production_defaults_are_pinned(monkeypatch):
         'rotation_model': 'claude-sonnet-4-6',
         'crop_quality_model': 'claude-haiku-4-5',
         'theme_model': 'claude-sonnet-4-6',
-        'extraction_max_edge': 2000, 'extraction_max_tokens': 2048,
+        'extraction_max_edge': 2000, 'extraction_max_tokens': 8192,
         'locate_max_edge': 784,
         'enable_rotation_correction': True, 'enable_crop_quality_gate': True,
     }
@@ -33,7 +33,7 @@ def test_current_production_defaults_are_pinned(monkeypatch):
     expected = {**admin_defaults, 'prompt_variant': 'rules-plus-icl',
                 'page_schema_version': 'legacy-compatible-page-v1',
                 'story_context_enabled': False, 'story_context_model': 'claude-sonnet-5',
-                'story_context_max_tokens': 8192, 'story_context_limits': None,
+                'story_context_max_tokens': 20000, 'story_context_limits': None,
                 'metadata_reconciliation_enabled': False, **GENERATION_DEFAULTS}
     monkeypatch.setattr(utilities, '_read_ai_settings_doc', lambda: {})
     assert AI_SETTINGS_DEFAULTS == admin_defaults
@@ -49,7 +49,7 @@ def test_current_production_defaults_are_pinned(monkeypatch):
     ({'extraction_max_edge': '2000'}, 'Invalid pipeline setting: extraction_max_edge'),
     ({'extraction_max_edge': 2000.5}, 'Invalid pipeline setting: extraction_max_edge'),
     ({'extraction_max_tokens': 255}, 'Invalid pipeline setting: extraction_max_tokens'),
-    ({'story_context_max_tokens': 8193}, 'Invalid pipeline setting: story_context_max_tokens'),
+    ({'story_context_max_tokens': 20001}, 'Invalid pipeline setting: story_context_max_tokens'),
     ({'story_context_enabled': 'false'}, 'Invalid pipeline setting: story_context_enabled'),
     ({'metadata_reconciliation_enabled': 0}, 'Invalid pipeline setting: metadata_reconciliation_enabled'),
     ({'extraction_model': 'typo'}, 'Invalid pipeline setting: extraction_model'),

@@ -47,6 +47,8 @@ def test_invalid_openai_floor(floor):
 def setup_gateway(tmp_path):
     config = json.loads(Path('scripts/extraction_eval/baseline.json').read_text())
     config['billing_cycles'] = {'anthropic': {'start_day': 1}}
+    for limits in config['pricing']['models'].values():
+        limits['max_output_tokens'] = 20000
     client = SimpleNamespace(messages=Mock())
     client.messages.create.return_value = {
         'model': 'provider-served-revision', 'stop_reason': 'end_turn',
@@ -70,6 +72,49 @@ def test_defaults_add_no_body_options(stage, tokens):
     assert generation_request(settings, stage) == {
         'model': settings[f'{stage}_model'], 'max_tokens': tokens}
     assert settings[f'{stage}_thinking'] == settings[f'{stage}_effort'] == 'default'
+
+
+@pytest.mark.parametrize('stage,tokens', [
+    ('metadata', 20000), ('character_detection', 20000),
+    ('story_context', 20000), ('extraction', 8192),
+])
+def test_default_stage_call_carries_thinking_headroom(monkeypatch, stage, tokens):
+    import extraction_core
+    import utilities
+
+    client = SimpleNamespace(messages=Mock())
+    client.messages.create.return_value = SimpleNamespace(
+        content=[SimpleNamespace(type='text', text='{"characters": []}')],
+        stop_reason='end_turn')
+    monkeypatch.setattr(utilities, 'build_vision_content', lambda *a, **k: [])
+    settings = validate_settings({'story_context_limits': {
+        'max_images': 100, 'max_request_bytes': 32000000,
+        'max_input_tokens': 200000, 'max_output_tokens': 20000,
+    }})
+    with extraction_runtime(client=client, settings=settings, usage_sink=lambda *a: None):
+        if stage == 'metadata':
+            utilities.extract_joint_metadata([(1, b'image')], client)
+        elif stage == 'character_detection':
+            utilities.detect_book_characters([(1, 'Mia waved.')], client)
+        elif stage == 'story_context':
+            extraction_core.classify_book_context(
+                [{'page_number': 1, 'text': 'Mia waved.'}], [(1, b'image')],
+                client, settings, lambda *a: None)
+        else:
+            extraction_core.attempt_page_extraction(
+                b'image', client, settings, label='page_extraction')
+    client.messages.create.assert_called_once()
+    request = client.messages.create.call_args.kwargs
+    assert request['max_tokens'] == tokens
+    assert 'thinking' not in request
+    assert 'output_config' not in request
+
+
+@pytest.mark.parametrize('stage', STAGE_MAX_TOKENS)
+def test_settings_refuse_above_nonstreaming_bound(stage):
+    assert validate_settings({f'{stage}_max_tokens': 20000})[f'{stage}_max_tokens'] == 20000
+    with pytest.raises(ValueError):
+        validate_settings({f'{stage}_max_tokens': 20001})
 
 
 @pytest.mark.parametrize('stage', STAGE_MAX_TOKENS)
@@ -143,7 +188,7 @@ def test_old_rows_keep_unknown_settings_and_served_model(setup_gateway):
     {'extraction_model': 'claude-haiku-4-5', 'extraction_effort': 'low'},
     {'rotation_effort': 'xhigh'},
     {'extraction_effort': True}, {'rotation_max_tokens': False},
-    {'locate_max_tokens': 0}, {'extraction_max_tokens': 8193},
+    {'locate_max_tokens': 0}, {'extraction_max_tokens': 20001},
 ])
 def test_invalid_settings_rejected(overrides):
     with pytest.raises(ValueError):
@@ -157,7 +202,7 @@ def test_invalid_settings_rejected(overrides):
     {'model': 'unknown', 'output_config': {'effort': 'low'}},
     {'thinking': None}, {'thinking': {}}, {'output_config': {'format': {}}},
     {'thinking': {'type': 'default'}}, {'output_config': {'effort': 'default'}},
-    {'max_tokens': True}, {'max_tokens': 8193},
+    {'max_tokens': True}, {'max_tokens': 20001},
     {'output_config': {'effort': 'made-up'}}, {'temperature': 0},
 ])
 def test_invalid_body_refused_before_reservation(options, setup_gateway):
@@ -172,7 +217,7 @@ def test_invalid_body_refused_before_reservation(options, setup_gateway):
 
 def test_unknown_model_defaults_only_and_no_openai_reasoning_mapping():
     settings = validate_settings({'extraction_model': 'future-model'}, model_ids=['future-model'])
-    assert generation_request(settings, 'extraction') == {'model': 'future-model', 'max_tokens': 2048}
+    assert generation_request(settings, 'extraction') == {'model': 'future-model', 'max_tokens': 8192}
     with pytest.raises(ValueError):
         validate_settings({**settings, 'extraction_effort': 'low'}, model_ids=['future-model'])
 
