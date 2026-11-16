@@ -200,6 +200,26 @@ def valid_isbn(raw):
     return None
 
 
+def normalize_isbn(raw):
+    """Return a check-digit-validated ISBN-13; blank means missing.
+
+    Keep ``valid_isbn``'s evidence-preserving ISBN-10 behaviour unchanged.
+    """
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    value = valid_isbn(raw)
+    if value is None or not value.isascii():
+        raise ValueError("Invalid ISBN")
+    if len(value) == 10:
+        stem = '978' + value[:9]
+        check = (-sum(int(n) * (1 if i % 2 == 0 else 3)
+                      for i, n in enumerate(stem))) % 10
+        return stem + str(check)
+    if not value.startswith(('978', '979')):
+        raise ValueError("Invalid ISBN")
+    return value
+
+
 def reconcile_metadata(payloads, *, legacy=None):
     """Project retained joint responses; stronger cross-page evidence wins.
 

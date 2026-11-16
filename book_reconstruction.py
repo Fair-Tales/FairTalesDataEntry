@@ -574,7 +574,7 @@ def reconstruct_book_from_photos(pages, client, *, fs=None, source_folder=None,
 
     isbn = metadata.get("isbn")
     if isbn:
-        book.comment = f"ISBN: {isbn}"
+        book.isbn = isbn
     _apply_metadata_to_book(book, metadata, client)
 
     # Initial full save (sets entered_by + datetime_created). Subsequent field

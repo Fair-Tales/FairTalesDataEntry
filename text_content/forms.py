@@ -54,6 +54,20 @@ class BookForm:
 
     # --- to_form() widget labels (data_structures/book.py) ---
     title_label = "Title"
+    isbn_label = "ISBN"
+    isbn_help = "Optional. Enter ISBN-10 or ISBN-13, with or without spaces or hyphens. Saved as ISBN-13."
+    invalid_isbn = "ISBN is invalid. Check the digits, including the final check digit, or leave it blank."
+    edition_label = "Edition"
+    edition_help = "Optional, for example: first UK paperback."
+    work_id_label = "Work id"
+    work_id_help = (
+        "To link editions, copy the work id from another edition before assigning this one. "
+        "Leave blank to keep it missing. Once assigned, it cannot be changed here. "
+        "Linking editions does not merge their records."
+    )
+    new_work_id_label = "Assign a new work id (only if the work id above is blank)"
+    invalid_work_id = "Enter a valid UUID copied from another edition's work id."
+    work_id_fixed = "A work id cannot be changed once assigned."
     published_label = "Earlier year entry (event not established)"
     author_select_label = "Select from existing authors"
     publisher_select_label = "Earlier publisher entry (event not established)"

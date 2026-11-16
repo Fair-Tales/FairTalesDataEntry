@@ -53,6 +53,8 @@ class ResearchExport:
                 result[field] = record.get(field) if human else None
                 result[field + '_source'] = 'human' if human else 'missing'
         if collection == 'books':
+            for field in ('isbn', 'edition', 'work_id'):
+                result[field] = record.get(field)
             result.update(export_publication_columns(record))
             person_validated = record.get('validated') is True and _is_person(record.get('validated_by'))
             result['validated_by_person'] = person_validated

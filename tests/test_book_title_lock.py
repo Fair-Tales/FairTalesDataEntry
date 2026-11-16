@@ -64,6 +64,9 @@ class _FakeBook:
         self.editing = is_registered
         self.published = -1
         self.comment = ""
+        self.isbn = None
+        self.edition = None
+        self.work_id = None
         self.photos_uploaded = True
         # Selectbox targets — start as None; the fake selectboxes below return
         # non-None sentinels so the submit lands in the clean navigate branch.
@@ -138,6 +141,9 @@ class _FakeSt:
 
     def multiselect(self, label, options=None, default=None, **_k):
         return list(default or [])
+
+    def checkbox(self, *_a, **_k):
+        return False
 
     def form_submit_button(self, *_a, **_k):
         return self._submit
@@ -230,6 +236,54 @@ def test_unregistered_book_blank_title_is_rejected(monkeypatch):
     # Required-check fires and the title is never written.
     assert BookForm.title_required in fake_st.warnings
     assert book.title_writes == []
+
+
+def test_identifier_form_refuses_bad_isbn_before_any_write(monkeypatch):
+    _book, fake_st, _session, _nav = _wire(
+        monkeypatch, is_registered=True, submit=True, title_widget_return='Ignored')
+    book = book_mod.Book({'title': 'Synthetic', 'is_registered': True,
+                          'isbn': '9780306406157', 'comment': 'Keep this note.'})
+    writes = []
+    monkeypatch.setattr(book, 'update_record', lambda **kw: writes.append(kw))
+    original_input = fake_st.text_input
+    monkeypatch.setattr(fake_st, 'text_input', lambda label, **kw:
+        '9780306406158' if label == BookForm.isbn_label else original_input(label, **kw))
+    book_mod.form_content(book)
+    assert fake_st.warnings == [BookForm.invalid_isbn]
+    assert book.isbn == '9780306406157'
+    assert book.comment == 'Keep this note.'
+    assert writes == []
+
+
+def test_identifier_form_assigns_explicit_link_and_uses_stable_keys(monkeypatch):
+    _book, fake_st, session, _nav = _wire(
+        monkeypatch, is_registered=True, submit=True, title_widget_return='Ignored')
+    monkeypatch.setattr(st, 'session_state', session)
+    monkeypatch.setattr(book_mod, 'add_book_entries', lambda book: None)
+    book = book_mod.Book({'title': 'Synthetic paperback', 'is_registered': True})
+    book.editing = True
+    writes = []
+    monkeypatch.setattr(book, 'update_record', lambda **kw: writes.append(kw))
+    other = book_mod.Book()
+    work_id = other.assign_work_id()
+    values = {BookForm.isbn_label: '0-306-40615-2',
+              BookForm.edition_label: 'first UK paperback', BookForm.work_id_label: work_id}
+    original_input = fake_st.text_input
+
+    def text_input(label, **kw):
+        seeded = original_input(label, **kw)
+        return values.get(label, seeded)
+
+    monkeypatch.setattr(fake_st, 'text_input', text_input)
+    book_mod.form_content(book)
+    assert book.isbn == '9780306406157'
+    assert book.edition == 'first UK paperback'
+    assert book.work_id == other.work_id
+    assert not fake_st.warnings
+    for field in ('isbn', 'edition', 'work_id'):
+        assert any(call['key'] == f'book_form_{field}_synthetic_paperback'
+                   for call in fake_st.text_input_calls)
+        assert any(call['field'] == field for call in writes)
 
 
 # ---------------------------------------------------------------------------

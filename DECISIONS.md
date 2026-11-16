@@ -885,3 +885,22 @@ on `claude-dev`. When tuning finishes, the tuned prompts go live together with
 those fixes, so the corpus switches once, to prompts that have been measured. If
 students resume entry before then, this is to be revisited.
 
+## 023 — Explicit work identity alongside existing book document ids (2026-11-16)
+
+C4 adds optional `isbn`, `edition` and `work_id` fields. ISBN writes validate
+the check digit and store ISBN-13 (converting ISBN-10); edition is free text.
+Photo lookup stores ISBN separately and preserves comments.
+
+A person assigns a work id in the book form: either generate a random UUID or
+copy the UUID from another edition. Assignment is once per book; opening,
+registering or extracting a book never generates an id. Old books remain
+missing until a person explicitly assigns one. There is no automatic matching
+or merging, and a title change does not change the work id.
+
+Document ids and photo folders retain the existing title scheme (011). Separate
+editions therefore still need distinct entry titles, for example an edition
+suffix, to avoid an existing-title collision. The stable work id links those
+separate records; it is not their storage key. Replacing storage keys and moving
+dependent records is outside this conservative change. No migration, backfill,
+lookup service or dependency is added. Research exports include all three
+fields, with missing values represented as null (blank in CSV).

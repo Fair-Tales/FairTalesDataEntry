@@ -13,9 +13,33 @@ from .illustrator import Illustrator
 from .publisher import Publisher
 from datetime import date, datetime, timezone
 from copy import deepcopy
+from uuid import UUID, uuid4
 from bibliography import (METADATA_SCHEMA_VERSION, PUBLICATION_POLICY_VERSION, PERSISTED_FIELDS, empty_target,
-                           legacy_publication)
+                           legacy_publication, normalize_isbn)
 from text_content.publication import PublicationText
+
+
+class ISBNField(Field):
+    def __set__(self, instance, value):
+        try:
+            value = normalize_isbn(value)
+        except ValueError:
+            raise ValueError(BookForm.invalid_isbn) from None
+        super().__set__(instance, value)
+
+
+class WorkIDField(Field):
+    def __set__(self, instance, value):
+        if not instance.reading_from_db:
+            current = instance.__dict__.get(self._name)
+            if current is not None and value != current:
+                raise ValueError(BookForm.work_id_fixed)
+            if value is not None:
+                try:
+                    value = str(UUID(value))
+                except (ValueError, TypeError, AttributeError):
+                    raise ValueError(BookForm.invalid_work_id) from None
+        super().__set__(instance, value)
 
 
 class ValidationLeaseStatus(Enum):
@@ -136,6 +160,16 @@ def form_content(self):
     ).strip()
     if self.is_registered:
         st.caption(BookForm.title_readonly_caption)
+
+    _isbn = st.text_input(BookForm.isbn_label, value=self.isbn or '',
+        help=BookForm.isbn_help, key=f"book_form_isbn_{key_suffix}")
+    _edition = st.text_input(BookForm.edition_label, value=self.edition or '',
+        help=BookForm.edition_help, key=f"book_form_edition_{key_suffix}").strip()
+    _work_id = st.text_input(BookForm.work_id_label, value=self.work_id or '',
+        disabled=self.work_id is not None, help=BookForm.work_id_help,
+        key=f"book_form_work_id_{key_suffix}").strip()
+    _new_work_id = st.checkbox(BookForm.new_work_id_label,
+        disabled=self.work_id is not None, key=f"book_form_new_work_id_{key_suffix}")
 
     isbn_year = _isbn_year(isbn_meta.get('published_date', ''))
     if type(self.published) is int and 1900 <= self.published <= date.today().year:
@@ -299,6 +333,20 @@ def form_content(self):
 
     if submitted:
 
+        # Validate before ANY write-through assignment, preserving saved values
+        # and comments if a person mistypes an identifier.
+        try:
+            _isbn = normalize_isbn(_isbn)
+        except ValueError:
+            st.warning(BookForm.invalid_isbn)
+            return
+        if self.work_id is None and _work_id:
+            try:
+                _work_id = str(UUID(_work_id))
+            except ValueError:
+                st.warning(BookForm.invalid_work_id)
+                return
+
         for values in publication_inputs.values():
             if values.get('year') and not values['year'].isdigit():
                 st.warning(PublicationText.invalid_year)
@@ -320,6 +368,12 @@ def form_content(self):
         # reassign it here; only a brand-new (unregistered) book sets its title.
         if not self.is_registered:
             self.title = _title
+        if _isbn != self.isbn:
+            self.isbn = _isbn
+        if (_edition or None) != self.edition:
+            self.edition = _edition or None
+        if self.work_id is None and (_work_id or _new_work_id):
+            self.assign_work_id(_work_id or None)
         self.published = _published
         self.author = _author
         self.publisher = _publisher
@@ -354,6 +408,9 @@ class Book(DataStructureBase):
     fields = {
         'is_registered': False,
         'title': "",
+        'isbn': None,
+        'edition': None,
+        'work_id': None,
         'author': None,
         'character_count': -1,
         'page_count': -1,
@@ -399,8 +456,14 @@ class Book(DataStructureBase):
         if field not in [DataStructureBase.base_class_fields] + ['is_registered']:
             vars()[field] = Field()
 
+    isbn = ISBNField()
+    work_id = WorkIDField()
+
     form_fields = {
         'title': 'Title',
+        'isbn': BookForm.isbn_label,
+        'edition': BookForm.edition_label,
+        'work_id': BookForm.work_id_label,
         'published': 'Date first published',
         'author': 'Author',
         'publisher': 'Publisher',
@@ -424,6 +487,15 @@ class Book(DataStructureBase):
     @property
     def document_id(self):
         return getattr(self, '_migration_document_id', None) or self.title.lower().replace(" ", "_")
+
+    def assign_work_id(self, work_id=None):
+        """Explicit human action: create a work UUID or copy another edition's.
+
+        Reads, registration and extraction never assign one automatically.
+        Repeating a new-id request retains the id already assigned.
+        """
+        self.work_id = work_id or self.work_id or str(uuid4())
+        return self.work_id
 
     def apply_publication_form(self, inputs):
         """Retain earlier target values and mark explicit manual corrections."""

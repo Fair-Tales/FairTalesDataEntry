@@ -6,7 +6,7 @@ from corpus_provenance import apply_page_extraction
 import anthropic
 from data_structures import Page, ExtractionErrorLog, log_extraction_error
 from image_processing import exif_transpose_bytes, correct_page_image, make_display_copy
-from text_content import Instructions, AIPrompts, BookPhotoEntry, Uploader, PhotoUpload
+from text_content import Instructions, AIPrompts, BookPhotoEntry, Uploader, PhotoUpload, BookForm
 from utilities import (
     page_layout, check_authentication_status, extract_isbn, lookup_isbn,
     get_s3_filesystem, get_anthropic_client, vision_json, get_ai_settings,
@@ -636,6 +636,12 @@ def _process_photo_batch(raw_bytes_list, sort_file_names, fs):
     # (now collapsed) status container.
     if copyright_text:
         isbn = extract_isbn(copyright_text)
+        if isbn:
+            try:
+                st.session_state['current_book'].isbn = isbn
+            except ValueError:
+                st.warning(BookForm.invalid_isbn)
+                isbn = None
         if isbn:
             lookup_outcome = {}
             isbn_metadata = lookup_isbn(isbn, outcome_sink=lookup_outcome.update)

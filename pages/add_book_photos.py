@@ -19,7 +19,7 @@ import streamlit as st
 import anthropic
 from streamlit_option_menu import option_menu
 
-from text_content import BookPhotoEntry, PhotoUpload
+from text_content import BookPhotoEntry, PhotoUpload, BookForm
 from utilities import (
     page_layout,
     check_authentication_status,
@@ -100,6 +100,11 @@ def _match_person(extracted_name, lookup_dict_key, extracted_session_key, curren
 def _apply_extracted_metadata(metadata):
     """Pre-populate the current Book and session state from extracted metadata."""
     book = st.session_state['current_book']
+    if metadata.get('isbn'):
+        try:
+            book.isbn = metadata['isbn']
+        except ValueError:
+            st.warning(BookForm.invalid_isbn)
 
     # Store the raw Claude response (and the parsed dict) for audit/debugging.
     st.session_state['book_extraction_raw'] = metadata.get('raw')
