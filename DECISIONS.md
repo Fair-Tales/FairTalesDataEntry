@@ -800,3 +800,19 @@ the five primary measures. "They are key information and the pipeline needs to
 be tuned for alias detection and accuracy. Why are they not included?" That is
 taken up separately.
 
+## 020 — Corrected keep-or-revert thresholds for tuning (2026-11-16)
+
+Chris approved replacing the thresholds of 018 item 6 with the corrected
+calibration in `planning/tuning_process_design_2026-11-10.md` §4 and §5 step 6.
+His rule is unchanged: keep a change that improves on the 55 iterate books and
+is no worse on the 20 check books. What changed is the noise accounting. The
+approved thresholds compared two runs against the noise of one, across about
+eight measures, and in simulation kept a genuine 3-point gain about one time in
+ten. The correction states thresholds against the noise of a difference between
+runs, uses Student-t quantiles because that noise is estimated, holds the
+combined chance of rejecting a harmless change to about one in twenty, and
+averages repeated runs for the cheap character stage. In simulation it keeps a
+3-point gain about 96% of the time and a gain bought with a 3-point loss
+elsewhere essentially never. It costs about $19 of extra calibration for the
+character stage and $136 for transcription, within the existing caps.
+
