@@ -1,5 +1,7 @@
 """Translate the shared Messages interface; leave native usage to ai_pricing."""
 
+from text_content.pipeline_runtime import OPENAI_STORAGE_REFUSED
+
 
 def _text(content):
     if isinstance(content, str):
@@ -48,13 +50,16 @@ def _content(content, chat):
 
 def prepare_request(request, provider):
     """Validate before reservation, so unsupported options cannot look charged."""
+    if any(request.get(option, False) is not False for option in ("store", "background")):
+        raise ValueError(OPENAI_STORAGE_REFUSED)
     chat = provider == "openai-chat-completions"
     unsupported = {"top_k"} | (set() if chat else {"stop_sequences"})
     if unsupported.intersection(request):
         raise ValueError(f"Unsupported {provider} options: {sorted(unsupported.intersection(request))}")
     messages = [{"role": message["role"], "content": _content(message["content"], chat)}
                 for message in request["messages"]]
-    payload = {"model": request["model"], "messages" if chat else "input": messages,
+    payload = {"model": request["model"], "store": False,
+               "messages" if chat else "input": messages,
                "max_completion_tokens" if chat else "max_output_tokens": request["max_tokens"]}
     if "system" in request:
         system = _text(request["system"])

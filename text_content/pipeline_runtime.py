@@ -20,5 +20,9 @@ PAGE_REPLY_EMPTY = "Model returned no usable reply."
 CONTEXT_TARGET = "\nTarget ordered images and OCR (image_position is one-based):\n{pages_json}"
 RUN_STOPPED = "Run stopped ({reason}): {detail}"
 OPENAI_KEY_MISSING = "OpenAI evaluation requires EVAL_OPENAI_API_KEY; the key is absent or blank."
+OPENAI_STORAGE_REFUSED = (
+    "OpenAI evaluation requires store=false and foreground requests; "
+    "store and background must be false or omitted."
+)
 EVALUATION_PROVIDER_UNSUPPORTED = "Unsupported evaluation provider: {provider}"
 EVALUATION_CLIENT_MISSING = "No {provider} client is configured; supply the dedicated evaluation API key."

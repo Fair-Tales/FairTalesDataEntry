@@ -827,6 +827,13 @@ from the shared ledger. Do not edit the frozen run contract or clear the paid
 response cache. This clears the poisoned ISBN results from the recovery run
 while preserving the original run, including any evaluation still in progress.
 
+### OpenAI storage
+
+Every OpenAI Responses and Chat Completions payload includes `store: false`, and
+attempts to enable storage or background execution are refused before reservation.
+This avoids stored-response state, not all retention: abuse-monitoring logs can
+retain content for up to 30 days.
+
 ## Review, adjudication and comparisons
 
 `score` writes `summary.json`, `book_scores.json`, `books.csv`, `pages.csv`,

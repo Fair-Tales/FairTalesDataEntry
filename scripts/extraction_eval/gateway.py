@@ -149,6 +149,15 @@ class Gateway:
     def create(self, **request):
         if self.billing_stopped:
             raise BillingStopped(BILLING_EXHAUSTED)
+        try:
+            endpoint, payload = prepare_request(request, self.provider) if self.provider in OPENAI_PROVIDERS else (None, request)
+        except ValueError as exc:
+            raise RequestLimitError(str(exc)) from exc
+        if endpoint:
+            # Explicit false controls mean the same as omission; keep the
+            # existing request identity and pricing inputs for either spelling.
+            request.pop("store", None)
+            request.pop("background", None)
         ceiling = request_ceiling(request, self.prices)
         identity = {"request_version": self.config.get("request_version", "1"), "replicate": self.replicate, "provider": self.provider, "request": request}
         attempts = self.config.get("max_attempts", 1)
@@ -173,12 +182,6 @@ class Gateway:
                 raise CachedFailure(f"Request {key} permanently failed: {cached.get('error')}")
             if self.dry_run:
                 raise DryRunMiss(f"Uncached request for {request.get('model')}; no paid call dispatched")
-            # Preserve the original request identity; conversion is only for
-            # dispatch, and unsupported content fails before reserving money.
-            try:
-                endpoint, payload = prepare_request(request, self.provider) if self.provider in OPENAI_PROVIDERS else (None, request)
-            except ValueError as exc:
-                raise RequestLimitError(str(exc)) from exc
             if endpoint and len(json.dumps(payload, ensure_ascii=False).encode()) > self.prices[request["model"]]["max_request_bytes"]:
                 raise RequestLimitError("Converted request exceeds pinned byte limit; no automatic chunking")
             self.ledger.reserve(key, {**identity, "context": self.context}, ceiling)

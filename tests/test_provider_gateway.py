@@ -6,12 +6,14 @@ from copy import deepcopy
 from decimal import Decimal
 import json
 from pathlib import Path
+from unittest.mock import Mock
 
 import httpx
 import pytest
 
 from scripts.extraction_eval import gateway as gateway_module
-from scripts.extraction_eval.gateway import DryRunMiss, Gateway, usage_charge
+from scripts.extraction_eval.gateway import DryRunMiss, Gateway, RequestLimitError, usage_charge
+from scripts.extraction_eval.openai_adapter import prepare_request
 from scripts.extraction_eval.store import Ledger, OutcomeUnknown, digest
 
 
@@ -143,8 +145,9 @@ def openai_request():
     ("openai-responses", "responses", "responses", "max_output_tokens"),
     ("openai-chat-completions", "chat", "chat/completions", "max_completion_tokens"),
 ])
+@pytest.mark.parametrize("controls", [{}, {"store": False, "background": False}])
 def test_openai_dispatch_persists_native_usage_before_normalizing_and_replays(
-    provider, fixture, endpoint, limit_field, openai_config, openai_ledger,
+    provider, fixture, endpoint, limit_field, controls, openai_config, openai_ledger,
     http_fixture, openai_transport, monkeypatch,
 ):
     openai_config["provider"] = provider
@@ -164,7 +167,7 @@ def test_openai_dispatch_persists_native_usage_before_normalizing_and_replays(
         return normalize(usage, provider)
 
     monkeypatch.setattr(gateway_module, "normalize_usage", observed_normalize)
-    reply = gateway.create(**openai_request())
+    reply = gateway.create(**openai_request(), **controls)
     assert reply.content[0].type == "text"
     assert reply.content[0].text == '{"pages": []}'
     assert reply.stop_reason == "end_turn"
@@ -182,6 +185,8 @@ def test_openai_dispatch_persists_native_usage_before_normalizing_and_replays(
     assert requests[0].url.path == "/v1/" + endpoint
     assert requests[0].method == "POST"
     assert json.loads(requests[0].content)[limit_field] == 30
+    assert json.loads(requests[0].content)["store"] is False
+    assert json.loads(requests[0].content).get("background", False) is False
 
     gateway.record_usage(reply, "fixture-openai", "extraction")
     openai_config["parser_version"] = "changed-parser"
@@ -209,6 +214,7 @@ def test_openai_429_retries_once_with_separate_reservations_and_records(
     reply = gateway.create(**openai_request())
     rows = openai_ledger.rows()
     assert len(requests) == len(rows) == len(reserved) == 2
+    assert all(json.loads(request.content)["store"] is False for request in requests)
     assert len({key for key, amount in reserved if amount > 0}) == 2
     assert [row["state"] for row in rows] == ["retryable", "completed"]
     assert [row["request_id"] for row in rows] == ["req-fixture-rate-limit", "req-fixture-responses"]
@@ -352,6 +358,46 @@ def test_unsupported_openai_options_fail_before_reservation(
     with pytest.raises(ValueError, match="options"):
         gateway.create(**openai_request(), **option)
     assert openai_ledger.rows() == requests == []
+
+
+@pytest.mark.parametrize("provider", ["openai", "openai-responses", "openai-chat-completions"])
+@pytest.mark.parametrize("option", ["store", "background"])
+def test_openai_storage_and_background_refused_before_reservation(
+    provider, option, openai_config, openai_ledger, openai_transport, monkeypatch,
+):
+    openai_config["provider"] = provider
+    client, requests = openai_transport()
+    reserve = Mock(side_effect=AssertionError("Must refuse before reservation"))
+    monkeypatch.setattr(openai_ledger, "reserve", reserve)
+    request = {**openai_request(), option: True}
+    with pytest.raises(ValueError, match="store=false and foreground"):
+        prepare_request(request, provider)
+    for dry_run in (False, True):
+        gateway = Gateway(client, openai_ledger, openai_config, dry_run=dry_run)
+        with pytest.raises(RequestLimitError, match="store=false and foreground"):
+            gateway.create(**request)
+    reserve.assert_not_called()
+    assert openai_ledger.rows() == requests == []
+
+
+def test_anthropic_dispatch_and_cache_identity_unchanged(openai_config, openai_ledger):
+    openai_config["provider"] = "anthropic-messages"
+    openai_config["pricing"]["models"]["fixture-openai"]["cache_write"] = 2.5
+    client = Mock()
+    client.messages.create.return_value = {
+        "content": [{"type": "text", "text": "Synthetic reply"}],
+        "stop_reason": "end_turn", "usage": {"input_tokens": 10, "output_tokens": 5},
+    }
+    gateway = Gateway(client, openai_ledger, openai_config)
+    request = openai_request()
+    reply = gateway.create(**request)
+    client.messages.create.assert_called_once_with(**request)
+    assert reply._eval_key == digest({
+        "provider": "anthropic-messages", "replicate": "1", "request_version": "1",
+        "request": request, "attempt": 0,
+    })
+    assert gateway.create(**request)._eval_cached is True
+    client.messages.create.assert_called_once_with(**request)
 
 
 def test_absent_openai_client_is_clear_configuration_error(openai_config, openai_ledger):
