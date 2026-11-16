@@ -172,6 +172,8 @@ def test_scan_cli_uses_scan_pages_without_stored_renders(
     snapshot, config = offline_inputs
     source = read_json(snapshot / 'manifest.json')
     source['books'][2]['pages'] = []
+    source['books'][2]['reference']['characters'] = {
+        'status': 'observed', 'value': [{'name': 'cat'}, {'name': 'Rabbit'}]}
     atomic_json(snapshot / 'manifest.json', source)
     scan_root = tmp_path / 'scans'
     folder = scan_root / 'Book 2'
@@ -211,6 +213,8 @@ def test_scan_cli_uses_scan_pages_without_stored_renders(
             {'kind': 'illustration_lettering', 'text': 'Added lettering'}]},
         'scan-1': {'status': 'completed', 'text': 'A synthetic reference'},
     }
+    predictions['books']['book-02']['characters'] = {
+        'status': 'completed', 'value': [{'name': 'The Old Cat'}, {'name': 'Rabbit'}]}
     atomic_json(out / 'predictions.json', predictions)
     score_args = ['score', '--snapshot', str(snapshot), '--run', str(out)]
     assert cli.main(score_args) == 0
@@ -222,6 +226,9 @@ def test_scan_cli_uses_scan_pages_without_stored_renders(
     assert score['insertions'] == 2
     assert score['accuracy'] == pytest.approx(1 / 3)
     assert score['inserted_text_per_100_reference_tokens'] == pytest.approx(200 / 3)
+    assert score['characters']['strict_numerator'] == 1
+    assert score['characters']['tolerant_numerator'] == score['characters']['denominator'] == 2
+    assert score['characters']['tolerant_recall'] == 1
     projected = tmp_path / 'projected-report'
     assert cli.main([*score_args, '--out', str(projected), '--text-output',
                      'analysis_without_illustration_lettering']) == 0
@@ -229,11 +236,12 @@ def test_scan_cli_uses_scan_pages_without_stored_renders(
     assert summary['text_output'] == 'analysis_without_illustration_lettering'
     assert summary['book_scores'][0]['accuracy'] == 1
     assert summary['book_scores'][0]['insertions'] == 0
+    assert summary['book_scores'][0]['characters'] == score['characters']
     assert read_json(projected / 'book_scores.json') == summary['book_scores']
     assert set(path.name for path in projected.iterdir()) == {'summary.json', 'book_scores.json'}
     with pytest.raises(SystemExit):
         cli.main([*score_args, '--compare-run', str(out)])
-    assert 'per-book text only' in capsys.readouterr().err
+    assert 'per-book text and character recall' in capsys.readouterr().err
     with Image.new('RGB', (8, 10), 'green') as changed:
         changed.save(folder / 'Book 2.pdf')
     with pytest.raises(SystemExit):
@@ -257,6 +265,8 @@ def test_scan_cli_keeps_unavailable_book_without_dispatch(
     cohort_loader_factory(iterate=['book-02'], check=[])
     snapshot, config = offline_inputs
     source = read_json(snapshot / 'manifest.json')
+    source['books'][2]['reference']['characters'] = {
+        'status': 'observed', 'value': [{'name': 'cat'}]}
     source['books'] = [source['books'][2]] if present_in_snapshot else []
     atomic_json(snapshot / 'manifest.json', source)
     scan_root, reference_root = tmp_path / 'scans', tmp_path / 'references'
@@ -297,6 +307,35 @@ def test_scan_cli_keeps_unavailable_book_without_dispatch(
     assert summary['book_scores'][0]['id'] == 'book-02'
     assert summary['book_scores'][0]['accuracy'] == 0
     assert summary['book_scores'][0]['forced_score'] == 0
+    characters = summary['book_scores'][0]['characters']
+    assert characters['denominator'] == int(present_in_snapshot)
+    assert characters['tolerant_numerator'] == characters['strict_numerator'] == 0
+    assert characters['tolerant_recall'] == (0 if present_in_snapshot else None)
+
+
+@pytest.mark.parametrize('prediction', [
+    None, {'status': 'failed', 'value': [{'name': 'cat'}]},
+    {'status': 'abstained', 'value': [{'name': 'cat'}]},
+    {'status': 'pending'}, {'status': 'completed', 'value': None},
+])
+def test_scan_character_failure_retains_recorded_denominator(tmp_path, monkeypatch, prediction):
+    from scripts.extraction_eval import inputs_manifest
+
+    monkeypatch.setattr(inputs_manifest, 'scoring_inputs', lambda *args, **kwargs: [{
+        'id': 'book', 'reference_text': '', 'prediction_text': '', 'forced_score': None,
+        'status': 'ready', 'reason': None, 'failed_pages': [],
+    }])
+    args = SimpleNamespace(out=tmp_path, text_output='stored')
+    contract = {'snapshot_id': 'fixture', 'config': {
+        'inputs_manifest': {'books': [{'id': 'book'}]}, 'reference_root': tmp_path}}
+    manifest = {'books': [{'id': 'book', 'reference': {'characters': {
+        'status': 'observed', 'value': [{'name': 'cat'}]}}}]}
+    predictions = {'books': {'book': {'characters': prediction}}}
+    assert cli._score_scans(args, contract, predictions, {'book_ids': ['book']}, manifest) == 0
+    characters = read_json(tmp_path / 'book_scores.json')[0]['characters']
+    assert characters['denominator'] == 1
+    assert characters['strict_recall'] == characters['tolerant_recall'] == 0
+    assert characters['unmatched_reference'] == [0]
 
 
 def test_inventory_cli_reports_counts_only(tmp_path, cohort_loader_factory, capsys):

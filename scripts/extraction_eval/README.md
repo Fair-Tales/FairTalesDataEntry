@@ -72,9 +72,11 @@ hashes. Unavailable books stay selected, make no requests, and count in results.
 strings (including wordless and failed pages) and forces unavailable books to
 zero. `score --snapshot SNAPSHOT --run RUN --out REPORTS` writes `summary.json`
 and `book_scores.json` for the selected books, including unavailable books in
-`book_denominator`. Scan reports currently contain only this text measure;
-character/attribute/alias measures, book means/ranges, overlays and comparisons
-are not implemented here. Render runs retain their existing scoring and reports.
+`book_denominator`. Scan reports contain this text measure and per-book character
+recall. Attribute/alias measures, book means/ranges, overlays and comparisons
+are not implemented here. Stored-render runs retain their existing scoring and
+reports, including forced-edge character credit, so the published 5 November
+baseline figures remain reproducible.
 Supply `extract --reference-root` / `--published-text` when their later scoring
 paths differ from defaults or a published fallback was selected.
 
@@ -92,6 +94,28 @@ tokens, including predictions on reference-empty pages. With zero reference
 tokens the rate is `null` (undefined), while all inserted tokens are counted.
 Unavailable books have accuracy 0 and `forced_score=0`; their unknown components
 and rate are `null`, not invented counts.
+
+Each scan book's `characters` result uses `score_character_recall(recorded,
+predicted)` (`character-recall-v1`, DECISIONS 018). It reports strict and tolerant
+numerators, the shared recorded-character denominator and both recalls; tolerant
+recall is the headline. Zero recorded characters gives `null` recalls. Failed,
+absent or abstained character output, and unavailable books, use an empty predicted
+cast and retain all recorded characters in the denominator.
+
+Strict edges share a complete name/alias token sequence after frozen
+NFKC/casefold/apostrophe normalization and removal of only an initial `a/an/the`.
+Both strict and tolerant comparisons preserve the ordered possessor signature
+(words ending in `'s` or a final apostrophe, and
+`my/your/his/her/its/our/their/whose`). A tolerant candidate is a proper ordered
+whole-token subsequence, allowing intervening words. It adds an edge only when
+each endpoint has exactly one opposite entity across **all strict and candidate
+pairs in both complete casts**, deduplicating surfaces within each entity.
+Ties add no tolerant edge and are reported with their candidate indices and reason.
+Maximum one-to-one matching retains all strict edges, never only forced edges;
+accepted tolerant edges cannot displace strict ones. `matches` marks each pair
+`strict` or `tolerant`; its indices and `unmatched_reference` refer to the returned
+original `reference` and `prediction` casts. A representative maximum matching
+does not establish invariant ownership for the later alias measure.
 
 `score --text-output stored` is the default: compare all stored page text.
 `--text-output analysis_without_illustration_lettering` explicitly selects

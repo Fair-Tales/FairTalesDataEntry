@@ -7,11 +7,14 @@ import unicodedata
 from collections import Counter
 
 NORMALIZATION_VERSION = "pilot-normalization-v1"
+CHARACTER_NORMALIZATION_VERSION = "character-normalization-v1"
 UNCERTAINTY = "[?]"
 _APOSTROPHES = str.maketrans({"’": "'", "‘": "'", "ʼ": "'", "＇": "'"})
 _UNCERTAIN_RE = re.compile(r"\[\s*(?:\?+|illegible|unreadable|unclear)\s*\]", re.I)
 _TOKEN_RE = re.compile(r"\[\?\]|[^\W_]+(?:'[^\W_]+)*", re.UNICODE)
 _ARTICLE_RE = re.compile(r"^(?:the|an|a|my|your|his|her|its|our|their)\s+", re.I)
+_POSSESSOR_TOKEN_RE = re.compile(r"[^\W_]+(?:'[^\W_]+)*'?", re.UNICODE)
+_POSSESSIVES = {'my', 'your', 'his', 'her', 'its', 'our', 'their', 'whose'}
 
 
 def normalize_text(value: str | None) -> str:
@@ -43,6 +46,21 @@ def normalize_name(value: str | None, *, strip_article: bool = False) -> str:
     if strip_article:
         text = _ARTICLE_RE.sub("", text, count=1) or text
     return " ".join(tokenize(text))
+
+
+def normalize_character_name(value: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Ratified character tokens and ordered possessors, before punctuation loss.
+
+    Separate from legacy normalize_name: only a/an/the preceding another token
+    may be removed; a final possessive apostrophe survives in the signature.
+    """
+    text = normalize_text(value)
+    possessors = tuple(word for word in _POSSESSOR_TOKEN_RE.findall(text)
+                       if word.endswith(("'s", "'")) or word in _POSSESSIVES)
+    tokens = tokenize(text)
+    if len(tokens) > 1 and tokens[0] in {'a', 'an', 'the'}:
+        tokens = tokens[1:]
+    return tuple(tokens), possessors
 
 
 def edit_distance(reference, prediction) -> int:

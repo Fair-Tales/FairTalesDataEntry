@@ -396,7 +396,7 @@ def _score_loaded(args, loader):
     if selection != contract.get("selection"):
         raise ValueError("Selection differs from the frozen run contract")
     if scans:
-        return _score_scan_text(args, contract, predictions, selection)
+        return _score_scans(args, contract, predictions, selection, manifest)
     ledger_path = contract.get("ledger")
     if ledger_path and Path(ledger_path).is_file():
         from .store import read_calls
@@ -443,10 +443,10 @@ def _score_loaded(args, loader):
     return 0
 
 
-def _score_scan_text(args, contract, predictions, selection):
+def _score_scans(args, contract, predictions, selection, manifest):
     from .inputs_manifest import scoring_inputs
     from .normalization import NORMALIZATION_VERSION
-    from .scoring import score_book_text
+    from .scoring import score_book_text, score_character_recall
     config = contract['config']
     inputs = config['inputs_manifest']
     selected = set(selection['book_ids'])
@@ -456,11 +456,22 @@ def _score_scan_text(args, contract, predictions, selection):
     rows = scoring_inputs(inputs, predictions, config['reference_root'],
                           published_path=config.get('published_path'), text_output=args.text_output)
     scores = []
+    references = {book['id']: book.get('reference', {}).get('characters', {})
+                  for book in manifest['books']}
     for row in rows:
         score = score_book_text([row['reference_text'] or ''], [row['prediction_text']],
                                 text_output=args.text_output, forced_score=row['forced_score'])
+        reference = references.get(row['id'], {})
+        prediction = predictions.get('books', {}).get(row['id'], {}).get('characters') or {}
+        predicted = prediction.get('value')
+        if row['status'] == 'unavailable' or prediction.get('status') != 'completed' or not isinstance(predicted, list):
+            predicted = []
+        characters = score_character_recall(reference.get('value') or [], predicted)
+        characters.update(reference_status=reference.get('status', 'missing'),
+                          prediction_status=prediction.get('status', 'pending'))
         scores.append({**score, 'id': row['id'], 'status': row['status'],
-                       'reason': row['reason'], 'failed_pages': row['failed_pages']})
+                       'reason': row['reason'], 'failed_pages': row['failed_pages'],
+                       'characters': characters})
     summary = {'measure': 'book-token-edit-accuracy-v1', 'snapshot_id': contract['snapshot_id'],
                'text_output': args.text_output, 'normalization_version': NORMALIZATION_VERSION,
                'book_denominator': len(scores), 'book_scores': scores}

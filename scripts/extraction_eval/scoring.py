@@ -17,8 +17,9 @@ from text_content.alias_metrics import AliasMetrics
 from text_content.evaluation import EvaluationText
 
 from .alias_metrics import aggregate_alias_foundation, score_alias_foundation
-from .normalization import (NORMALIZATION_VERSION, UNCERTAINTY, character_similarity, edit_distance, edit_operations,
-                            normalize_name, normalize_text, token_counts, tokenize)
+from .normalization import (CHARACTER_NORMALIZATION_VERSION, NORMALIZATION_VERSION, UNCERTAINTY,
+                            character_similarity, edit_distance, edit_operations,
+                            normalize_character_name, normalize_name, normalize_text, token_counts, tokenize)
 from .statistics import bootstrap_books
 
 ELIGIBLE = {"observed", "verified"}
@@ -380,6 +381,71 @@ def _maximum_matching(edges, forbidden=None):
     for ref_id in edges:
         visit(ref_id, set())
     return sorted((ref_id, pred_id) for pred_id, ref_id in matched.items())
+
+
+def score_character_recall(recorded, predicted):
+    """DECISIONS 018: maximum strict and unique fuller/shorter-name recall.
+
+    Casts are lists of name/aliases records (or names). Pair and unmatched
+    indices refer to the returned original casts, preserving duplicate names.
+    Candidate uniqueness includes strict edges across both complete casts;
+    accepted tolerant edges are therefore isolated and cannot displace strict
+    matches. Zero recorded characters gives undefined (None) recall.
+    """
+    def surfaces(cast):
+        return [{normalize_character_name(name) for name in entity['raw_variants']
+                 if isinstance(name, str) and tokenize(name)}
+                for entity in _entities(cast)]
+
+    def proper_subsequence(shorter, longer):
+        if not shorter or len(shorter) >= len(longer):
+            return False
+        remaining = iter(longer)
+        return all(any(word == other for other in remaining) for word in shorter)
+
+    refs, preds = surfaces(recorded), surfaces(predicted)
+    strict = {r: [] for r in range(len(refs))}
+    candidates = []
+    for r, ref in enumerate(refs):
+        for p, pred in enumerate(preds):
+            if any(tokens and (tokens, signature) in pred for tokens, signature in ref):
+                strict[r].append(p)
+            elif any(rs == ps and (proper_subsequence(rt, pt) or proper_subsequence(pt, rt))
+                     for rt, rs in ref for pt, ps in pred):
+                candidates.append((r, p))
+    possible_refs = {r: set(options) for r, options in strict.items()}
+    possible_preds = defaultdict(set)
+    for r, options in strict.items():
+        for p in options:
+            possible_preds[p].add(r)
+    for r, p in candidates:
+        possible_refs[r].add(p)
+        possible_preds[p].add(r)
+    edges = {r: list(options) for r, options in strict.items()}
+    ambiguous = []
+    for r, p in candidates:
+        if len(possible_refs[r]) == len(possible_preds[p]) == 1:
+            edges[r].append(p)
+        else:
+            ambiguous.append({'reference': r, 'prediction': p,
+                              'reason': 'multiple_possible_opposite_entities',
+                              'possible_predictions': sorted(possible_refs[r]),
+                              'possible_references': sorted(possible_preds[p])})
+    strict_pairs = _maximum_matching(strict)
+    pairs = _maximum_matching(edges)
+    matched_refs = {r for r, _ in pairs}
+    denominator = len(recorded)
+    return {'measure': 'character-recall-v1',
+            'normalization_version': CHARACTER_NORMALIZATION_VERSION,
+            'reference': recorded, 'prediction': predicted,
+            'matches': [{'reference': r, 'prediction': p,
+                         'kind': 'strict' if p in strict[r] else 'tolerant'} for r, p in pairs],
+            'strict_numerator': len(strict_pairs), 'tolerant_numerator': len(pairs),
+            'denominator': denominator,
+            'strict_recall': _ratio(len(strict_pairs), denominator),
+            'tolerant_recall': _ratio(len(pairs), denominator),
+            'unmatched_reference': [r for r in range(denominator) if r not in matched_refs],
+            'ambiguous_candidates': ambiguous}
 
 
 def match_characters(reference, prediction, equivalences=None):
