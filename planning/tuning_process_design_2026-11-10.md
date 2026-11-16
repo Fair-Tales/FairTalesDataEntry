@@ -53,9 +53,27 @@ Guardrails, each judged against its measured noise rather than against zero:
 
 ## 4. Run-to-run noise
 
-The cached Anthropic reference says Sonnet 5 rejects non-default sampling settings. Pin supported model/thinking/effort/token settings per stage in the request identity; record served model, usage and stop reason. Recheck settings before execution; OpenAI uses §7's provider-specific settings.
+**Revised 16 November after verification found the approved thresholds rejected nearly every change. Proposed; awaiting Chris's approval.**
 
-Rerun with `--replicate`: characters twice more on all 75 Iterate and Check books ($1.56), transcription twice more on ten Iterate and ten Check books ($18.38). The sample SD of three panel means gives each set its own preliminary noise floor; Check needs one because every change is judged against it.
+Pin supported stage settings in request identity; record served model, usage and stop reason; recheck before execution (§7).
+
+`f` is the sample SD of unchanged replicate equal-book means, separately for Iterate/Check. Use `R=20` full-75-book runs for cheap character stages, `R=5` for transcription, including the initial run. Twenty stabilise cheap floors; five limit expensive reruns; Student-t thresholds account for estimation uncertainty. Cut ten-book panels: they do not measure full-set noise. Recalibrate after model/settings changes; regenerate affected/downstream stages, caching upstream outputs.
+
+Average **four fresh runs per arm on Iterate and eight on Check** for cheap comparisons; transcription uses one. Calibration is separate. Average within books, then across books. For `r` runs per arm, difference noise is `d=f√(2/r)`: four halve single-run comparison noise; eight protect the smaller Check set.
+
+**Forecast:** calibration adds $19/$136 for characters/transcription; comparisons cost ~$10/$68. This supersedes §8's noise/iteration allocations within unchanged caps: fewer attempts, spread over billing cycles.
+
+**Synthetic verification:** 1,500 trials/row; independent normal per-book rerun errors, stable variance/eligibility, newly estimated floors; character-recall gain/gender harm on both sets, cached text fixed. [Code](../.cache/tuning-calibration-2026-11-16/simulate.py) wraps committed `noise_floors`/`verdict`. Keep-rates (%; approximate 95% Monte Carlo margin ≤2.6 points):
+
+| Per-book SD | No change | +1 pt | +2 pts | +3 pts | +3 pts, gender −3 |
+|---|---:|---:|---:|---:|---:|
+| 0.02 | 2.8 | 96.1 | 96.1 | 96.1 | 0.0 |
+| 0.05 | 2.8 | 49.5 | 93.6 | 96.1 | 0.0 |
+| 0.10 | 2.8 | 15.9 | 49.5 | 81.7 | 16.1 |
+
+At SD .05, the approved three-replicate rule kept 10.0% of +3-point gains. The revision keeps 95.7% with Check unchanged, 0.6% with Check-only gender harm. Guards reject 4.3% of harmless comparisons; observed zeros are not zero risk.
+
+**Unworkable:** character SD .10 (single-run floors 1.35/2.24 points on Iterate/Check) admits 16.1% of three-point harms, 42.1% for Check-only harm. Transcription already admits 41.5% of Check-only harm at SD .02 (floors .27/.45 points), versus 0.7% at .01. Reduce noise before tuning at these levels. These measure fixed-book repeatability, not generalisation.
 
 ## 5. The loop
 
@@ -64,7 +82,7 @@ Rerun with `--replicate`: characters twice more on all 75 Iterate and Check book
 3. **Error analysis.** Read every Iterate miss, classify and count. Tally gender cues beyond pronouns by kind and bring each kind to Chris before adding it to a prompt. Never infer gender from illustrations or stereotypes (DECISIONS 018).
 4. **One hypothesis, one change:** a rule, an example or a structural step, aimed at the largest category a lever can reach.
 5. **Re-score the whole Iterate set**, not just the cases the change was written for.
-6. **Accept only if it improves on the 55 and does not get worse on the 20** (Chris, 11 November: "the change is accepted if it improves on both the 55 and the 20 books, or improves on the 55 and doesn't get worse on the 20. The reason being that 20 books might not be enough to show the improvement"). In practice: on Iterate, the measure the change was aimed at, named before the run (a primary, alias coverage or a guardrail), improves by more than twice its floor and no primary or guardrail worsens by more than its own floor; on Check, neither that measure nor any primary falls by more than Check's floor. "Not worse" is read against noise because twenty books scored twice will differ by chance. A fall in a category's count is not enough by itself: counts and book means can move in opposite directions. Otherwise revert.
+6. **Chris's principle:** "the change is accepted if it improves on both the 55 and the 20 books, or improves on the 55 and doesn't get worse on the 20. The reason being that 20 books might not be enough to show the improvement" (11 November). **Revised; approval pending (§4).** Name the target beforehand. Keep only when its Iterate improvement exceeds `t(.975, R−1)·d`, and no affected Iterate primary/guardrail or Check primary/target deteriorates by more than `t(1−.05/m, R−1)·d`, using each measure/set's `d`. Here `t` is a Student-t quantile; `m` counts downside clauses excluding the redundant Iterate target clause (eight for character recall, ten for aliases). Omit only cached, identical measures. Under §4's assumptions, false target gains are budgeted at 2.5%, harmless guard rejection at ≤5%; wider tolerances miss small harms. Missing required floors or changed eligibility give no verdict; counts alone cannot establish improvement. Otherwise revert.
 7. **Log one row per attempt:** hypothesis, change, counts before and after, primaries, guardrails, cost, verdict. Reverted attempts stay.
 8. **Score the Check set with every candidate change** and read its figures and nothing else: no failure on a Check book is ever opened and no example comes from one. Used this way the 20 are part of tuning, a validation set in the usual sense, so the first untouched look is the rehearsal on the protected 40.
 9. **Stop** when no remaining category holds errors a lever could reach, after 15 accepted changes, or after 30 attempts in all. Running out of a cycle's budget pauses the loop; it is not a result.
