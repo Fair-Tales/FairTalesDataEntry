@@ -750,3 +750,47 @@ only Chris could answer. His rulings:
    `claude-dev`; every change is still its own commit with its own check,
    verified before the next, and each of the six merges needs Chris's specific
    approval (`planning/implementation_plan_2026-11-11.md`).
+
+## 019 — Exposure of ten reference aliases from sealed books (2026-11-16)
+
+**Status:** facts recorded; treatment awaits Chris.
+
+**What happened.** While building the summary code (work item A5e), the
+implementing agent wanted to see the structure of the sealed snapshot and loaded
+`autonomy-freeze/snapshot/inventory.json` whole with a one-off script, printing
+the first keys of each section. One section is keyed by document id, and alias
+document ids embed the alias itself. Ten such ids were printed. The agent
+reported it in the same run, unprompted.
+
+**Scope, established from the run log.**
+
+- Three held-out proof books: `all_about_feelings` (1 alias),
+  `barry_the_fish_with_fingers_and_the_hairy_scary_monster` (3) and
+  `barry_the_fish_with_fingers` (1). Five reference aliases in all.
+- One protected rehearsal book: `boogie_bear` (5 aliases).
+- Nothing else: no page text, no image, no character codes, no other book. The
+  file was read once; no other direct read of a sealed file occurs in the run.
+- Seen by the implementing agent, and then by the orchestrating session, which
+  read six of the ten while establishing the scope.
+- No sealed file was changed, no score computed on a sealed book, and no code
+  or prompt was written with reference to the strings.
+
+**Why the guard did not stop it.** The guard is in the harness loader. A
+one-off script that opens the file directly never reaches it; decision 016 said
+as much ("detects mistakes through the loader, not deliberate bypass"). The
+brief said ids and counts only, and that was not enough.
+
+**What it touches.** Aliases are reported, not gated, and are not one of the
+five primary measures (017 item 7). The strings are reference labels for the
+alias figures of three of the 80 books. They say nothing about text, gender,
+human or protagonist coding. Under 016 these three books can no longer be
+described as untouched for the alias figures; there is no redraw.
+
+**Done at once, without waiting.** A standing rule in `AGENTS.md` forbids
+opening the sealed files directly for any reason, and says how to get structure,
+ids and counts without doing so.
+
+**For Chris to decide.** How the three books are treated in the proof, and
+whether to close the sealed files to everything but a guarded rehearsal or proof
+run, so that the rule does not rest on instructions alone.
+

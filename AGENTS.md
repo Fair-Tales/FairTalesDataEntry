@@ -50,6 +50,28 @@ does not exist. Chris: "far too complicated and overengineered."
   trade-off in plain words and the concrete consequence of each option. If
   nothing is genuinely his, leave the section empty and say so.
 
+## Sealed books (binding; added 16 November after an exposure)
+
+The files under `/home/expert/Documents/uob/fair_tales/autonomy-freeze/snapshot/`
+hold every book, including the 80 held out for the proof and the 40 protected
+for the rehearsal. Their value depends on nobody who shapes the pipeline having
+seen them.
+
+- **Never open those files directly**: not with `json.load`, `cat`, `head`,
+  `grep`, an editor or a one-off script, and not "just to see the structure".
+  Listing keys prints content: document ids there embed alias strings.
+- To learn a file's structure, read the code that writes it
+  (`scripts/extraction_eval/snapshot.py`) or a synthetic fixture under `tests/`.
+- For ids, strata and counts use the ids-only files in the repository:
+  `scripts/extraction_eval/selections.json` and `inputs_manifest_*.json`.
+- Anything that needs book content goes through the cohort loader
+  (`scripts/extraction_eval/tuning.py`), which checks the id first.
+- The same applies to the scans under `/media/storage` and the Word exports in
+  `fair-tales-language-analysis/text_pdfs` for any book outside the cohort you
+  were given.
+- If sealed content does reach you, stop, and report exactly what was shown
+  and for which book ids. Do not carry on as if it had not happened.
+
 ## Version control
 
 Trunk is `claude-dev`; topic branches off it, merged back when done. Commit each
