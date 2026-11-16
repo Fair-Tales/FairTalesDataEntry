@@ -448,6 +448,7 @@ def _score_scans(args, contract, predictions, selection, manifest):
     from .inputs_manifest import scoring_inputs
     from .normalization import NORMALIZATION_VERSION
     from .scoring import score_book_text, score_character_recall, score_character_attributes
+    from .outcomes import normalize_outcome
     config = contract['config']
     inputs = config['inputs_manifest']
     selected = set(selection['book_ids'])
@@ -464,18 +465,23 @@ def _score_scans(args, contract, predictions, selection, manifest):
                                 text_output=args.text_output, forced_score=row['forced_score'])
         reference = references.get(row['id'], {})
         book_prediction = predictions.get('books', {}).get(row['id'], {})
-        prediction = book_prediction.get('characters') or {}
+        prediction = normalize_outcome(book_prediction.get('characters') or {})
         predicted = prediction.get('value')
+        if prediction.get('status') == 'completed' and not isinstance(predicted, list):
+            prediction = {**prediction, 'status': 'failed', 'failure_kind': 'invalid_response'}
         if row['status'] == 'unavailable' or prediction.get('status') != 'completed' or not isinstance(predicted, list):
             predicted = []
         characters = score_character_recall(reference.get('value') or [], predicted)
         characters.update(reference_status=reference.get('status', 'missing'),
-                          prediction_status=prediction.get('status', 'pending'))
+                          prediction_status=prediction.get('status', 'pending'),
+                          failure_kind=prediction.get('failure_kind'))
         pages = [(page_id, page.get('text') or '')
                  for page_id, page in book_prediction.get('pages', {}).items()
                  if page.get('status') == 'completed']
         scores.append({**score, 'id': row['id'], 'status': row['status'],
                        'reason': row['reason'], 'failed_pages': row['failed_pages'],
+                       'page_failures': row['page_failures'],
+                       'unrun_pages': row['unrun_pages'],
                        'characters': characters,
                        'attributes': score_character_attributes(characters),
                        'aliases': score_aliases(characters, pages)})

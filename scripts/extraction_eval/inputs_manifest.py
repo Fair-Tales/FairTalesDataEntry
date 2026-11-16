@@ -154,7 +154,8 @@ def scoring_inputs(inputs, predictions, reference_root=DEFAULT_REFERENCE_ROOT, *
     pages contribute empty text and their numbers; A5a measures the omissions.
     Unavailable books must use forced_score=0 and remain in the denominator.
     """
-    from .scoring import TEXT_OUTPUTS, prediction_page_text
+    from .scoring import TEXT_OUTPUTS, prediction_page_text, score_page_failures
+    from .outcomes import normalize_outcome
     if text_output not in TEXT_OUTPUTS:
         raise ValueError(f'Unknown text output: {text_output}')
     rows = _rows(inputs)
@@ -162,19 +163,27 @@ def scoring_inputs(inputs, predictions, reference_root=DEFAULT_REFERENCE_ROOT, *
     for book_id, row in rows.items():
         item = {'id': book_id, 'status': row['status'], 'reason': row['reason'],
                 'reference_text': None, 'prediction_text': '', 'failed_pages': [],
+                'page_failures': score_page_failures([]),
+                'unrun_pages': [],
                 'forced_score': 0 if row['status'] == 'unavailable' else None}
         if row['status'] == 'ready':
             item['reference_text'] = _manifest_reference(row, reference_root, published_path)
             pages = predictions.get('books', {}).get(book_id, {}).get('pages', {})
             texts = []
+            outcomes = []
             for number in range(1, row['scan']['page_count'] + 1):
-                page = pages.get(f'scan-{number}', {})
+                page = normalize_outcome(pages.get(f'scan-{number}', {}))
+                outcomes.append(page)
                 if page.get('status') == 'completed' and isinstance(page.get('text'), str):
                     texts.append(prediction_page_text(page, text_output))
                 else:
                     texts.append('')
-                    item['failed_pages'].append(number)
+                    if page.get('status') == 'failed':
+                        item['failed_pages'].append(number)
+                    else:
+                        item['unrun_pages'].append(number)
             item['prediction_text'] = '\n'.join(texts)
+            item['page_failures'] = score_page_failures(outcomes)
         result.append(item)
     return result
 

@@ -12,6 +12,7 @@ import json
 from .gateway import DryRunMiss, RequestLimitError
 from .billing import BillingStopped
 from .tuning import current_loader
+from .outcomes import EvaluationFailure, normalize_outcome
 from text_content.pipeline_prompts import evaluation_prompt_context
 from text_content.tuning import TuningErrors
 from .store import (BudgetStopped, CachedFailure, OutcomeUnknown, atomic_json,
@@ -168,7 +169,12 @@ def validate_inputs(snapshot_dir, manifest, selection, *, loader):
             loader.load([book.get("id")], "book", lambda: None)
             for page in book.get("pages", []):
                 if page.get("image"):
-                    local_image(snapshot_dir, page, book_id=book.get("id"), loader=loader)
+                    try:
+                        local_image(snapshot_dir, page, book_id=book.get("id"), loader=loader)
+                    except FileNotFoundError:
+                        # Extraction records this per page; a missing file must
+                        # not erase all outcomes by aborting the preflight.
+                        continue
 
 
 def isbn_cache_outcome(saved):
@@ -290,6 +296,21 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                                       frozen_lookup_dir=config.get('frozen_lookup_dir'),
                                       source_ids=lambda: [current_book_id])
 
+            def record_usage(response, model, label='', **kwargs):
+                gateway.record_usage(response, model, label, **kwargs)
+                # Keep provider accounting intact, then reject unsuccessful data
+                # replies before shared parsers can accept valid-looking JSON.
+                # Short orientation answers have their own fallback behaviour.
+                if getattr(gateway, 'provider', 'anthropic') not in {'anthropic', 'anthropic-messages'}:
+                    return  # OpenAI outcome handling belongs to A12b.
+                stop = getattr(response, 'stop_reason', None)
+                kind = ('refusal' if stop == 'refusal' else 'truncated'
+                        if stop == 'max_tokens' and label in {'page_extraction', 'character_detection'} else None)
+                if kind:
+                    from .gateway import response_dict
+                    raise EvaluationFailure(kind, f'Provider stop reason: {stop}',
+                                            raw_response=response_dict(response))
+
             def perform(key, callback, *, refresh_lookup=False):
                 nonlocal stop_reason
                 gateway.context = {"book_id": current_book_id, "stage": key}
@@ -298,6 +319,12 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                 # Stages and their derivatives are owned by the admitted book id in
                 # the stage key; cache hits pass the same check as fresh extraction.
                 saved = stages.get(key, book_id=current_book_id)
+                if saved is not None:
+                    saved = normalize_outcome(saved)
+                    if saved.get('failure_kind') == 'outcome_unknown':
+                        stop_reason = ('outcome_unknown', saved.get('error', 'Unknown request outcome'))
+                    elif saved.get('halt_reason') == 'billing_stopped':
+                        stop_reason = ('billing_stopped', saved.get('error', 'Billing stopped'))
                 refreshing_lookup = False
                 if saved is not None:
                     def lookup_metadata():
@@ -339,6 +366,7 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                         value.update(failure_kind=exc.failure_kind,
                                      raw_response=getattr(exc, 'raw_response', None),
                                      raw_text=getattr(exc, 'raw_text', None))
+                value = normalize_outcome(value)
                 if not dry_run:
                     stages.put(key, value)
                 return value
@@ -354,6 +382,7 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                     loader.save()
                     stage_prefix = book_id
                     scan_pages = None
+                    scan_error = None
                     if config.get('inputs') == 'scans':
                         from .inputs_manifest import load_manifest_scan
                         expected = next(row for row in config['inputs_manifest']['books']
@@ -362,11 +391,25 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                             results['books'][book_id] = {'status': 'unavailable',
                                                         'reason': expected['reason'], 'pages': {}}
                             continue
-                        scan = load_manifest_scan(expected, config['scan_root'])
-                        scan_pages = scan['pages']
+                        try:
+                            scan = load_manifest_scan(expected, config['scan_root'])
+                            scan_pages = scan['pages']
+                        except FileNotFoundError as exc:
+                            scan_error = exc
+                        except ValueError:
+                            # The scan loader combines missing-file and path
+                            # validation errors. Only a missing in-root file is
+                            # a page failure; retain all integrity checks.
+                            root = Path(config['scan_root']).resolve()
+                            path = (root / expected['scan']['scan_file']).resolve()
+                            if not path.is_relative_to(root) or path.exists():
+                                raise
+                            scan_error = FileNotFoundError(f'Missing scan input: {path}')
                         stage_prefix = f"{book_id}:scans:{digest(expected['scan'])}"
 
                     def read_image(page):
+                        if scan_error is not None:
+                            raise scan_error
                         if scan_pages is not None:
                             return loader.load([book_id], 'scan_page',
                                                lambda: scan_pages[page['page_number'] - 1])
@@ -382,14 +425,15 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                         images = [(page.get("page_number"), read_image(page)) for page in pages if page.get("image")]
                         if not images:
                             raise ValueError("No images for metadata extraction")
-                        value = core.extract_metadata(images, gateway, settings, gateway.record_usage, isbn)
+                        value = core.extract_metadata(images, gateway, settings, record_usage, isbn)
                         status = 'failed' if value.get('metadata_extraction_status') == 'invalid_response' else 'completed'
-                        return {"status": status, "value": value}
+                        return {"status": status, "value": value,
+                                **({'failure_kind': 'invalid_response'} if status == 'failed' else {})}
                     book_result["metadata"] = perform(f"{stage_prefix}:metadata", metadata, refresh_lookup=True)
                     for page in pages:
                         page_id = page.get("id")
                         def extract(page=page):
-                            result = core.extract_page(read_image(page), gateway, settings, gateway.record_usage)
+                            result = core.extract_page(read_image(page), gateway, settings, record_usage)
                             corrected = result.pop("corrected_bytes", None)
                             if corrected is not None:
                                 image_path = out / "images" / f"{hashlib.sha256(corrected).hexdigest()}.jpg"
@@ -421,7 +465,7 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                                 image = (loader.load([book_id], "corrected_image", lambda: Path(corrected).read_bytes())
                                          if corrected else read_image(page))
                                 images.append((page.get('page_number'), image))
-                        return core.classify_book_context(predicted_pages, images, gateway, settings, gateway.record_usage)
+                        return core.classify_book_context(predicted_pages, images, gateway, settings, record_usage)
 
                     if settings.get('story_context_enabled', False):
                         book_result['story_context'] = perform(f'{stage_prefix}:story_context', context)
@@ -438,7 +482,7 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                         images = [(page.get('page_number'), read_image(page))
                                   for page in pages if page.get('image')]
                         value = core.reconcile_metadata(initial.get('value', {}), predicted_pages, images,
-                                                        gateway, settings, gateway.record_usage)
+                                                        gateway, settings, record_usage)
                         failed = (value.get('metadata_extraction_status') == 'invalid_response'
                                   or value.get('metadata_finalization', {}).get('status') == 'failed')
                         return {'status': 'failed' if failed else 'completed', 'value': value}
@@ -457,7 +501,9 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                         if (settings.get('story_context_enabled', False)
                                 and book_result.get('story_context', {}).get('status') not in {'completed', 'failed'}):
                             return {'status': 'pending', 'error': 'Waiting for whole-book classification'}
-                        value = core.extract_characters(predicted_pages, gateway, settings, gateway.record_usage)
+                        value = core.extract_characters(predicted_pages, gateway, settings, record_usage)
+                        if not isinstance(value, list):
+                            raise EvaluationFailure('invalid_response', 'Character output must be a list')
                         from conventions import project_analysis_text
                         input_pages = [{'page_id': source.get('id'), 'page_number': row.get('page_number'),
                                         'text': project_analysis_text(row).get('analysis_text', '')}

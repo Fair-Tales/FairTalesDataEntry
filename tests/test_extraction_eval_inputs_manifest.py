@@ -173,18 +173,47 @@ def test_scoring_contract_keeps_order_wordless_failed_and_unavailable_books(load
             'missing': {'pages': {'scan-1': {'status': 'completed', 'text': 'Cannot earn a score'}}},
         }}
         rows = inputs_manifest.scoring_inputs(manifest, predictions, references)
+    from scripts.extraction_eval.scoring import score_page_failures
+    assert rows[0]['page_failures']['failed_pages_per_100'] == 25
+    assert rows[0]['page_failures']['attempted'] == 4
+    assert rows[0]['page_failures']['failed'] == 1
     assert rows == [
         {'id': 'book', 'status': 'ready', 'reason': None,
          'reference_text': '\n'.join(reference['pages']),
          'prediction_text': 'First\nInserted on blank\n\nLast',
-         'failed_pages': [3], 'forced_score': None},
+         'failed_pages': [3], 'forced_score': None, 'unrun_pages': [],
+         'page_failures': score_page_failures([predictions['books']['book']['pages'][f'scan-{i}']
+                                             for i in range(1, 5)])},
         {'id': 'missing', 'status': 'unavailable', 'reason': 'missing_snapshot_id',
-         'reference_text': None, 'prediction_text': '', 'failed_pages': [], 'forced_score': 0},
+         'reference_text': None, 'prediction_text': '', 'failed_pages': [], 'forced_score': 0,
+         'unrun_pages': [], 'page_failures': score_page_failures([])},
     ]
     with loader.activate():
         no_output = inputs_manifest.scoring_inputs(manifest, {'books': {}}, references)
     assert no_output[0]['prediction_text'] == '\n\n\n'
-    assert no_output[0]['failed_pages'] == [1, 2, 3, 4]
+    assert no_output[0]['failed_pages'] == []
+    assert no_output[0]['unrun_pages'] == [1, 2, 3, 4]
+    assert no_output[0]['page_failures']['attempted'] == 0
+
+
+def test_missing_frozen_scan_records_each_page_failure(loader, tmp_path):
+    from types import SimpleNamespace
+    from scripts.extraction_eval.runner import run_extract
+    from test_extraction_eval_runtime import FakeCore
+
+    snapshot, scans, references, scan_file, _ = make_inputs(tmp_path)
+    with loader.activate():
+        inputs = inputs_manifest.build_manifest(snapshot, ['book'], scans, references, overrides=[])
+        manifest = loader.snapshot(snapshot, ['book'])
+    scan_file.rename(scan_file.with_suffix('.missing'))
+    result = run_extract(snapshot, manifest, {'book_ids': ['book']}, loader.path.parent,
+                         SimpleNamespace(record_usage=lambda *args: None),
+                         {'inputs': 'scans', 'inputs_manifest': inputs, 'scan_root': str(scans)},
+                         loader=loader, core=FakeCore(), progress=lambda _: None)
+    pages = result['books']['book']['pages']
+    assert len(pages) == 4
+    assert all(page['status'] == 'failed' and page['failure_kind'] == 'missing_input'
+               for page in pages.values())
 
 
 def test_published_fallback_stays_on_frozen_file_and_row_without_reresolving(

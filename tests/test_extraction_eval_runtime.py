@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from scripts.extraction_eval.tuning import current_loader
+from scripts.extraction_eval.billing import BillingStopped
 
 
 from scripts.extraction_eval.gateway import (
@@ -809,3 +810,154 @@ def test_stage_cache_cannot_attribute_another_book_key_to_an_allowed_id(cohort_l
         stages.get('heldout:metadata', book_id='selected')
     assert reads == []
     assert read_json(loader.path)['tuning']['refused_attempts'][-1]['kind'] == 'stage_cache'
+
+
+@pytest.mark.usefixtures('synthetic_cohort')
+@pytest.mark.parametrize('stage', ['page', 'characters'])
+@pytest.mark.parametrize('error, kind', [
+    (CachedFailure('Request rejected: provider error'), 'provider_error'),
+    (CachedFailure('Output blocked by content filtering policy'), 'output_blocked'),
+    (ValueError('Invalid schema'), 'invalid_response'),
+    (json.JSONDecodeError('Invalid JSON', '', 0), 'invalid_response'),
+    (OutcomeUnknown('Timeout; charge unknown'), 'outcome_unknown'),
+    (FileNotFoundError('Missing image'), 'missing_input'),
+    (RequestLimitError('Too many images'), 'request_limit'),
+    (BillingStopped('Provider billing rejection'), 'provider_error'),
+])
+def test_runner_failure_kinds_and_stage_cache(
+        snapshot_fixture, tmp_path, config, stage, error, kind):
+    from scripts.extraction_eval.scoring import score_page_failures
+
+    snapshot, manifest, selection = snapshot_fixture
+    out = tmp_path / 'run'
+    out.mkdir()
+    core = FakeCore()
+    calls = []
+
+    def fail(*args):
+        calls.append(True)
+        raise error
+
+    setattr(core, 'extract_' + stage, fail)
+    def run():
+        return run_extract(snapshot, manifest, selection, out,
+                           SimpleNamespace(record_usage=lambda *args: None), config,
+                           loader=current_loader(), core=core, progress=lambda _: None)
+
+    result = run()
+    book = result['books']['selected']
+    record = next(iter(book['pages'].values())) if stage == 'page' else book['characters']
+    assert record['status'] == 'failed'
+    assert record['failure_kind'] == kind
+    if stage == 'page':
+        figures = score_page_failures(book['pages'].values())
+        assert figures['failed'] == (1 if kind == 'outcome_unknown' or isinstance(error, BillingStopped) else 2)
+        assert figures['failed_pages_per_100'] == 100
+    count = len(calls)
+    assert run() == result
+    assert len(calls) == count
+
+
+@pytest.mark.usefixtures('synthetic_cohort')
+@pytest.mark.parametrize('stage', ['page', 'characters'])
+@pytest.mark.parametrize('stop, expected', [
+    ('end_turn', None), ('refusal', 'refusal'), ('max_tokens', 'truncated')])
+def test_runner_rejects_stop_reason_even_with_valid_empty_json(
+        snapshot_fixture, tmp_path, config, monkeypatch, stage, stop, expected):
+    from scripts.extraction_eval.gateway import _namespace
+
+    snapshot, manifest, selection = snapshot_fixture
+    out = tmp_path / 'run'
+    out.mkdir()
+    # Exercise the real JSON parsers and the runner's injected usage sink.
+    from extraction_core import attempt_page_extraction
+    from ai_runtime import extraction_runtime
+    from utilities import _claude_json
+    monkeypatch.setattr('utilities.build_vision_content', lambda *args, **kwargs: [])
+    config['settings']['prompt_variant'] = 'rules-only'
+    core = FakeCore()
+    usage = []
+    label = 'page_extraction' if stage == 'page' else 'character_detection'
+
+    def parse(*args):
+        sink = args[-1]
+        raw = response(stop_reason=stop, content=[{'type': 'text', 'text':
+            '{"has_text": false, "text": "", "is_story_page": false}' if stage == 'page' else '[]'}])
+        client = SimpleNamespace(messages=SimpleNamespace(create=lambda **kwargs: _namespace(raw)))
+        with extraction_runtime(client=client, settings=config['settings'], usage_sink=sink):
+            if stage == 'characters':
+                return _claude_json(client, 'synthetic', model='fake-model')
+            # Skip only image encoding; vision_json and strict page schema run.
+            from utilities import vision_json
+            outcome, payload = attempt_page_extraction(
+                b'image', client, {**config['settings'], 'extraction_max_edge': 512,
+                                   'extraction_max_tokens': 100}, strict=True,
+                label=label, vision_json_call=lambda *a, **kw: vision_json(
+                    client, [], 'synthetic', label=label, reject_partial=True))
+            assert outcome == 'ok'
+            return {'status': 'completed', 'text': payload[0], 'contains_story': payload[1]}
+
+    setattr(core, 'extract_' + stage, parse)
+    result = run_extract(snapshot, manifest, selection, out,
+                         SimpleNamespace(record_usage=lambda *args: usage.append(args)), config,
+                         loader=current_loader(), core=core, progress=lambda _: None)
+    book = result['books']['selected']
+    records = list(book['pages'].values()) if stage == 'page' else [book['characters']]
+    assert usage
+    for record in records:
+        assert record['status'] == ('failed' if expected else 'completed')
+        assert record.get('failure_kind') == expected
+        if expected:
+            assert record['raw_response']['stop_reason'] == stop
+        elif stage == 'page':
+            assert record['text'] == ''
+
+
+@pytest.mark.usefixtures('synthetic_cohort')
+def test_missing_image_reaches_page_failure_after_preflight(snapshot_fixture, tmp_path, config):
+    snapshot, manifest, selection = snapshot_fixture
+    missing = manifest['books'][0]['pages'][0]
+    missing['image']['path'] = 'absent.jpg'
+    validate_inputs(snapshot, manifest, selection, loader=current_loader())
+    out = tmp_path / 'run'
+    out.mkdir()
+    result = run_extract(snapshot, manifest, selection, out,
+                         SimpleNamespace(record_usage=lambda *args: None), config,
+                         loader=current_loader(), core=FakeCore(), progress=lambda _: None)
+    page = result['books']['selected']['pages'][missing['id']]
+    assert page['status'] == 'failed'
+    assert page['failure_kind'] == 'missing_input'
+
+
+@pytest.mark.usefixtures('synthetic_cohort')
+@pytest.mark.parametrize('kind', ['provider_error', 'output_blocked', 'outcome_unknown'])
+def test_provider_failure_and_request_cache_never_complete_blank(
+        snapshot_fixture, tmp_path, config, ledger_factory, kind):
+    class Rejected(Exception):
+        status_code = 400
+
+    error = (TimeoutError('timeout') if kind == 'outcome_unknown' else
+             Rejected('Output blocked by content filtering policy' if kind == 'output_blocked'
+                      else 'Bad provider request'))
+    provider = FakeProvider(error, error)
+    ledger = ledger_factory()
+    gateway = Gateway(provider, ledger, config)
+    snapshot, manifest, selection = snapshot_fixture
+
+    class Core(FakeCore):
+        def extract_page(self, data, client, settings, sink):
+            client.messages.create(**request(data.decode()))
+            return {'status': 'completed', 'text': ''}
+
+    for attempt in range(2):
+        out = tmp_path / f'run-{attempt}'  # No stage cache: replay request outcomes.
+        out.mkdir()
+        result = run_extract(snapshot, manifest, selection, out, gateway, config,
+                             loader=current_loader(), core=Core(), progress=lambda _: None)
+        page = next(iter(result['books']['selected']['pages'].values()))
+        assert page['status'] == 'failed'
+        assert page['failure_kind'] == kind
+        assert len(provider.calls) == (1 if kind == 'outcome_unknown' else 2)
+        if kind == 'outcome_unknown':
+            assert result['incomplete'] is True
+            assert ledger.rows()[0]['reserved_usd'] > 0

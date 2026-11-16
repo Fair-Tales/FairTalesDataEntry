@@ -334,31 +334,39 @@ def test_scan_cli_keeps_unavailable_book_without_dispatch(
     {'status': 'abstained', 'value': [{'name': 'cat'}]},
     {'status': 'pending'}, {'status': 'completed', 'value': None},
 ])
-def test_scan_character_failure_retains_recorded_denominator(tmp_path, monkeypatch, prediction):
+@pytest.mark.parametrize('empty_reference', [False, True])
+def test_scan_character_failure_retains_recorded_denominator(tmp_path, monkeypatch, prediction, empty_reference):
     from scripts.extraction_eval import inputs_manifest
 
     monkeypatch.setattr(inputs_manifest, 'scoring_inputs', lambda *args, **kwargs: [{
         'id': 'book', 'reference_text': '', 'prediction_text': '', 'forced_score': None,
         'status': 'ready', 'reason': None, 'failed_pages': [],
+        'page_failures': {}, 'unrun_pages': [],
     }])
     args = SimpleNamespace(out=tmp_path, text_output='stored')
     contract = {'snapshot_id': 'fixture', 'config': {
         'inputs_manifest': {'books': [{'id': 'book'}]}, 'reference_root': tmp_path}}
     manifest = {'books': [{'id': 'book', 'reference': {'characters': {
-        'status': 'observed', 'value': [
-            {'name': 'cat', 'gender': 'Female', 'human': False, 'protagonist': True}]}}}]}
+        'status': 'observed', 'value': [] if empty_reference else [
+            {'name': 'cat', 'aliases': ['kitten'], 'gender': 'Female',
+             'human': False, 'protagonist': True}]}}}]}
     predictions = {'books': {'book': {'characters': prediction}}}
     assert cli._score_scans(args, contract, predictions, {'book_ids': ['book']}, manifest) == 0
     book = read_json(tmp_path / 'book_scores.json')[0]
     characters = book['characters']
-    assert characters['denominator'] == 1
-    assert characters['strict_recall'] == characters['tolerant_recall'] == 0
-    assert characters['unmatched_reference'] == [0]
+    assert characters['denominator'] == (0 if empty_reference else 1)
+    expected = None if empty_reference else 0
+    assert characters['strict_recall'] == characters['tolerant_recall'] == expected
+    assert characters['unmatched_reference'] == ([] if empty_reference else [0])
+    if prediction and prediction['status'] == 'failed':
+        assert characters['prediction_status'] == 'failed'
+        assert characters['failure_kind'] == 'provider_error'
+    assert book['aliases']['alias_recall']['recall'] == expected
     assert book['aliases']['groundedness']['denominator'] == 0
     assert book['aliases']['groundedness']['share'] is None
     for result in book['attributes'].values():
-        assert result['denominator'] == 1
-        assert result['recall'] == result['strict_recall'] == 0
+        assert result['denominator'] == (0 if empty_reference else 1)
+        assert result['recall'] == result['strict_recall'] == expected
 
 
 def test_inventory_cli_reports_counts_only(tmp_path, cohort_loader_factory, capsys):

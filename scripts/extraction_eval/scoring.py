@@ -21,10 +21,30 @@ from .normalization import (CHARACTER_NORMALIZATION_VERSION, NORMALIZATION_VERSI
                             character_similarity, edit_distance, edit_operations,
                             normalize_character_name, normalize_name, normalize_text, token_counts, tokenize)
 from .statistics import bootstrap_books
+from .outcomes import FAILURE_KINDS, normalize_outcome
 
 ELIGIBLE = {"observed", "verified"}
 UNRUN = {"pending", "dispatched", "budget_stopped", "outcome_unknown", "unknown_outcome"}
 TEXT_OUTPUTS = ('stored', 'analysis_without_illustration_lettering')
+
+
+def score_page_failures(pages):
+    """Failed / all attempted pages, including successful wordless pages.
+
+    Pending, budget-stopped and unavailable inputs were not attempted. Report
+    them separately so a partial run cannot masquerade as a complete one.
+    """
+    pages = [normalize_outcome(page) for page in pages]
+    counts = dict.fromkeys(FAILURE_KINDS, 0)
+    for page in pages:
+        if page.get('status') == 'failed':
+            counts[page['failure_kind']] += 1
+    failed = sum(counts.values())
+    completed = sum(page.get('status') == 'completed' for page in pages)
+    attempted = failed + completed
+    return {'failed': failed, 'by_kind': counts, 'attempted': attempted,
+            'completed': completed, 'unrun': len(pages) - attempted,
+            'failed_pages_per_100': 100 * failed / attempted if attempted else None}
 
 
 def prediction_page_text(page, text_output='stored'):

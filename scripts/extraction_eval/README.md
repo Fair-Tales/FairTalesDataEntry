@@ -95,6 +95,48 @@ tokens the rate is `null` (undefined), while all inserted tokens are counted.
 Unavailable books have accuracy 0 and `forced_score=0`; their unknown components
 and rate are `null`, not invented counts.
 
+### Failure outcomes (A8a)
+
+Evaluation failures have `status=failed` and one `failure_kind`:
+`provider_error`, `output_blocked`, `refusal`, `truncated`, `invalid_response`,
+`outcome_unknown`, `missing_input`, or `request_limit`. JSON and schema errors
+share `invalid_response`. Cached failures retain their outcome; this does not
+retry them. Unknown outcomes still stop the run and retain their charge
+reservation. A provider billing rejection is a failed attempt (`provider_error`)
+with `halt_reason=billing_stopped`; subsequent work remains pending. Budget stops
+before dispatch retain `budget_stopped` and are not failed attempts.
+Missing image files reach extraction so each affected page gets an outcome;
+hash mismatches still abort input validation.
+
+The harness checks Anthropic refusal stops, and transcription/character token
+limits, through its local usage sink after accounting and before parsing. Even
+valid blank-page JSON with a refusal stop is a failure. An explicit successful
+wordless answer remains `completed` with empty text. Short orientation checks
+retain their existing fallback behaviour. OpenAI outcomes are separate (A12b).
+
+Each scan book reports `page_failures`: `failed`, `by_kind`, `attempted`,
+`completed`, `unrun`, and `failed_pages_per_100 = 100 * failed / attempted`.
+Attempted means completed plus failed, including successful wordless pages and
+failed local input reads. Pending/budget-stopped pages are excluded from that
+rate and remain visible as unrun. Zero attempts gives `null`, not zero failures
+per hundred. `failed_pages` lists failed scan numbers; `unrun_pages` lists pages
+without an outcome. Both contribute no predicted text, as before.
+
+Character results retain `prediction_status` and `failure_kind`. A failed stage
+supplies no characters or aliases: all recorded characters, coded attributes
+and aliases remain misses. A book with no recorded characters has denominator
+zero and `null` recalls, even if extraction failed; it earns no perfect-score
+credit. Conditional alias coverage/grounding is also undefined without output.
+
+The preserved 5 November dev20 run already recorded 767 completed and five
+failed pages (772 attempted): three output blocks, one refusal, one truncated
+transcription, or **0.647668 failed pages per hundred**. Old predictions alone
+classify the latter two as parse errors; their stop reasons require the ledger.
+The evidence regression test joins only failed pages' `page_extraction` calls
+in memory, opening `spend.sqlite` with `mode=ro&immutable=1`. It never rewrites
+evidence. Five other token-limit stops were short orientation checks on pages
+whose transcriptions completed; they are not five additional failed pages.
+
 Each scan book's `characters` result uses `score_character_recall(recorded,
 predicted)` (`character-recall-v1`, DECISIONS 018). It reports strict and tolerant
 numerators, the shared recorded-character denominator and both recalls; tolerant
