@@ -225,6 +225,10 @@ def test_scan_cli_uses_scan_pages_without_stored_renders(
     summary = read_json(out / 'reports' / 'summary.json')
     assert summary['book_denominator'] == 1
     assert summary['text_output'] == 'stored'
+    primary = summary['cohort_summary']['primary']['metrics']
+    assert primary['text_accuracy']['books'] == 1
+    assert primary['text_accuracy']['items'] == 3
+    assert primary['text_accuracy']['range_95'] == pytest.approx([1 / 3, 1 / 3])
     score = summary['book_scores'][0]
     assert score['reference_tokens'] == 3
     assert score['insertions'] == 2
@@ -254,7 +258,7 @@ def test_scan_cli_uses_scan_pages_without_stored_renders(
     assert summary['book_scores'][0]['attributes'] == score['attributes']
     assert summary['book_scores'][0]['aliases'] == score['aliases']
     assert read_json(projected / 'book_scores.json') == summary['book_scores']
-    assert set(path.name for path in projected.iterdir()) == {'summary.json', 'book_scores.json'}
+    assert set(path.name for path in projected.iterdir()) == {'summary.json', 'book_scores.json', 'summary.md'}
     with pytest.raises(SystemExit):
         cli.main([*score_args, '--compare-run', str(out)])
     assert 'per-book text and character recall' in capsys.readouterr().err

@@ -488,9 +488,16 @@ def _score_scans(args, contract, predictions, selection, manifest):
     summary = {'measure': 'book-token-edit-accuracy-v1', 'snapshot_id': contract['snapshot_id'],
                'text_output': args.text_output, 'normalization_version': NORMALIZATION_VERSION,
                'book_denominator': len(scores), 'book_scores': scores}
+    from .freeze import load_selections
+    from .tuning import current_loader
+    from .reporting import summarize_scan_scores, scan_summary_markdown, _atomic_text
+    loader = current_loader()
+    selections = load_selections(loader.selections_path)
+    summary['cohort_summary'] = summarize_scan_scores(scores, selections, cohort=loader.cohort)
     out = args.out or args.run / 'reports'
     atomic_json(out / 'book_scores.json', scores)
     atomic_json(out / 'summary.json', summary)
+    _atomic_text(out / 'summary.md', scan_summary_markdown(summary['cohort_summary']))
     print(f"Offline report: {out / 'summary.json'}")
     return 0
 

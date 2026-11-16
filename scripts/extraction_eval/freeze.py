@@ -9,6 +9,8 @@ from pathlib import Path
 import re
 import sys
 
+from text_content.evaluation import EvaluationErrors
+
 from .exposure import EXPOSED_IDS
 from .normalization import normalize_text
 from .sampling import select_holdout_books
@@ -183,12 +185,47 @@ def _validate_selections(selections):
             raise ValueError(f"{field} must be a subset of imported80_ids")
     if selections.get("imported80_ids_sha256") != _digest(sorted(sets["imported80_ids"])):
         raise ValueError("imported80_ids_sha256 does not match imported80_ids")
+    strata = selections.get('book_strata', {})
+    if (set(strata) != set().union(*(sets[field] for field in base))
+            or any(label not in QUOTA for label in strata.values())):
+        raise ValueError(EvaluationErrors.invalid_book_strata)
     return selections
 
 
 def load_selections(path=SELECTIONS_PATH):
     """Load fixed ids without reading the sealed snapshot or any book content."""
     return _validate_selections(json.loads(Path(path).read_text(encoding="utf-8")))
+
+
+def alias_counts_from_manifest(path):
+    """Read ids and count alias array entries without decoding book content."""
+    from .json_sources import JsonSources
+    counts = {}
+    with JsonSources(path) as source:
+        top = source.members(source.root)
+        for span in source.items(top['books']):
+            book = source.members(span)
+            book_id = source.decode(book['id'])
+            reference = source.members(book['reference'])
+            characters = source.members(reference['characters'])
+            count = 0
+            for character in source.items(characters['value']):
+                fields = source.members(character)
+                if 'aliases' in fields:
+                    count += len(source.items(fields['aliases']))
+            counts[book_id] = count
+    return counts
+
+
+def selection_strata(alias_counts, seal):
+    """Use the seal's recorded-alias definition and its fixed proof allocation."""
+    ids = set(seal['imported80_ids']) | set(seal['protected40_ids']) | set(seal['tune41_ids']) | EXPOSED_IDS
+    result = {i: 'alias_positive' if alias_counts[i] else 'alias_zero' for i in sorted(ids)}
+    for label, book_ids in seal['imported80_by_stratum'].items():
+        if any(result[i] != label for i in book_ids):
+            raise ValueError(EvaluationErrors.changed_alias_strata)
+        result.update(dict.fromkeys(book_ids, label))
+    return result
 
 
 def build_selections(manifest, seal, example_pack, alias_note):
@@ -227,6 +264,7 @@ def build_selections(manifest, seal, example_pack, alias_note):
     quoted = {normalize_text(value) for value in re.findall(r"`([^`]+)`", alias_note)}
     result = {
         "version": "tuning-selections-v1",
+        "book_strata": selection_strata({i: len(aliases(book)) for i, book in books.items()}, seal),
         **{field: list(seal[field]) for field in ("imported80_ids", "protected40_ids", "tune41_ids")},
         "imported80_ids_sha256": seal["imported80_ids_sha256"],
         "exposed34_ids": sorted(EXPOSED_IDS),

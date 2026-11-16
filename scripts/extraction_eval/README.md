@@ -73,8 +73,9 @@ strings (including wordless and failed pages) and forces unavailable books to
 zero. `score --snapshot SNAPSHOT --run RUN --out REPORTS` writes `summary.json`
 and `book_scores.json` for the selected books, including unavailable books in
 `book_denominator`. Scan reports contain this text measure and per-book character
-recall, attributes and the four descriptive alias figures below. Book means/ranges,
-overlays and comparisons are not implemented here. Stored-render runs retain their existing scoring and
+recall, attributes and the descriptive alias figures below. `cohort_summary` in
+`summary.json` and the human-readable `summary.md` report the equal-book means
+and ranges described below. Overlays and comparisons are not implemented here. Stored-render runs retain their existing scoring and
 reports, including forced-edge character credit, so the published 5 November
 baseline figures remain reproducible.
 Supply `extract --reference-root` / `--published-text` when their later scoring
@@ -94,6 +95,67 @@ tokens, including predictions on reference-empty pages. With zero reference
 tokens the rate is `null` (undefined), while all inserted tokens are counted.
 Unavailable books have accuracy 0 and `forced_score=0`; their unknown components
 and rate are `null`, not invented counts.
+
+### Cohort means and ranges (A5e)
+
+Scan scoring uses the `book_strata` map in `selections.json`; it never derives
+strata from predictions or scoring availability. `freeze.build_selections`
+produces one label for each of the 195 cohort ids, using the seal's definition:
+any recorded character alias means `alias_positive`, otherwise `alias_zero`.
+Proof labels must agree with the seal's existing 42/38 allocation. The map is
+covered by the existing byte-for-byte `freeze verify --selections` replay and
+by `load_selections`'s membership validation. The count-only reader
+`freeze.alias_counts_from_manifest` can check the map without decoding titles,
+text, characters or alias surfaces; the real-evidence test uses this reader.
+
+The five primaries are text accuracy, tolerant character recall, gender, human
+and protagonist. Each reports its equal-book mean, contributing book and item
+counts, undefined-book count and two-sided 95% range. Unknown item counts (for
+example unavailable text references) stay unknown and are counted separately;
+known item totals are never presented as complete. Undefined measures are
+omitted; unavailable books remain with primary score zero.
+
+Ranges use `statistics.bootstrap_books` with **20,000 shared whole-book draws**,
+within frozen alias strata at their observed counts, equal weights, seed
+**20261110**, sorted strata/ids and linear 2.5th/97.5th percentiles. No character,
+alias, page or token rows are resampled. Each field omits undefined values within
+the shared draw; draws with no defined value for that field have no estimate.
+These approximate sampling ranges assume comparable independent books. A
+perfect set reports `[1, 1]` and explicitly cannot quantify unseen errors.
+The bootstrap's existing callers retain their original results and defaults.
+
+Strict character/attribute versions, alias coverage, additional forms and their
+groundedness, duplicate forms, combined groundedness, inserted tokens per
+hundred reference tokens and unsuccessful pages per hundred attempted pages
+report pooled counts and equal-book means without ranges. Alias recall also
+gets a range. These count-only summaries carry no automatic decision rule.
+
+For proof only, each of `heldout_author_shared_ids` and
+`heldout_alias_quoted_ids` is excluded separately, repeating the five primaries
+and alias recall with reduced book/item counts and ranges. Each analysis uses
+the remaining stratum counts, with no replacement books and no new cohort draw;
+the full-set result remains primary. For tuning, rehearsal and development,
+the report says these proof sensitivity lists do not apply.
+
+Measured development demonstration on the preserved **stored renders**, using
+the per-book scoring pinned by A5b–d (not evidence of scan performance):
+
+| Primary | Equal-book mean | 95% range | Books | Items |
+| --- | ---: | ---: | ---: | ---: |
+| Text accuracy | Unavailable | — | 0 | Unknown |
+| Tolerant character recall | 92.68% | 85.78–98.44% | 18 | 96 |
+| Gender | 85.89% | 77.31–93.65% | 18 | 96 |
+| Human | 67.68% | 51.98–83.01% | 18 | 96 |
+| Protagonist | 87.41% | 77.50–95.73% | 18 | 96 |
+
+The 20 books have five alias-positive and 15 zero-alias books. Two have no
+recorded characters and are omitted from character/attribute means. Pooled
+character/attribute counts remain **90, 81, 70, 83 / 96** (strict **82, 73, 63,
+77 / 96**). Alias recall is **50.00% [10.00%, 90.00%]**, five books and ten
+aliases, pooled **5/10**. Failed-page counts remain **5/772**; the equal-book
+mean is **0.4694 per hundred** (pooled **0.6477 per hundred**). Text accuracy
+and insertion rates are unavailable in the new whole-book Word-reference form;
+no cleaned-render text proxy is substituted.
 
 ### Failure outcomes (A8a)
 
@@ -211,8 +273,8 @@ pairing.** `matches` and `strict_matches` expose each field's choices;
 `pairing_changes` lists reference characters assigned a prediction different from
 the character headline (including previously unmatched references). Dropping a
 pair for a wrong code is not a changed pairing. These additions apply only to
-scan-input scoring; stored-render scoring is unchanged. Means and ranges across
-books remain separate work (A5e).
+scan-input scoring; stored-render scoring is unchanged. The A5e cohort summary
+above reports means and ranges across books.
 
 
 Each scan book's `aliases` result comes from

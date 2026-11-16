@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 
 from text_content.alias_metrics import AliasMetrics
+from text_content.evaluation import EvaluationErrors
 
 from .scoring import aggregate, score_book
 from .runner import metadata_with_lookup_outcome
@@ -281,3 +282,140 @@ def write_reports(manifest, predictions, out, protocol=None, selection=None, cal
                 + "\n".join(sections) + '</body></html>')
     _atomic_text(output / "inspection.html", document)
     return summary
+
+
+# (path, score, numerator, denominator, scale). Text accuracy is an edit score,
+# so its pooled edit components are reported separately, never as token recall.
+_SCAN_METRICS = {
+    'text_accuracy': ((), 'accuracy', None, 'reference_tokens', 1),
+    'character_recall': (('characters',), 'tolerant_recall', 'tolerant_numerator', 'denominator', 1),
+    **{field: (('attributes', field), 'recall', 'numerator', 'denominator', 1)
+       for field in ('gender', 'human', 'protagonist')},
+    'strict_character_recall': (('characters',), 'strict_recall', 'strict_numerator', 'denominator', 1),
+    **{'strict_' + field: (('attributes', field), 'strict_recall', 'strict_numerator', 'denominator', 1)
+       for field in ('gender', 'human', 'protagonist')},
+    **{name: (('aliases', section), score, 'numerator', 'denominator', 1)
+       for name, section, score in (
+           ('alias_coverage', 'explicit_alias_coverage', 'coverage'),
+           ('alias_recall', 'alias_recall', 'recall'),
+           ('additional_aliases', 'additional_aliases', 'share'),
+           ('groundedness', 'groundedness', 'share'))},
+    'additional_groundedness': (('aliases', 'additional_aliases', 'grounding'), 'share', 'numerator', 'denominator', 1),
+    'duplicate_aliases': (('aliases', 'additional_aliases', 'duplicates'), 'share', 'numerator', 'denominator', 1),
+    'inserted_text_per_100': ((), 'inserted_text_per_100_reference_tokens', 'insertions', 'reference_tokens', 100),
+    'unsuccessful_pages_per_100': (('page_failures',), 'failed_pages_per_100', 'failed', 'attempted', 100),
+}
+_SCAN_PRIMARIES = ('text_accuracy', 'character_recall', 'gender', 'human', 'protagonist')
+
+
+def summarize_scan_scores(scores, selections, *, cohort):
+    """Count-only summary of already scored books; never opens source material."""
+    from collections import Counter
+    from .statistics import book_draws, bootstrap_books
+    from text_content.evaluation import ScanSummaryText as T
+
+    scores = sorted(scores, key=lambda row: row['id'])
+    ids = [row['id'] for row in scores]
+    if len(set(ids)) != len(ids):
+        raise ValueError(EvaluationErrors.summary_duplicate_books)
+    strata = selections['book_strata']
+    if any(i not in strata for i in ids):
+        raise ValueError(EvaluationErrors.summary_missing_strata)
+    if cohort == 'proof' and set(ids) != set(selections['imported80_ids']):
+        raise ValueError(EvaluationErrors.summary_partial_proof)
+
+    def analysis(books, names, ranged):
+        records = [{'id': book['id'], 'stratum': strata[book['id']]} for book in books]
+        draws = book_draws(records)
+        result = {'books': len(books), 'unavailable_books': sum(book.get('status') == 'unavailable' for book in books),
+                  'strata': dict(sorted(Counter(row['stratum'] for row in records).items())),
+                  'metrics': {}}
+        for name in names:
+            path, value_key, numerator_key, denominator_key, scale = _SCAN_METRICS[name]
+            values, denominators, numerators = [], [], []
+            for book, record in zip(books, records):
+                measure = book
+                for key in path:
+                    measure = measure.get(key, {})
+                value = measure.get(value_key)
+                if book.get('status') == 'unavailable' and (name in _SCAN_PRIMARIES or name.startswith('strict_')):
+                    value = 0.0
+                values.append({**record, 'value': value})
+                denominators.append(measure.get(denominator_key))
+                if numerator_key:
+                    numerators.append(measure.get(numerator_key))
+            usable = [row['value'] for row in values if row['value'] is not None]
+            known_items = [n for n in denominators if n is not None]
+            known_numerators = [n for n in numerators if n is not None]
+            items = sum(known_items) if known_items else None
+            numerator = sum(known_numerators) if known_numerators else None
+            metric = {'mean': sum(usable) / len(usable) if usable else None,
+                      'books': len(usable), 'undefined_books': len(books) - len(usable),
+                      'items': items, 'unknown_item_books': denominators.count(None),
+                      'numerator': numerator,
+                      'pooled': scale * numerator / items if numerator is not None and items else None}
+            if name in ranged:
+                interval = bootstrap_books(values, repeats=20000, seed=20261110, draws=draws)
+                metric['range_95'] = interval['interval_95']
+                if usable and all(value == 1 for value in usable):
+                    metric['qualification'] = T.perfect
+            result['metrics'][name] = metric
+        return result
+
+    result = {'version': 'scan-cohort-summary-v1', 'cohort': cohort,
+              'method': {'repeats': 20000, 'seed': 20261110, 'resampling_unit': 'book',
+                         'shared_draws': True, 'weighting': 'equal_book', 'percentiles': [0.025, 0.975],
+                         'interpolation': 'linear'},
+              'qualification': T.scope, 'undefined_policy': T.undefined,
+              'primary': analysis(scores, _SCAN_METRICS, (*_SCAN_PRIMARIES, 'alias_recall'))}
+    if cohort == 'proof':
+        result['sensitivities'] = {}
+        for field in ('heldout_author_shared_ids', 'heldout_alias_quoted_ids'):
+            excluded = set(selections[field])
+            remaining = [book for book in scores if book['id'] not in excluded]
+            sensitivity = analysis(remaining, (*_SCAN_PRIMARIES, 'alias_recall'), (*_SCAN_PRIMARIES, 'alias_recall'))
+            sensitivity.update(excluded_books=len(scores) - len(remaining), qualification=T.remaining)
+            result['sensitivities'][field] = sensitivity
+    else:
+        result['sensitivities'] = {'status': 'not_applicable', 'qualification': T.not_applicable}
+    return result
+
+
+def scan_summary_markdown(summary):
+    """Five plain primary lines, followed by strict/descriptive and sensitivities."""
+    from text_content.evaluation import ScanSummaryText as T
+
+    def number(value, scale=1):
+        if value is None:
+            return T.unavailable
+        return f'{value * 100:.2f}%' if scale == 1 else f'{value:.4f}'
+
+    def lines(analysis, names):
+        output = [T.counts.format(books=analysis['books'], unavailable=analysis['unavailable_books'],
+                                 strata=analysis['strata'])]
+        for name in names:
+            metric = analysis['metrics'][name]
+            scale = _SCAN_METRICS[name][-1]
+            interval = metric.get('range_95')
+            values = dict(label=T.labels[name], mean=number(metric['mean'], scale),
+                          interval=f'[{number(interval[0])}, {number(interval[1])}]' if interval else T.no_range,
+                          books=metric['books'], items=metric['items'] if metric['items'] is not None else T.unavailable,
+                          undefined=metric['undefined_books'], unknown=metric['unknown_item_books'],
+                          numerator=metric['numerator'] if metric['numerator'] is not None else T.unavailable)
+            output.append((T.line if name in _SCAN_PRIMARIES else T.descriptive_line).format(**values))
+            if name not in _SCAN_PRIMARIES and 'range_95' in metric:
+                output[-1] += ' ' + T.range_clause.format(**values)
+            if metric.get('qualification'):
+                output.append(metric['qualification'])
+        return output
+
+    output = [T.title, summary['qualification'], summary['undefined_policy'], T.primary,
+              *lines(summary['primary'], _SCAN_PRIMARIES), T.descriptive,
+              *lines(summary['primary'], [name for name in _SCAN_METRICS if name not in _SCAN_PRIMARIES])]
+    if summary['sensitivities'].get('status') == 'not_applicable':
+        output.append(T.not_applicable)
+    else:
+        for name, analysis in summary['sensitivities'].items():
+            output.extend([T.sensitivity.format(name=T.sensitivity_names[name], excluded=analysis['excluded_books']),
+                           analysis['qualification'], *lines(analysis, analysis['metrics'])])
+    return '\n\n'.join(output) + '\n'

@@ -83,6 +83,8 @@ def cohort_loader_factory(tmp_path, monkeypatch):
             'heldout_author_shared_ids': [], 'heldout_alias_quoted_ids': [],
             'imported80_ids_sha256': digest(sorted(holdout)),
         }
+        selections['book_strata'] = dict.fromkeys(
+            set(tune) | set(protected) | set(holdout), 'alias_zero')
         selections['counts'] = {field: len(selections[field]) for field in freeze.SELECTION_FIELDS}
         selections_path = directory / 'selections.json'
         atomic_json(selections_path, selections)

@@ -36,6 +36,13 @@ class EvaluationText:
 class EvaluationErrors:
     """Actionable offline evaluator validation errors."""
 
+    summary_duplicate_books = 'Summary requires one score per book id'
+    summary_missing_strata = 'Summary requires a frozen alias stratum for every book'
+    summary_partial_proof = 'Proof summary requires every frozen proof id'
+    shared_draw_count = 'Shared draws must match bootstrap repeats'
+    invalid_book_strata = 'book_strata must label every cohort id with a frozen alias stratum'
+    changed_alias_strata = 'Alias counts disagree with sealed strata'
+
     comparison_overlay_required = "Comparisons require a hash-checked adjudication-v2 overlay; legacy overlays remain available for diagnostic scoring only"
     holdout_allocation = (
         "Holdout stratum has insufficient eligible books for the frozen allocation"
@@ -147,3 +154,50 @@ class EvaluationErrors:
     unknown_adjudication_schema_version = "Unknown adjudication schema_version"
     unknown_metadata_adjudication_field = "Unknown metadata adjudication field"
     verified_blank_image_identity_mismatch = "Verified blank image identity mismatch"
+
+
+class ScanSummaryText:
+    title = 'Equal-book agreement'
+    primary = 'Primary figures'
+    descriptive = 'Strict and descriptive figures'
+    sensitivity = 'Sensitivity: {name} ({excluded} books excluded)'
+    sensitivity_names = {
+        'heldout_author_shared_ids': 'shared authors',
+        'heldout_alias_quoted_ids': 'quoted aliases',
+    }
+    labels = {
+        'text_accuracy': 'Text accuracy',
+        'character_recall': 'Character recall (tolerant)',
+        'gender': 'Gender', 'human': 'Human', 'protagonist': 'Protagonist',
+        'strict_character_recall': 'Character recall (strict)',
+        'strict_gender': 'Gender (strict)', 'strict_human': 'Human (strict)',
+        'strict_protagonist': 'Protagonist (strict)',
+        'alias_coverage': 'Explicit alias coverage', 'alias_recall': 'Alias recall',
+        'additional_aliases': 'Additional alias forms', 'groundedness': 'Groundedness',
+        'additional_groundedness': 'Additional forms groundedness',
+        'duplicate_aliases': 'Duplicate forms',
+        'inserted_text_per_100': 'Inserted tokens per hundred reference tokens',
+        'unsuccessful_pages_per_100': 'Unsuccessful pages per hundred attempted pages',
+    }
+    scope = (
+        'Two-sided 95% percentile bootstrap ranges: 20,000 whole-book resamples '
+        'within frozen alias strata, equal weights, seed 20261110, sorted ids and '
+        'linear 2.5th/97.5th percentiles. Book draws are shared across fields. '
+        'These approximate sampling ranges assume comparable independent books.'
+    )
+    undefined = 'Undefined measures are omitted and counted; empty usable bootstrap draws are omitted.'
+    perfect = 'All contributing books score 100%; the point range cannot quantify unseen errors.'
+    not_applicable = 'The proof sensitivity lists do not apply to this cohort.'
+    remaining = 'Sensitivities retain remaining stratum counts; no replacement books are selected.'
+    line = '{label}: mean {mean}; 95% range {interval}; books {books}; items {items}; undefined books {undefined}; unknown item counts {unknown}.'
+    descriptive_line = '{label}: mean {mean}; pooled {numerator}/{items}; books {books}; undefined books {undefined}; unknown item counts {unknown}.'
+    range_clause = '95% range {interval}.'
+    counts = 'Cohort books: {books}; unavailable books: {unavailable}; strata: {strata}.'
+    unavailable = 'Unavailable'
+    no_range = 'Not estimated'
+    render_scope = (
+        'Stored-render development demonstration, not scan performance. Whole-book '
+        'Word-reference text accuracy and inserted-token counts are unavailable '
+        'from these stored scores. Character, attribute, alias and page-outcome '
+        'figures use the exposed stored outputs.'
+    )

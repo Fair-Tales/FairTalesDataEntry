@@ -6,6 +6,8 @@ import random
 import math
 from collections import defaultdict
 
+from text_content.evaluation import EvaluationErrors
+
 
 def _quantile(values, probability):
     ordered = sorted(values)
@@ -25,15 +27,30 @@ def weighted_mean(records, value="value"):
             / sum(weights)) if weights else None
 
 
-def bootstrap_books(records, *, value="value", repeats=2000, seed=20261104):
+def book_draws(records, *, repeats=20000, seed=20261110):
+    """Shared whole-book draws, in sorted stratum/id order, at observed counts."""
+    groups = defaultdict(list)
+    for record in sorted(records, key=lambda row: row['id']):
+        groups[record['stratum']].append(record['id'])
+    if repeats < 1:
+        raise ValueError(EvaluationErrors.bootstrap_repeats_must_be_positive)
+    rng = random.Random(seed)
+    return [[rng.choice(groups[key]) for key in sorted(groups) for _ in groups[key]]
+            for _ in range(repeats)]
+
+
+def bootstrap_books(records, *, value="value", repeats=2000, seed=20261104, draws=None):
     """Resample whole books within strata, preserving inverse-probability weights.
 
     Records require an id and scalar value; optional role, stratum and inclusion
     probability describe the frozen selection. Purposive challenges are excluded.
     These intervals describe sampled books, not reference validity/future accuracy.
+    Optional shared id draws include the whole cohort; undefined values are
+    omitted within each draw. Empty usable draws have no estimate. The default
+    path retains the original ordering, random stream and output exactly.
     """
     if repeats < 1:
-        raise ValueError("Bootstrap repeats must be positive")
+        raise ValueError(EvaluationErrors.bootstrap_repeats_must_be_positive)
     usable = [dict(record) for record in records
               if record.get(value) is not None and record.get("role") not in {"challenge", "explicit"}]
     for record in usable:
@@ -45,9 +62,18 @@ def bootstrap_books(records, *, value="value", repeats=2000, seed=20261104):
         groups[record.get("stratum", "all")].append(record)
     rng = random.Random(seed)
     estimates = []
-    for _ in range(repeats if usable else 0):
-        drawn = [rng.choice(group) for group in groups.values() for _ in group]
-        estimates.append(weighted_mean(drawn, value))
+    if draws is None:
+        for _ in range(repeats if usable else 0):
+            drawn = [rng.choice(group) for group in groups.values() for _ in group]
+            estimates.append(weighted_mean(drawn, value))
+    else:
+        if len(draws) != repeats:
+            raise ValueError(EvaluationErrors.shared_draw_count)
+        by_id = {record['id']: record for record in usable}
+        for draw in draws:
+            estimate = weighted_mean([by_id[i] for i in draw if i in by_id], value)
+            if estimate is not None:
+                estimates.append(estimate)
     return {"estimate": weighted_mean(usable, value), "books": len(usable),
             "interval_95": [_quantile(estimates, .025), _quantile(estimates, .975)]
             if estimates else None, "repeats": repeats, "seed": seed,

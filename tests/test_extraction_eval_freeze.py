@@ -121,6 +121,8 @@ def test_verify_own_output_is_read_only_and_tuning_compatible(manifest, tmp_path
     selections.update(exposed34_ids=[], check20_ids=written['tune41_ids'][:1],
                       iterate55_ids=written['tune41_ids'][1:], example_source_ids=[],
                       heldout_author_shared_ids=[], heldout_alias_quoted_ids=[])
+    selections['book_strata'] = {i: 'alias_positive' if i.startswith('p-') else 'alias_zero'
+                                 for i in written['imported80_ids'] + written['protected40_ids'] + written['tune41_ids']}
     selections['counts'] = {key: len(selections[key]) for key in freeze.SELECTION_FIELDS}
     selections_path = tmp_path / 'selections.json'
     atomic_json(selections_path, selections)
@@ -318,8 +320,42 @@ def test_committed_selections_match_real_seal(capsys):
     seal_path, manifest_path = root / "freeze.json", root / "snapshot/manifest.json"
     if not seal_path.is_file() or not manifest_path.is_file():
         pytest.skip("Local sealed snapshot is absent")
-    # The CLI reports only counts/hash/difference field names, even on failure.
-    status = freeze.main(["verify", "--manifest", str(manifest_path), "--freeze", str(seal_path),
-                          "--selections", str(freeze.SELECTIONS_PATH)])
-    assert status == 0, capsys.readouterr().out
-    freeze.load_selections()
+    # Never decode held-out/protected references in the offline suite. Full
+    # producer replay is covered with synthetic books above; real data here is
+    # limited to sealed ids and counts of alias-array entries.
+    sealed = json.loads(seal_path.read_text())
+    selected = freeze.load_selections()
+    assert selected['book_strata'] == freeze.selection_strata(
+        freeze.alias_counts_from_manifest(manifest_path), sealed)
+    for field in ('imported80_ids', 'protected40_ids', 'tune41_ids', 'imported80_ids_sha256'):
+        assert selected[field] == sealed[field]
+
+
+def test_alias_strata_decode_only_ids_and_verify_detects_changes(selection_inputs, tmp_path, monkeypatch):
+    from scripts.extraction_eval.json_sources import JsonSources
+    manifest, seal, examples, note = selection_inputs
+    path = tmp_path / 'manifest.json'
+    path.write_text(json.dumps(manifest))
+    original = JsonSources.decode
+    ids = {book['id'] for book in manifest['books']}
+    decoded = []
+
+    def ids_only(source, span):
+        value = original(source, span)
+        assert isinstance(value, str) and value in ids
+        decoded.append(value)
+        return value
+
+    monkeypatch.setattr(JsonSources, 'decode', ids_only)
+    counts = freeze.alias_counts_from_manifest(path)
+    selected = freeze.build_selections(*selection_inputs)
+    assert set(decoded) == ids
+    assert selected['book_strata'] == freeze.selection_strata(counts, seal)
+    assert len(selected['book_strata']) == 195
+    held_id = seal['imported80_ids'][0]
+    counts[held_id] = 0 if counts[held_id] else 1
+    with pytest.raises(ValueError, match='sealed strata'):
+        freeze.selection_strata(counts, seal)
+    selected['book_strata'].pop(held_id)
+    with pytest.raises(ValueError, match='book_strata'):
+        freeze._validate_selections(selected)
