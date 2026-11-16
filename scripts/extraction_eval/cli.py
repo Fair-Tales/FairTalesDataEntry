@@ -90,8 +90,10 @@ def build_parser():
     noise.add_argument('--runs', type=Path, nargs='+', required=True, help=T.scored_help)
     noise.add_argument('--out', type=Path, required=True)
     attempt = commands.add_parser('tuning-attempt', help=T.attempt_help)
-    attempt.add_argument('--baseline', type=Path, required=True, help=T.scored_help)
-    attempt.add_argument('--candidate', type=Path, required=True, help=T.scored_help)
+    attempt.add_argument('--baseline', type=Path, nargs='+', required=True, help=T.arm_help)
+    attempt.add_argument('--baseline-check', type=Path, nargs='+', help=T.check_arm_help)
+    attempt.add_argument('--candidate', type=Path, nargs='+', required=True, help=T.arm_help)
+    attempt.add_argument('--candidate-check', type=Path, nargs='+', help=T.check_arm_help)
     attempt.add_argument('--floors', type=Path, required=True)
     attempt.add_argument('--target', choices=MEASURES, required=True, help=T.target_help)
     attempt.add_argument('--hypothesis', required=True)
@@ -561,7 +563,12 @@ def _tuning_noise(args):
 def _tuning_attempt(args):
     from .tuning_loop import append_attempt, format_verdict
     from text_content.evaluation import TuningLoopText as T
-    row = append_attempt(args.log, read_json(args.baseline), read_json(args.candidate),
+    def arm(paths, check_paths):
+        runs = [read_json(path) for path in paths]
+        return {'iterate': runs, 'check': [read_json(path) for path in check_paths] if check_paths else runs}
+
+    row = append_attempt(args.log, arm(args.baseline, args.baseline_check),
+                         arm(args.candidate, args.candidate_check),
                          read_json(args.floors), args.target, args.hypothesis, args.change)
     print(format_verdict(row))
     print(T.logged.format(**row))
