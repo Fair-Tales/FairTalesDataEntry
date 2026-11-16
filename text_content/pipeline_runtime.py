@@ -4,12 +4,7 @@ PIPELINE_SETTINGS_OBJECT = "Pipeline settings must be an object."
 PIPELINE_SETTING_UNKNOWN = "Unknown pipeline setting: {key}"
 PIPELINE_SETTING_INVALID = "Invalid pipeline setting: {key}; expected {expected}"
 
-BILLING_UNVERIFIED = (
-    "Paid extraction requires confirmed credit billing, organisation, "
-    "project, and the SHA-256 fingerprint of the dedicated evaluation key."
-)
-BILLING_KEY_MISSING = "The dedicated evaluation key {secret_name} is absent; no alternate key will be used."
-BILLING_KEY_MISMATCH = "The evaluation key does not match the confirmed billing account; dispatch refused."
+BILLING_KEY_MISSING = "Evaluation key {secret_name} is absent or blank; paid execution refused."
 BILLING_EXHAUSTED = (
     "Evaluation credits are exhausted or billing access was rejected. "
     "The run has stopped; completed work is preserved and remaining work is pending. "
@@ -29,7 +24,7 @@ OPENAI_STORAGE_REFUSED = (
     "store and background must be false or omitted."
 )
 EVALUATION_PROVIDER_UNSUPPORTED = "Unsupported evaluation provider: {provider}"
-EVALUATION_CLIENT_MISSING = "No {provider} client is configured; supply the dedicated evaluation API key."
+EVALUATION_CLIENT_MISSING = "No {provider} client is configured; supply a configured provider API key."
 CYCLE_REQUIRED = "Paid extraction requires billing_cycles.{provider}.start_day (an integer from 1 to 31); there is no default."
 CYCLE_CAP_INVALID = "Cycle caps must be finite, nonnegative dollar amounts."
 CYCLE_CAP_TOO_HIGH = "The {provider} cycle cap option cannot exceed the configured ${cap}; edit billing_cycles to change the maximum."

@@ -72,11 +72,6 @@ def offline_inputs(tmp_path, monkeypatch):
     config["settings"] = {key: "fixture" if key.endswith("_model") else value
                           for key, value in frozen_settings.items()}
     config['billing_cycles'] = {'anthropic': {'start_day': 1}, 'openai': {'start_day': 10}}
-    config['billing'] = {'funding': 'subscription_credits', 'confirmed': True,
-                         'organisation': 'fixture', 'project': 'fixture',
-                         'confirmed_by': 'fixture', 'confirmed_at': '2026-11-05',
-                         'secret_name': 'EVAL_ANTHROPIC_API_KEY',
-                         'key_sha256': hashlib.sha256(b'fake-never-used').hexdigest()}
     config_path = tmp_path / "config.json"
     atomic_json(config_path, config)
     monkeypatch.setattr(socket, "create_connection", forbidden)
@@ -452,14 +447,13 @@ def test_dry_run_limit_twenty_no_credentials_no_paid_calls_no_isbn(offline_input
     assert "0 paid calls" in output
 
 
-def test_openai_cli_executes_and_replays_with_confirmed_key(offline_inputs, fake_core,
+def test_openai_cli_executes_and_replays_without_attestation(offline_inputs, fake_core,
                                                           tmp_path, monkeypatch, system_temporary_dir):
     import httpx
     from scripts import data_cleanup
     from scripts.extraction_eval import openai_client
     snapshot, config_path = offline_inputs
     config = openai_fixture_config(read_json(config_path))
-    config['billing'].update(secret_name='EVAL_OPENAI_API_KEY', funding='prepaid_credits')
     atomic_json(config_path, config)
     requests = []
     clients = []
@@ -504,6 +498,9 @@ def test_openai_cli_executes_and_replays_with_confirmed_key(offline_inputs, fake
 def test_paid_fake_exact_books_confirmation_cost_resume_and_offline_score(offline_inputs, fake_core, tmp_path, monkeypatch, capsys, system_temporary_dir):
     snapshot, config = offline_inputs
     out = tmp_path / "paid-fixture"
+    from scripts import data_cleanup
+    monkeypatch.setattr(data_cleanup, "load_secrets",
+                        lambda path: {"ANTHROPIC_API_KEY": "fake-never-used"})
     provider = FakePaidProvider()
     confirmed = []
 
@@ -513,8 +510,9 @@ def test_paid_fake_exact_books_confirmation_cost_resume_and_offline_score(offlin
         confirmed.append(prompt)
         return "AFFIRMATIVE"
 
-    def create_provider(path, config):
+    def create_provider(path, config, credentials):
         assert confirmed
+        assert credentials == ("fake-never-used", "ANTHROPIC_API_KEY")
         return provider
 
     monkeypatch.setattr("builtins.input", approve)
@@ -524,6 +522,11 @@ def test_paid_fake_exact_books_confirmation_cost_resume_and_offline_score(offlin
     assert cli.main(args) == 0
     assert read_json(out / "selection.json").get("book_ids") == ["book-02", "book-07"]
     assert set(read_json(out / "predictions.json").get("books")) == {"book-02", "book-07"}
+    assert read_json(out / "run.json")["secret_name"] == "ANTHROPIC_API_KEY"
+    for path in out.rglob("*.json"):
+        assert "fake-never-used" not in path.read_text()
+    captured = capsys.readouterr()
+    assert "fake-never-used" not in captured.out + captured.err
     assert provider.closed and len(provider.calls) == 6
     calls = read_json(out / "calls.json")
     assert len(calls) == 6
@@ -561,6 +564,9 @@ def test_default_extract_and_score_use_tuning_gate(offline_inputs, fake_core, tu
                                                  tmp_path, monkeypatch, system_temporary_dir):
     snapshot, config = offline_inputs
     out = tmp_path / 'tuning'
+    from scripts import data_cleanup
+    monkeypatch.setattr(data_cleanup, "load_secrets",
+                        lambda path: {"ANTHROPIC_API_KEY": "fake-never-used"})
     provider = FakePaidProvider()
     monkeypatch.setattr('builtins.input', lambda prompt: 'AFFIRMATIVE')
     monkeypatch.setattr(cli, '_live_anthropic', lambda *args: provider)
@@ -750,3 +756,25 @@ def test_original_experiment_flag_is_removed():
     with pytest.raises(SystemExit):
         cli.build_parser().parse_args(['extract', '--snapshot', '.', '--out', '.',
                                        '--original-experiment'])
+
+
+def test_openai_missing_key_refused_before_ledger(offline_inputs, tmp_path, monkeypatch,
+                                                system_temporary_dir, capsys, caplog):
+    from scripts import data_cleanup
+    from scripts.extraction_eval import store
+    snapshot, config_path = offline_inputs
+    atomic_json(config_path, openai_fixture_config(read_json(config_path)))
+    monkeypatch.setattr('builtins.input', lambda prompt: 'AFFIRMATIVE')
+    monkeypatch.setattr(data_cleanup, 'load_secrets', lambda path: {
+        'ANTHROPIC_API_KEY': 'unused-app-fixture', 'OPENAI_API_KEY': 'unused-openai-fixture'})
+    monkeypatch.setattr(store, 'Ledger', lambda *a, **kw: pytest.fail('Ledger opened without key'))
+    out = tmp_path / 'missing-openai-key'
+    with pytest.raises(SystemExit) as error:
+        cli.main(['extract', '--snapshot', str(snapshot), '--out', str(out),
+                  '--config', str(config_path), '--books', 'book-02', '--execute'])
+    assert error.value.code == 2
+    captured = capsys.readouterr()
+    assert 'EVAL_OPENAI_API_KEY is absent or blank' in captured.err
+    output = captured.out + captured.err + caplog.text + (out / 'run.json').read_text()
+    assert 'unused-app-fixture' not in output
+    assert 'unused-openai-fixture' not in output

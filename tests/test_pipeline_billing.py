@@ -1,6 +1,5 @@
 """Billing guard tests use local fake credentials and fake provider failures."""
 import hashlib
-from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
@@ -15,11 +14,6 @@ from scripts.extraction_eval.store import Ledger
 
 def configuration():
     return {'billing_cycles': {'anthropic': {'start_day': 1}, 'openai': {'start_day': 10}},
-            'billing': {'funding': 'subscription_credits', 'confirmed': True,
-                        'organisation': 'fixture-org', 'project': 'fixture-project',
-                        'confirmed_by': 'owner', 'confirmed_at': '2026-11-05',
-                        'secret_name': 'EVAL_ANTHROPIC_API_KEY',
-                        'key_sha256': hashlib.sha256(b'fixture-only').hexdigest()},
             'settings': {'extraction_model': 'fixture-model'},
             'max_attempts': 3,
             'pricing': {'models': {'fixture-model': {
@@ -28,44 +22,28 @@ def configuration():
                 'max_images': 100, 'max_request_bytes': 10000}}}}
 
 
-def test_billing_requires_explicit_binding_and_never_falls_back():
-    config = configuration()
-    assert validate_billing(config, {'EVAL_ANTHROPIC_API_KEY': 'fixture-only'}) == 'fixture-only'
-    with pytest.raises(ValueError, match='absent'):
-        validate_billing(config, {'ANTHROPIC_API_KEY': 'production-fixture'})
-    with pytest.raises(ValueError, match='does not match'):
-        validate_billing(config, {'EVAL_ANTHROPIC_API_KEY': 'different-fixture'})
-    for key in config['billing']:
-        missing = deepcopy(config)
-        del missing['billing'][key]
-        with pytest.raises(ValueError):
-            validate_billing(missing)
+@pytest.mark.parametrize('secrets,name,key', [
+    ({'EVAL_ANTHROPIC_API_KEY': 'eval-fixture', 'ANTHROPIC_API_KEY': 'app-fixture'},
+     'EVAL_ANTHROPIC_API_KEY', 'eval-fixture'),
+    ({'ANTHROPIC_API_KEY': 'app-fixture'}, 'ANTHROPIC_API_KEY', 'app-fixture'),
+    ({'EVAL_ANTHROPIC_API_KEY': ' ', 'ANTHROPIC_API_KEY': 'app-fixture'},
+     'ANTHROPIC_API_KEY', 'app-fixture'),
+])
+def test_billing_without_attestation_selects_anthropic_key(secrets, name, key):
+    assert validate_billing(configuration(), secrets) == (key, name)
 
 
 @pytest.mark.parametrize('provider', ['openai', 'openai-responses', 'openai-chat-completions'])
-@pytest.mark.parametrize('funding', ['subscription_credits', 'prepaid_credits'])
-def test_openai_billing_binds_only_dedicated_key(provider, funding):
-    config = configuration()
-    config['provider'] = provider
-    config['billing'].update(secret_name='EVAL_OPENAI_API_KEY', funding=funding)
-    assert validate_billing(config, {'EVAL_OPENAI_API_KEY': 'fixture-only'}) == 'fixture-only'
+def test_openai_requires_only_dedicated_key(provider):
+    config = {**configuration(), 'provider': provider}
+    assert validate_billing(config, {'EVAL_OPENAI_API_KEY': 'fixture-only'}) == (
+        'fixture-only', 'EVAL_OPENAI_API_KEY')
     for missing in ({'OPENAI_API_KEY': 'fixture-only'},
                     {'EVAL_ANTHROPIC_API_KEY': 'fixture-only'},
                     {'EVAL_OPENAI_API_KEY': '  '}):
-        with pytest.raises(ValueError, match='EVAL_OPENAI_API_KEY.*absent'):
+        with pytest.raises(ValueError, match='EVAL_OPENAI_API_KEY.*absent') as error:
             validate_billing(config, missing)
-    with pytest.raises(ValueError, match='does not match'):
-        validate_billing(config, {'EVAL_OPENAI_API_KEY': 'different-fixture'})
-    config['billing']['secret_name'] = 'EVAL_ANTHROPIC_API_KEY'
-    with pytest.raises(ValueError, match='confirmed credit billing'):
-        validate_billing(config)
-
-
-def test_anthropic_billing_keeps_subscription_credit_requirement():
-    config = configuration()
-    config['billing']['funding'] = 'prepaid_credits'
-    with pytest.raises(ValueError, match='confirmed credit billing'):
-        validate_billing(config)
+        assert 'fixture-only' not in str(error.value)
 
 
 @pytest.mark.parametrize('code,message', [(400, 'Your credit balance is too low'),
@@ -135,3 +113,23 @@ def test_billing_stop_marks_run_incomplete_and_skips_later_work(tmp_path):
     assert result['stop_reason'][0] == 'billing_stopped'
     assert result['books']['book']['pages']['p2']['status'] == 'pending'
     assert calls == ['page']
+
+
+@pytest.mark.parametrize('evaluation_key', [None, 'eval-fixture'])
+def test_anthropic_factory_uses_selected_key(monkeypatch, evaluation_key, capsys, caplog):
+    from scripts import data_cleanup
+    from scripts.extraction_eval import cli
+    import utilities
+    secrets = {'ANTHROPIC_API_KEY': 'app-fixture'}
+    if evaluation_key:
+        secrets['EVAL_ANTHROPIC_API_KEY'] = evaluation_key
+    monkeypatch.setattr(data_cleanup, 'load_secrets', lambda path: secrets)
+    client = object()
+    def create_client(**kwargs):
+        assert kwargs == {'api_key': evaluation_key or 'app-fixture', 'max_retries': 0}
+        return client
+    monkeypatch.setattr(utilities, 'get_anthropic_client', create_client)
+    assert cli._live_provider('unused-path', configuration()) is client
+    captured = capsys.readouterr()
+    for key in secrets.values():
+        assert key not in captured.out + captured.err + caplog.text

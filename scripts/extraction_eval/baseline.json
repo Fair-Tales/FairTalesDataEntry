@@ -55,5 +55,15 @@
         "max_request_bytes": 32000000
       }
     }
+  },
+  "billing_cycles": {
+    "anthropic": {
+      "start_day": 1,
+      "comment": "Placeholder until Chris confirms this subscription's renewal day; caps use calendar-month bookkeeping meanwhile."
+    },
+    "openai": {
+      "start_day": 1,
+      "comment": "Placeholder until Chris confirms this subscription's renewal day; caps use calendar-month bookkeeping meanwhile."
+    }
   }
 }

@@ -865,17 +865,17 @@ for the paths above). Anthropic evaluation defaults to **$150 per billing cycle*
 leaving $50 of its stated allowance for the app; OpenAI defaults to **$200 per
 cycle**. Headroom never transfers between providers. The run cap remains $16.
 
-Put each provider's actual renewal day in the run's configuration file. There is
-**no default start day**; paid execution refuses to start without the selected
-provider's setting, before confirmation or client construction. For example,
-these are **illustrative days, not verified account dates**:
+Paid execution needs a provider key and cycle settings; no billing attestation is
+required. Anthropic uses `EVAL_ANTHROPIC_API_KEY` when available, otherwise the
+app's `ANTHROPIC_API_KEY`. OpenAI requires `EVAL_OPENAI_API_KEY`. Missing or blank
+keys are refused before any reservation. The run record saves only `secret_name`,
+never the key or a fingerprint. Provider billing rejection still stops the run;
+it does not trigger a switch to another key.
 
-```json
-"billing_cycles": {
-  "anthropic": {"start_day": 5},
-  "openai": {"start_day": 12}
-}
-```
+Both supplied configurations set `start_day: 1` for each provider, with comments
+marking these as placeholders until Chris confirms each subscription's renewal
+day. Caps therefore use calendar-month bookkeeping meanwhile. Other configurations
+must also supply the selected provider's cycle setting.
 
 Cycles begin at 00:00 UTC on that day and end just before the next start.
 Days 29, 30 and 31 clamp to the last day of a shorter month, then return to the
@@ -887,8 +887,8 @@ not consume the next cycle's allowance.
 
 Use `--cycle-cap-usd AMOUNT` to lower the selected provider's **total cycle cap**
 to the actual remaining credit after app/other usage. This is not additional
-headroom. The harness cannot discover that balance from its local ledger; check
-it separately before paid work. The option cannot exceed the provider maximum.
+headroom. The ledger tracks evaluation spending, not the provider's credit
+balance. The option cannot exceed the provider maximum.
 Changing the maximum requires editing that provider's `cap_usd` in
 `billing_cycles`; an already recorded cycle cap can only decrease. A lower cap
 persists for that cycle across other runs, even if they omit the option. A new

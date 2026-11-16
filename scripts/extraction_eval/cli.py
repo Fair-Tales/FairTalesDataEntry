@@ -225,28 +225,25 @@ def _snapshot(args):
     return 2 if manifest.get("source_consistent") is False else 0
 
 
-def _live_anthropic(secrets_path, config):
-    # Credentials are read only after confirmation; client creation is shared.
+def _live_anthropic(secrets_path, config, credentials=None):
     from scripts.data_cleanup import load_secrets
     from utilities import get_anthropic_client
     from .billing import validate_billing
-    validate_billing(config)
-    key = validate_billing(config, load_secrets(secrets_path))
+    key, _ = credentials or validate_billing(config, load_secrets(secrets_path))
     return get_anthropic_client(api_key=key, max_retries=0)
 
 
-def _live_provider(secrets_path, config):
+def _live_provider(secrets_path, config, credentials=None):
     from .openai_client import OPENAI_PROVIDERS, create_openai_client
     from .billing import validate_billing
     from text_content.pipeline_runtime import EVALUATION_PROVIDER_UNSUPPORTED
     provider = config.get('provider', 'anthropic-messages')
     if provider in {'anthropic', 'anthropic-messages'}:
-        return _live_anthropic(secrets_path, config)
+        return _live_anthropic(secrets_path, config, credentials)
     if provider not in OPENAI_PROVIDERS:
         raise ValueError(EVALUATION_PROVIDER_UNSUPPORTED.format(provider=provider))
     from scripts.data_cleanup import load_secrets
-    validate_billing(config)
-    key = validate_billing(config, load_secrets(secrets_path))
+    key, _ = credentials or validate_billing(config, load_secrets(secrets_path))
     return create_openai_client(key)
 
 
@@ -336,14 +333,18 @@ def _extract_loaded(args, loader):
                     f"temporary directory {temporary_dir}. Keep paid-run evidence in "
                     f"durable storage, such as {evidence_dir()}.")
         from .billing import validate_billing
-        validate_billing(config)
+        from scripts.data_cleanup import load_secrets
+        credentials = validate_billing(config, load_secrets(args.secrets))
     frozen = freeze_run(args.out, manifest, selection, config, args.replicate, args.max_spend_usd, args.cycle_cap_usd, ledger_path)
+    if args.execute:
+        frozen["secret_name"] = credentials[1]
+        atomic_json(args.out / "run.json", frozen)
     ledger = Ledger(ledger_path, frozen.get("run_id"), args.max_spend_usd, budgets=budgets)
     client = None
     try:
         ledger.recover()
         if args.execute:
-            client = _live_provider(args.secrets, config)
+            client = _live_provider(args.secrets, config, credentials)
         gateway = Gateway(client, ledger, config, replicate=args.replicate, dry_run=not args.execute)
         result = run_extract(args.snapshot, input_manifest, selection, args.out, gateway, config, loader=loader, dry_run=not args.execute)
         from .reporting import report_calls

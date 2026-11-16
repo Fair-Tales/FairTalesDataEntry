@@ -1,5 +1,4 @@
 """Client setup is tested with fake keys and constructors, never live requests."""
-import hashlib
 
 import pytest
 
@@ -7,13 +6,7 @@ from scripts.extraction_eval import cli, openai_client
 
 
 def configuration(provider='openai-responses'):
-    return {'provider': provider, 'billing_cycles': {'openai': {'start_day': 10}}, 'billing': {
-        'funding': 'prepaid_credits', 'confirmed': True,
-        'organisation': 'fixture-org', 'project': 'fixture-project',
-        'confirmed_by': 'fixture', 'confirmed_at': '2026-11-07',
-        'secret_name': 'EVAL_OPENAI_API_KEY',
-        'key_sha256': hashlib.sha256(b'fixture-only').hexdigest(),
-    }}
+    return {'provider': provider, 'billing_cycles': {'openai': {'start_day': 10}}}
 
 
 @pytest.mark.parametrize('key', [None, '', '  '])
@@ -52,7 +45,7 @@ def test_openai_factory_disables_transport_retries_and_redirect_replay(monkeypat
 
 
 @pytest.mark.parametrize('provider', openai_client.OPENAI_PROVIDERS)
-def test_cli_uses_confirmed_openai_key_and_shared_factory(monkeypatch, provider):
+def test_cli_uses_openai_key_without_attestation_and_shared_factory(monkeypatch, provider):
     from scripts import data_cleanup
     reads = []
     clients = []
@@ -84,11 +77,11 @@ def test_cli_openai_missing_key_errors_before_client_creation(monkeypatch):
         cli._live_provider('fixture-secrets', configuration())
 
 
-def test_cli_openai_rejects_unconfirmed_billing_before_secrets(monkeypatch):
+def test_cli_openai_requires_cycles_before_client_creation(monkeypatch):
     from scripts import data_cleanup
     monkeypatch.setattr(data_cleanup, 'load_secrets',
-                        lambda path: pytest.fail('Unconfirmed secrets read'))
-    config = configuration()
-    config['billing']['confirmed'] = False
-    with pytest.raises(ValueError, match='confirmed credit billing'):
-        cli._live_provider('fixture-secrets', config)
+                        lambda path: {'EVAL_OPENAI_API_KEY': 'fixture-only'})
+    monkeypatch.setattr(openai_client, 'create_openai_client',
+                        lambda key: pytest.fail('Client created without cycles'))
+    with pytest.raises(ValueError, match='billing_cycles.openai.start_day'):
+        cli._live_provider('fixture-secrets', {'provider': 'openai'})

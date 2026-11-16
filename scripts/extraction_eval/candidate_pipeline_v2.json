@@ -108,14 +108,14 @@
   },
   "example_pack_version": "pipeline-evidence-v1",
   "prompt_version": "pipeline-prompts-v2",
-  "billing": {
-    "funding": "subscription_credits",
-    "confirmed": false,
-    "organisation": "",
-    "project": "",
-    "confirmed_by": "",
-    "confirmed_at": "",
-    "secret_name": "EVAL_ANTHROPIC_API_KEY",
-    "key_sha256": ""
+  "billing_cycles": {
+    "anthropic": {
+      "start_day": 1,
+      "comment": "Placeholder until Chris confirms this subscription's renewal day; caps use calendar-month bookkeeping meanwhile."
+    },
+    "openai": {
+      "start_day": 1,
+      "comment": "Placeholder until Chris confirms this subscription's renewal day; caps use calendar-month bookkeeping meanwhile."
+    }
   }
 }
