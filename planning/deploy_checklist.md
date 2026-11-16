@@ -1,0 +1,25 @@
+# Deploy checklist — Chris
+
+For the future `claude-dev` → `main` merge; July code stays live until tuning chooses the prompts (DECISIONS 022).
+
+1. **Before merging:** confirm the tuning comparison (§5 step 1, with DECISIONS 020–021) supports the chosen variant; set `PIPELINE_SETTINGS_DEFAULTS['prompt_variant']` in `pipeline_config.py` accordingly. It currently says `rules-plus-icl`, not a recorded tuning result. Check `settings/ai_pipeline` has no conflicting override. Run `pytest` successfully, including B2–B5 regressions, and push the tested `claude-dev`. Record the current production commit and AI settings for rollback.
+
+2. **Choose a quiet window:** ask current users to finish uploads and save edits, then confirm directly that everyone has stopped; include your own tabs. A restart ends sessions and in-flight uploads. `active_upload_sessions` stores recovery pointers, not reliable live activity; neither those records nor an idle log proves nobody is uploading. Keep entry paused through migrations and smoke checks.
+
+3. **Tell users what changes:** every existing remember-me cookie is invalidated once; everyone signs in again. Uploads can run concurrently; deleted characters/aliases can be restored by re-adding and disappear from dashboard totals while rejected. Validation has an exclusive review lock and reloads fresh pages on reopening. Gender help allows textual cues beyond pronouns, never pictures or stereotypes. Tuned extraction and publication fields may change new drafts; review them before accepting.
+
+4. **Check live secrets/settings, then merge and push `main`:** retain `firestore_key`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`; production `ANTHROPIC_API_KEY` is needed for AI uploads, and `email_address`/`gmail_app_password` for registration/reset mail. Optional: `cookie_signing_key` enables remember-me; `google_books_api_key` supports ISBN lookup; `app_url` is the fallback URL. `AWS_DEFAULT_REGION` is optional in code but must resolve to the bucket's region for browser uploads. Evaluation keys are not needed. Leave `BATCH_UPLOAD_DURABLE_ENABLED` unset unless you separately choose the DECISIONS 013 pilot. Wait for Streamlit Cloud to show the deployed app without startup errors.
+
+5. **Migrate, alias first, publication second:** from the deployed checkout, using local live credentials, run `python scripts/backfill_alias_canonical.py --firestore`. Default cap is **200 aliases**; overflow aborts, so raise with `--max-aliases N` to cover the collection. Inspect the dry-run diff/flags; repeat the same command with `--execute --checkpoint alias-backfill.json`. It adds canonical fields/storage IDs without changing raw names or references. Rerun dry-run: expect zero planned additions and unchanged raw count/hash; inspect remaining flags. Then run `python scripts/migrate_publication.py --firestore` (cap 276; raise with `--max-books N` if needed); inspect, then repeat with `--execute --checkpoint publication-migration.json`. It adds publication schema/projections and a legacy archive, preserving old fields and existing events. Rerun dry-run: expect no remaining planned additions; already-versioned flags are normal. Check legacy values remain and unsupported dates stay unknown. Keep checkpoints locally.
+
+6. **Smoke-test live:** use permitted test material. Complete one single-book upload through extraction, review and final save; reopen and check pages, metadata, characters and aliases. Start two uploads in separate tabs: both must progress before either finishes. Delete a character, confirm it disappears, then re-add: exactly one visible record, no collision; repeat for an alias. Open one validation in two tabs: the second must be blocked while the first edits; leave the first review, reopen in the second and check fresh edits, then approve once. Enable admin AI-settings editing, save intended values, reload and confirm persistence. Check the revised gender help.
+
+7. **Do not run `scripts/rename_book.py` on post-deploy data:** it remaps document IDs/references without updating stored identity fields or newer job/provenance links (review §2.6; B6).
+
+8. **If something fails:** stop entry, retain the error and checkpoints, and revert the deployment merge on `main` (`git revert -m 1 <merge-commit>` for a merge commit), then push and verify Cloud redeploys the recorded previous code. Restore changed AI settings separately. Code rollback does not undo Firestore/S3 writes; retain additive migration fields and new work, and assess any data repair separately before reopening entry.
+
+## Open questions for Chris
+
+- Which measured prompt variant will go live, and when can all current users confirm a pause? These remain future deployment decisions.
+
+The app track's draft checklist from the 10 November review is folded in above. Its one further point: new collections (`alias_review_audits`, and `photo_batch*` only if durable batches are enabled) appear by themselves on first use and need no setup. Its advice to snapshot the pilot books before deploying no longer applies, because deleted records are now filtered out of snapshots (B3).
