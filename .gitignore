@@ -260,3 +260,8 @@ fabric.properties
 .idea/caches/build_file_checksums.ser
 # Rotation-prompt eval working data (downloaded page images + API cache) — reproducible via rot_sample.py/rot_fetch_manifest.py, not committed
 scripts/rotation_prompt_eval/work/
+
+# Paid evaluation runs: ledgers, model responses and predictions, which hold
+# book text. Durable on this machine (never under /tmp), never committed; the
+# repository is public. Copy finished runs to autonomy-freeze/evidence/.
+evaluation_runs/
