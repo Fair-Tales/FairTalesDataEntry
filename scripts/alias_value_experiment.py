@@ -16,8 +16,11 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+# Runs under the language-analysis environment (it has spaCy), so the repository
+# must be put on the path before its modules can be imported.
 sys.path.insert(0, str(ROOT))
 
+# ruff: noqa: E402
 from scripts.extraction_eval.evidence import evidence_dir
 from scripts.extraction_eval.exposure import DEV20
 from scripts.extraction_eval.json_sources import JsonSources
