@@ -91,6 +91,22 @@ def test_snapshot_null_character_codes_remain_missing(tmp_path, source):
         assert score['excluded_reference_counts'] == {'absent': 1}
 
 
+def test_snapshot_keeps_import_defaults_but_scoring_excludes_them(tmp_path, source):
+    from scripts.extraction_eval.scoring import score_character_attributes, score_character_recall
+
+    raw = source.documents['characters/story_fox']['data']
+    raw.update(ethnicity='Not specified', disability='Not specified', plural=False,
+               gender='Female', human=False, protagonist=True)
+    manifest = create_snapshot(tmp_path, source)
+    characters = manifest['books'][0]['reference']['characters']['value']
+    assert characters[0]['raw']['plural'] is False
+    prediction = [{'name': 'Fox', 'gender': 'Female', 'human': False, 'protagonist': True,
+                   'ethnicity': 'Different', 'disability': 'Different', 'plural': True}]
+    scores = score_character_attributes(score_character_recall(characters, prediction))
+    assert set(scores) == {'gender', 'human', 'protagonist'}
+    assert all(score['recall'] == 1 for score in scores.values())
+
+
 def test_frozen_eligibility_wordless_nonstory_and_raw_schema(tmp_path, source):
     manifest = create_snapshot(tmp_path, source, audit=True)
     book = manifest.get("books")[0]

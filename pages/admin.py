@@ -189,6 +189,14 @@ st.header(Admin.book_export_header)
 st.write(Admin.book_export_description)
 
 if st.button(Admin.prepare_book_download_button, key="admin_prepare_book_download_button"):
+    from research_export import ResearchExport
+
+    try:
+        export = ResearchExport(doc.to_dict() for doc in
+            st.session_state.firestore.get_all_documents_stream(collection='edit_log'))
+    except GoogleAPIError as exc:
+        st.error(Admin.book_export_evidence_error.format(error=exc))
+        st.stop()
     collections = ['books', 'authors', 'illustrators', 'publishers', 'characters', 'pages', 'aliases']
 
     zip_buf = io.BytesIO()
@@ -202,9 +210,7 @@ if st.button(Admin.prepare_book_download_button, key="admin_prepare_book_downloa
                     if (collection_name in ('characters', 'aliases') and
                             d.get('entry_status') in ('rejected', 'superseded', 'withdrawn')):
                         continue
-                    if collection_name == 'books':
-                        from bibliography import export_publication_columns
-                        d = {**d, **export_publication_columns(d)}
+                    d = export.record(collection_name, doc.id, d)
                     clean = {}
                     for k, v in d.items():
                         try:

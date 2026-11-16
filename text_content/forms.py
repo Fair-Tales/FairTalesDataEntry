@@ -1078,6 +1078,7 @@ class Admin:
         "and {aliases} alias(es)."
     )
     prepare_book_download_button = "Prepare book data download"
+    book_export_evidence_error = "Could not load edit history for the research export: {error}"
     download_book_button = "⬇ Download book database (ZIP of CSVs)"
     book_file_name = "fairtales_book_data.zip"
 
