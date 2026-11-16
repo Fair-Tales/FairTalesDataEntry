@@ -870,3 +870,18 @@ are pronouns, which alias matching cannot attribute under either coding.
    Work in that repository first needs its own version-control protocol, which
    it does not yet have.
 
+## 022 — Hold the main merge until tuning has picked the prompts (2026-11-16)
+
+On `claude-dev` the live app would use the new, untuned prompts, which also
+count signs and labels inside pictures as page text, so stored text would change
+partway through the corpus. The old page-text and character prompts can be
+restored exactly, but the old title, author and publisher step cannot, because
+that part of the pipeline was restructured. Nobody has entered a book since
+21 September.
+
+Chris chose to hold the merge to `main` until tuning has picked the prompts.
+Production keeps running the July code meanwhile, and the fixes made for it wait
+on `claude-dev`. When tuning finishes, the tuned prompts go live together with
+those fixes, so the corpus switches once, to prompts that have been measured. If
+students resume entry before then, this is to be revisited.
+
