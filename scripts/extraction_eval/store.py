@@ -100,6 +100,8 @@ class Ledger:
           provider TEXT PRIMARY KEY, start_day INTEGER NOT NULL, cap INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS billing_cycles(
           provider TEXT, start TEXT, cap INTEGER NOT NULL, PRIMARY KEY(provider,start));
+        CREATE TABLE IF NOT EXISTS retry_events(
+          key TEXT PRIMARY KEY, run_id TEXT NOT NULL, created TEXT NOT NULL);
         """)
         try:
             with self.transaction():
@@ -164,6 +166,38 @@ class Ledger:
     def get(self, key):
         row = self.db.execute("SELECT * FROM calls WHERE key=?", (key,)).fetchone()
         return dict(row) if row else None
+
+    def retry_authorized(self, key):
+        return self.db.execute('SELECT 1 FROM retry_events WHERE key=?', (key,)).fetchone() is not None
+
+    def _last_calls(self):
+        # Context identifies the stage, not the paid request. Group inside SQLite
+        # so recovery never loads book content, even for a mixed-cohort ledger.
+        return self.db.execute("""SELECT key,run_id,state,error,cost,
+          json_extract(request, '$.context.stage') AS stage FROM calls
+          WHERE rowid IN (SELECT MAX(rowid) FROM calls
+            GROUP BY json_remove(request, '$.context'))""")
+
+    def retry_failed(self):
+        """Authorize fresh attempt keys; preserve every response and reservation."""
+        with self.transaction():
+            created = self.clock().isoformat()
+            keys = []
+            for row in self._last_calls():
+                if row['run_id'] != self.run_id or row['cost'] or self.retry_authorized(row['key']):
+                    continue
+                if (row['state'] == 'retryable' or row['state'] == 'failed'
+                        and (row['error'] or '').startswith('billing_stopped:')):
+                    self.db.execute('INSERT INTO retry_events VALUES (?,?,?)',
+                                    (row['key'], self.run_id, created))
+                    keys.append(row['key'])
+            unknown = [row[0] for row in self.db.execute("""SELECT key FROM calls
+              WHERE run_id=? AND state IN ('dispatched','outcome_unknown') ORDER BY key""", (self.run_id,))]
+        return {'keys': keys, 'unknown': unknown, 'created': created}
+
+    def stage_retry_authorized(self, stage):
+        return any(row['stage'] == stage and self.retry_authorized(row['key'])
+                   for row in self._last_calls())
 
     def reserve(self, key, request, ceiling):
         from .billing import billing_provider

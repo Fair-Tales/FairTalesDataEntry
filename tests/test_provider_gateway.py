@@ -200,10 +200,15 @@ def test_openai_dispatch_persists_native_usage_before_normalizing_and_replays(
     assert openai_ledger.get(expected_key)["cost"] == row["cost"]
 
 
-def test_openai_429_retries_once_with_separate_reservations_and_records(
+@pytest.mark.parametrize('status', [429, 500, 502, 503, 529])
+def test_openai_retries_with_delay_and_separate_reservations_and_records(
     openai_config, openai_ledger, http_fixture, openai_transport, monkeypatch,
+    status,
 ):
-    client, requests = openai_transport(http_fixture("rate_limit"), http_fixture("responses"))
+    rejection = http_fixture('rate_limit')
+    rejection['status'] = status
+    rejection['headers']['retry-after'] = '7'
+    client, requests = openai_transport(rejection, http_fixture("responses"))
     reserved = []
     reserve = openai_ledger.reserve
 
@@ -212,7 +217,11 @@ def test_openai_429_retries_once_with_separate_reservations_and_records(
         reserved.append((key, openai_ledger.get(key)["reservation"]))
 
     monkeypatch.setattr(openai_ledger, "reserve", record_reservation)
-    gateway = Gateway(client, openai_ledger, openai_config)
+    waits = []
+    def wait(seconds):
+        assert len(requests) == len(reserved) == 1
+        waits.append(seconds)
+    gateway = Gateway(client, openai_ledger, openai_config, wait=wait)
     reply = gateway.create(**openai_request())
     rows = openai_ledger.rows()
     assert len(requests) == len(rows) == len(reserved) == 2
@@ -224,6 +233,7 @@ def test_openai_429_retries_once_with_separate_reservations_and_records(
     assert sum(row["reserved_usd"] for row in rows) > 0
     assert gateway.create(**openai_request())._eval_key == reply._eval_key
     assert len(requests) == 2
+    assert waits == [7]
 
 
 @pytest.mark.parametrize("malformation", ["json", "envelope", "usage"])
@@ -274,7 +284,7 @@ def test_malformed_output_preserves_known_charge_and_does_not_redispatch(
     assert json.loads(row["response"])["output"] == "unexpected output"
 
 
-@pytest.mark.parametrize("outcome", ["timeout", "server_error", "cancel"])
+@pytest.mark.parametrize("outcome", ["timeout", "cancel"])
 def test_uncertain_openai_outcome_never_retries(
     outcome, openai_config, openai_ledger, http_fixture, openai_transport,
 ):
@@ -282,9 +292,6 @@ def test_uncertain_openai_outcome_never_retries(
         reply = httpx.ReadTimeout("fixture response lost")
     elif outcome == "cancel":
         reply = KeyboardInterrupt("fixture cancellation")
-    else:
-        reply = http_fixture("rate_limit")
-        reply["status"] = 500
     client, requests = openai_transport(reply)
     gateway = Gateway(client, openai_ledger, openai_config)
     for _ in range(2):
@@ -293,6 +300,12 @@ def test_uncertain_openai_outcome_never_retries(
     assert len(requests) == 1
     assert openai_ledger.rows()[0]["state"] == "outcome_unknown"
     assert openai_ledger.rows()[0]["reserved_usd"] > 0
+    result = openai_ledger.retry_failed()
+    assert result['keys'] == []
+    assert result['unknown'] == [openai_ledger.rows()[0]['key']]
+    with pytest.raises(OutcomeUnknown):
+        Gateway(client, openai_ledger, openai_config).create(**openai_request())
+    assert len(requests) == 1
 
 
 @pytest.mark.parametrize("provider", ["openai-responses", "openai-chat-completions"])

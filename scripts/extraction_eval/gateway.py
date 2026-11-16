@@ -2,17 +2,24 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from email.utils import parsedate_to_datetime
 import json
+import math
+import random
 import sqlite3
+import time
 from types import SimpleNamespace
 
 from ai_pricing import normalize_usage
-from text_content.pipeline_runtime import EVALUATION_CLIENT_MISSING
+from text_content.pipeline_runtime import EVALUATION_CLIENT_MISSING, RETRY_EXHAUSTED, RETRY_WAIT_EXCEEDED, REQUEST_UNKNOWN
 
 from .store import CachedFailure, OutcomeUnknown, canonical, digest, guard_cached_request
 from .billing import BILLING_EXHAUSTED, BillingStopped, billing_rejection, cycle_budgets
 from .openai_client import OPENAI_PROVIDERS
 from .openai_adapter import prepare_request, response_content
+
+
+MAX_RETRY_WAIT_SECONDS = 600
 
 
 class RequestLimitError(ValueError):
@@ -24,9 +31,29 @@ class DryRunMiss(RuntimeError):
 
 
 class ProviderHTTPError(RuntimeError):
-    def __init__(self, status_code, body):
+    def __init__(self, status_code, body, headers=None):
         self.status_code = status_code
+        self.headers = headers or {}
         super().__init__(f"OpenAI HTTP {status_code}: {body}")
+
+
+def retry_delay(retry_after, attempt, now):
+    """Provider seconds/HTTP-date, otherwise capped exponential equal jitter."""
+    if retry_after is not None:
+        try:
+            seconds = float(retry_after)
+        except (TypeError, ValueError):
+            try:
+                seconds = max(0, (parsedate_to_datetime(retry_after) - now).total_seconds())
+            except (TypeError, ValueError, OverflowError):
+                seconds = -1
+        if math.isfinite(seconds) and seconds >= 0:
+            if seconds > MAX_RETRY_WAIT_SECONDS:
+                raise CachedFailure(RETRY_WAIT_EXCEEDED.format(
+                    seconds=seconds, limit=MAX_RETRY_WAIT_SECONDS))
+            return seconds
+    bound = min(30, 2 ** attempt)
+    return random.uniform(bound / 2, bound)
 
 
 def _namespace(value):
@@ -125,9 +152,9 @@ class Gateway:
 
     Persist raw blocks, usage and request IDs BEFORE any parser runs. A crash or
     uncertain provider outcome is never replayed automatically. Only explicit
-    429 rejections may retry; each attempt gets its own reservation and record.
+    rate/server rejections may retry; each gets its own reservation and record.
     """
-    def __init__(self, client, ledger, config, *, replicate="1", dry_run=False):
+    def __init__(self, client, ledger, config, *, replicate="1", dry_run=False, wait=None):
         self.provider = config.get("provider", "anthropic-messages")
         if self.provider not in ("anthropic", "anthropic-messages", *OPENAI_PROVIDERS):
             raise ValueError(f"Unsupported evaluation provider: {self.provider}")
@@ -147,6 +174,7 @@ class Gateway:
         self.dry_run = dry_run
         self.context = {}
         self.billing_stopped = False
+        self.wait = wait or time.sleep
 
     def create(self, **request):
         if self.billing_stopped:
@@ -165,8 +193,10 @@ class Gateway:
         attempts = self.config.get("max_attempts", 1)
         if not isinstance(attempts, int) or not 1 <= attempts <= 5:
             raise ValueError("max_attempts must be between 1 and 5")
-        for attempt in range(attempts):
-            key = digest({**identity, "attempt": attempt})
+        attempt, delay = 0, None
+        key_identity = identity
+        while attempt < attempts:
+            key = digest({**key_identity, "attempt": attempt})
             cached = self.ledger.get(key)
             if cached:
                 guard_cached_request(cached.get("request"))
@@ -174,18 +204,30 @@ class Gateway:
                 if state == "completed":
                     self.cache_hits += 1
                     return self._response(key, json.loads(cached.get("response")), True)
-                if state == "retryable" and attempt + 1 < attempts:
-                    continue
                 if state in {"dispatched", "outcome_unknown"}:
-                    raise OutcomeUnknown(f"Request {key} has an unknown outcome; manual reconciliation required")
+                    raise OutcomeUnknown(REQUEST_UNKNOWN.format(key=key))
+                if self.ledger.retry_authorized(key):
+                    key_identity = {**identity, "retry": key}
+                    attempt, delay = 0, None
+                    continue
+                if state == "retryable":
+                    raw = json.loads(cached.get("response") or "{}")
+                    delay = retry_delay(raw.get("_retry_after"), attempt, self.ledger.clock())
+                    if attempt + 1 < attempts:
+                        attempt += 1
+                        continue
                 if str(cached.get('error', '')).startswith('billing_stopped:'):
                     self.billing_stopped = True
                     raise BillingStopped(BILLING_EXHAUSTED)
+                if state == "retryable":
+                    raise CachedFailure(RETRY_EXHAUSTED.format(key=key))
                 raise CachedFailure(f"Request {key} permanently failed: {cached.get('error')}")
             if self.dry_run:
                 raise DryRunMiss(f"Uncached request for {request.get('model')}; no paid call dispatched")
             if endpoint and len(json.dumps(payload, ensure_ascii=False).encode()) > self.prices[request["model"]]["max_request_bytes"]:
                 raise RequestLimitError("Converted request exceeds pinned byte limit; no automatic chunking")
+            if delay is not None:
+                self.wait(delay)
             self.ledger.reserve(key, {**identity, "context": self.context}, ceiling)
             raw = None
             try:
@@ -195,24 +237,33 @@ class Gateway:
                            "_http_status": response.status_code, "_body": response.text}
                     self.ledger.capture_response(key, raw)
                     if not 200 <= response.status_code < 300:
-                        raise ProviderHTTPError(response.status_code, response.text)
+                        raise ProviderHTTPError(response.status_code, response.text, response.headers)
                 else:
                     response = self.client.messages.create(**request)
             except BaseException as exc:
                 # Always preserve a dispatch outcome, including cancellation.
-                # No exception is swallowed: only definite 429 rejections retry.
+                # A received error response can retry; transport loss cannot.
                 code = getattr(exc, "status_code", None)
                 if billing_rejection(exc):
                     self.ledger.fail(key, 'billing_stopped: ' + BILLING_EXHAUSTED,
                                      rejected=True, retryable=False, response=raw)
                     self.billing_stopped = True
                     raise BillingStopped(BILLING_EXHAUSTED) from exc
-                rejected = code in {400, 401, 403, 404, 413, 422, 429}
-                self.ledger.fail(key, f"{type(exc).__name__}: {exc}", rejected=rejected, retryable=code == 429, response=raw)
-                if code == 429 and attempt + 1 < attempts:
-                    continue
+                retryable = code == 429 or isinstance(code, int) and 500 <= code <= 599
+                rejected = retryable or code in {400, 401, 403, 404, 413, 422}
+                if retryable:
+                    headers = getattr(getattr(exc, "response", None), "headers", None) or getattr(exc, "headers", {})
+                    raw = {**(raw or {}), "_retry_after": headers.get("retry-after")}
+                self.ledger.fail(key, f"{type(exc).__name__}: {exc}", rejected=rejected, retryable=retryable, response=raw)
+                if retryable:
+                    delay = retry_delay(raw.get("_retry_after"), attempt, self.ledger.clock())
+                    if attempt + 1 < attempts:
+                        attempt += 1
+                        continue
                 if not rejected:
-                    raise OutcomeUnknown(f"Request {key} may have been charged; reservation retained") from exc
+                    raise OutcomeUnknown(REQUEST_UNKNOWN.format(key=key)) from exc
+                if retryable:
+                    raise CachedFailure(RETRY_EXHAUSTED.format(key=key)) from exc
                 raise CachedFailure(f"Request {key} rejected: {exc}") from exc
             self.paid_calls += 1
             try:
@@ -222,21 +273,23 @@ class Gateway:
                 canonical(parsed)
             except (TypeError, ValueError, AttributeError) as exc:
                 self.ledger.fail(key, f"Response serialization failed after dispatch: {exc}", response=raw)
-                raise OutcomeUnknown("Provider returned but its response could not be persisted; reservation retained") from exc
+                raise OutcomeUnknown(REQUEST_UNKNOWN.format(key=key)) from exc
             raw = parsed
             try:
                 self.ledger.capture_response(key, raw)
             except (sqlite3.Error, OSError) as exc:
-                raise OutcomeUnknown("Provider returned but persistence failed; reservation retained") from exc
+                raise OutcomeUnknown(REQUEST_UNKNOWN.format(key=key)) from exc
             try:
                 charge = usage_charge(raw, self.prices.get(request.get("model"), {}), self.provider)
             except OutcomeUnknown as exc:
                 self.ledger.fail(key, exc, response=raw)
-                raise
+                raise OutcomeUnknown(f"{REQUEST_UNKNOWN.format(key=key)} {exc}") from exc
             try:
                 self.ledger.settle(key, raw, charge)
+            except OutcomeUnknown as exc:
+                raise OutcomeUnknown(f"{REQUEST_UNKNOWN.format(key=key)} {exc}") from exc
             except (sqlite3.Error, OSError) as exc:
-                raise OutcomeUnknown("Provider returned but settlement failed; dispatched reservation requires reconciliation") from exc
+                raise OutcomeUnknown(REQUEST_UNKNOWN.format(key=key)) from exc
             return self._response(key, raw, False)
         raise CachedFailure("Retry allowance exhausted")
 

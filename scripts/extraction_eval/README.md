@@ -776,8 +776,14 @@ generation/API options, request version, attempt and replicate. Raw response
 blocks, usage, request ID and stop reason are persisted **before parsing**.
 `utilities.record_api_usage` routes to the local ledger sink during evaluation;
 cache hits are never charged again. SDK retries are disabled. The default is one
-attempt; configured retries apply only to explicit 429 rejections and each is
-metered. Permanent parse failures reuse the cached raw response, not a paid call.
+attempt; `max_attempts` permits 1–5 attempts for explicit 429 and 5xx error
+responses (including overload 529). Each has its own reservation and record.
+Retries honour `retry-after` (seconds or an HTTP date) up to 600 seconds.
+Longer waits stop the run without sleeping, report the requested wait, and
+require `retry-failed` before another attempt. Otherwise retries use exponential
+backoff with jitter: half to all of `min(30, 2**attempt)` seconds, starting at
+attempt zero. The gateway's `wait` argument is injectable for offline tests.
+Permanent parse failures reuse the cached raw response, not a paid call.
 
 SQLite transactions enforce:
 
@@ -866,6 +872,34 @@ new run directory. Identical request identities reuse the shared cache across
 runs; parser/stage changes can reinterpret responses without paying again.
 Metric/reference changes require only offline rescoring. A dry-run freezes its
 config too: if you change prices afterward, use a new run directory.
+
+After a rate/overload retry allowance is exhausted, or after resolving a provider
+billing stop, explicitly authorize another attempt without editing SQL or
+changing `--replicate`:
+
+```bash
+.venv/bin/python -m scripts.extraction_eval retry-failed --run "$RUN_DIR"
+```
+
+This offline command uses the ledger recorded in `run.json`. It records each
+authorization and its UTC time in `retry_events`, for requests owned by this run
+whose last attempt is retryable or a billing stop. Repeating the command before
+resuming has no further effect. It never sends requests, changes paid responses,
+or releases old reservations. All old attempts still count against their caps;
+new attempts require fresh headroom. Completed responses replay free, including
+responses obtained after an earlier recovery. Permanent failures remain cached.
+
+Resume extraction with the same settings, ledger and replicate. Authorized
+failed stages can run again; completed stages with unchanged inputs stay cached.
+Recovered pages refresh dependent classification, metadata reconciliation and
+character stages. Identical provider requests still replay free; changed inputs
+are new requests and need fresh budget. A billing stop
+(including `credit_balance_exhausted` and `enforced_spend_limit_reached`) halts
+immediately and remains stopped until this explicit authorization. Timeouts,
+interrupted dispatches and unknown charges are listed by request key for manual
+reconciliation and are never authorized for another send. Old 5xx attempts
+already recorded as unknown remain unknown. If source hashes changed, use a new
+`--out` as described below, after running `retry-failed` on the original run.
 
 For ISBN-cache recovery, a legacy `lookups/*.json` entry with both `value` and
 `raw_response` null is a failed request, not an empty provider result. Updated

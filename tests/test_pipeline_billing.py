@@ -70,7 +70,8 @@ def test_anthropic_billing_keeps_subscription_credit_requirement():
 
 @pytest.mark.parametrize('code,message', [(400, 'Your credit balance is too low'),
     (402, 'payment required'), (401, 'invalid key'), (403, 'forbidden'),
-    (429, 'billing usage limit'), (429, 'insufficient_quota')])
+    (429, 'billing usage limit'), (429, 'insufficient_quota'),
+    (429, 'credit_balance_exhausted'), (400, 'enforced_spend_limit_reached')])
 def test_billing_rejection_halts_gateway_without_retry_or_key_switch(tmp_path, code, message):
     class Rejected(RuntimeError):
         status_code = code
@@ -95,6 +96,17 @@ def test_billing_rejection_halts_gateway_without_retry_or_key_switch(tmp_path, c
         with pytest.raises(BillingStopped):
             replay.create(**request)
         assert len(calls) == 1
+        # The old assertion pinned an indefinite cached stop. Keep the stop
+        # until explicit recovery, then prove renewed credit can be used.
+        before = ledger.get(ledger.rows()[0]['key'])
+        assert ledger.retry_failed()['keys'] == [before['key']]
+        assert ledger.get(before['key']) == before
+        provider.messages.create = lambda **kwargs: {
+            'content': [], 'usage': {'input_tokens': 1, 'output_tokens': 1}}
+        recovered = Gateway(provider, ledger, configuration()).create(**request)
+        assert not recovered._eval_cached
+        assert Gateway(provider, ledger, configuration()).create(**request)._eval_cached
+        assert len(ledger.rows()) == 2
     finally:
         ledger.close()
 

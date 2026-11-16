@@ -164,7 +164,7 @@ def test_over_cap_retry_is_refused_before_second_dispatch(accounting):
         raise RateLimit('synthetic rate limit')
 
     ledger = create(configuration, .00011)
-    gateway = Gateway(SimpleNamespace(messages=SimpleNamespace(create=dispatch)), ledger, configuration)
+    gateway = Gateway(SimpleNamespace(messages=SimpleNamespace(create=dispatch)), ledger, configuration, wait=lambda _: None)
     with pytest.raises(BudgetStopped, match=r'cap \$0.000110000.*\$0.000110000 reservation.*headroom \$0.000000000'):
         gateway.create(model='fake', max_tokens=10, messages=[])
     assert len(calls) == 1

@@ -37,3 +37,14 @@ HEADROOM_LINE = "{provider} {start} to {end} UTC: cap ${cap:.9f}; settled ${sett
 HEADROOM_UNCONFIGURED = "{provider}: cycle not configured in ledger; cap, cycle spend and headroom unavailable."
 RUN_BUDGET = "Run cap: ${cap:.2f}; requested {provider} cycle cap: {cycle_cap}. Ledger: {ledger}"
 CYCLE_UNCONFIGURED = "unconfigured (dry run only)"
+RETRY_WAIT_EXCEEDED = (
+    "Provider requested a retry wait of {seconds:g} seconds, exceeding the {limit:g}-second limit; "
+    "run stopped without sleeping. Use retry-failed before another paid attempt."
+)
+RETRY_EXHAUSTED = "Request {key} exhausted its retry allowance; use retry-failed before another paid attempt."
+REQUEST_UNKNOWN = "Request {key} has an unknown outcome and may have been charged; reservation retained, manual reconciliation required."
+RETRY_FAILED_HELP = "Allow another attempt at this run's retryable failures and billing stops; preserve paid responses and list unknown outcomes. No service calls."
+RETRY_RUN_HELP = "Run directory containing run.json; uses its recorded shared ledger."
+RETRY_RESULT = "Retry authorized for {count} requests at {created}; resume extraction with the same configuration and replicate."
+RETRY_UNKNOWN = "Request {key}: unknown outcome; not retried. Reconcile with provider records."
+RETRY_LEDGER_MISSING = "The run's recorded ledger does not exist: {path}"

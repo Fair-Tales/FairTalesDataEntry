@@ -15,6 +15,7 @@ from .tuning import DEFAULT_FREEZE_DIR, TuningLoader, TuningRefused, TuningExpos
 from text_content.tuning import TuningErrors, TuningHelp
 from text_content.pipeline_runtime import (
     CYCLE_CAP_HELP, HEADROOM_HELP, HEADROOM_LINE, HEADROOM_UNCONFIGURED, RUN_BUDGET, CYCLE_UNCONFIGURED,
+    RETRY_FAILED_HELP, RETRY_RUN_HELP, RETRY_RESULT, RETRY_UNKNOWN, RETRY_LEDGER_MISSING,
 )
 
 PACKAGE = Path(__file__).resolve().parent
@@ -66,6 +67,9 @@ def build_parser():
 
     headroom = commands.add_parser("headroom", help=HEADROOM_HELP)
     headroom.add_argument("--ledger", type=Path, default=evidence_dir() / 'spend.sqlite')
+
+    retry = commands.add_parser('retry-failed', help=RETRY_FAILED_HELP)
+    retry.add_argument('--run', type=Path, required=True, help=RETRY_RUN_HELP)
 
     score = commands.add_parser("score", help="Pure offline scoring; never reads credentials or creates a cloud client")
     score.add_argument("--snapshot", type=Path, required=True)
@@ -555,7 +559,8 @@ def main(argv=None):
     try:
         return {"snapshot": _snapshot, "extract": _extract, "score": _score, "inventory": _inventory,
                 "audit-tuning": _audit_tuning, 'tuning-noise': _tuning_noise,
-                'tuning-attempt': _tuning_attempt, 'headroom': _headroom}.get(args.command)(args)
+                'tuning-attempt': _tuning_attempt, 'headroom': _headroom,
+                'retry-failed': _retry_failed}.get(args.command)(args)
     except (OSError, ValueError, TypeError, sqlite3.Error, EOFError, TuningRefused, TuningExposure) as exc:
         parser.exit(2, f"{type(exc).__name__}: {exc}\n")
 
@@ -564,6 +569,30 @@ def _headroom(args):
     from .store import read_headroom
     for row in read_headroom(args.ledger):
         print((HEADROOM_LINE if row['configured'] else HEADROOM_UNCONFIGURED).format(**row))
+    return 0
+
+
+def _retry_failed(args):
+    from .json_sources import JsonSources
+    from .store import Ledger
+    with run_lock(args.run):
+        # Read only accounting identity, not the contract's book inventory.
+        with JsonSources(args.run / 'run.json') as source:
+            top = source.members(source.root)
+            contract = source.members(top['contract'])
+            run_id = source.decode(top['run_id'])
+            path = Path(source.decode(contract['ledger']))
+            cap = source.decode(contract['max_spend_usd'])
+        if not path.is_file():
+            raise ValueError(RETRY_LEDGER_MISSING.format(path=path))
+        ledger = Ledger(path, run_id, cap)
+        try:
+            result = ledger.retry_failed()
+        finally:
+            ledger.close()
+    print(RETRY_RESULT.format(count=len(result['keys']), created=result['created']))
+    for key in result['unknown']:
+        print(RETRY_UNKNOWN.format(key=key))
     return 0
 
 

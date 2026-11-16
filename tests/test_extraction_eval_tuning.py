@@ -39,7 +39,7 @@ def rehearsal_lock(tmp_path, freeze_dir):
         record = freeze_run(out, manifest, selection, {}, 1, 1, 1, tmp_path / 'ledger')
     stages = Stages(out)
     stages.put('protected:metadata', {'status': 'completed', 'value': {}})
-    stages.put('protected:characters', {'status': 'completed', 'value': []})
+    stages.put(f'protected:characters:{digest({})}', {'status': 'completed', 'value': []})
     stages.close()
     gateway = SimpleNamespace(record_usage=lambda *args: None,
                               ledger=SimpleNamespace(run_id=record['run_id']))
@@ -280,7 +280,7 @@ def test_runner_reuses_allowed_stage_cache_and_records_source(loader, tmp_path):
 
     stages = Stages(loader.path.parent)
     stages.put('allowed:metadata', {'status': 'completed', 'value': {'title': 'Cached title'}})
-    stages.put('allowed:characters', {'status': 'completed', 'value': []})
+    stages.put(f'allowed:characters:{digest({})}', {'status': 'completed', 'value': []})
     stages.close()
     gateway = SimpleNamespace(record_usage=lambda *args: None)
     result = run_extract(tmp_path, {'books': [book('allowed', content='usable')]},

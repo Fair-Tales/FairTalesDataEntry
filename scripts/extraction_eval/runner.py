@@ -311,8 +311,12 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                     raise EvaluationFailure(kind, f'Provider stop reason: {stop}',
                                             raw_response=response_dict(response))
 
-            def perform(key, callback, *, refresh_lookup=False):
+            def perform(key, callback, *, refresh_lookup=False, inputs=None):
                 nonlocal stop_reason
+                # Recovered pages change downstream inputs. Keep the old stage
+                # and paid response, but do not replay results for partial text.
+                if inputs is not None:
+                    key = f'{key}:{digest(inputs)}'
                 gateway.context = {"book_id": current_book_id, "stage": key}
                 if stop_reason and stop_reason[0] == 'billing_stopped':
                     return {'status': 'pending', 'error': stop_reason[1]}
@@ -321,6 +325,12 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                 saved = stages.get(key, book_id=current_book_id)
                 if saved is not None:
                     saved = normalize_outcome(saved)
+                    if (saved.get('status') == 'failed'
+                            and saved.get('failure_kind') != 'outcome_unknown'
+                            and getattr(gateway, 'ledger', None) is not None
+                            and gateway.ledger.stage_retry_authorized(key)):
+                        saved = None
+                if saved is not None:
                     if saved.get('failure_kind') == 'outcome_unknown':
                         stop_reason = ('outcome_unknown', saved.get('error', 'Unknown request outcome'))
                     elif saved.get('halt_reason') == 'billing_stopped':
@@ -468,7 +478,8 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                         return core.classify_book_context(predicted_pages, images, gateway, settings, record_usage)
 
                     if settings.get('story_context_enabled', False):
-                        book_result['story_context'] = perform(f'{stage_prefix}:story_context', context)
+                        book_result['story_context'] = perform(f'{stage_prefix}:story_context', context,
+                                                               inputs=predicted_pages)
                         from extraction_core import apply_context_classification
                         final_pages = apply_context_classification(predicted_pages, book_result['story_context'])
                         book_result['pages'] = {page.get('id'): result for page, result in zip(pages, final_pages)}
@@ -489,7 +500,8 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
 
                     if settings.get('metadata_reconciliation_enabled', False):
                         book_result['metadata_initial'] = book_result.get('metadata')
-                        book_result['metadata_reconciliation'] = perform(f'{stage_prefix}:metadata_reconciliation', reconcile)
+                        book_result['metadata_reconciliation'] = perform(f'{stage_prefix}:metadata_reconciliation', reconcile,
+                            inputs={'metadata': book_result['metadata'], 'pages': predicted_pages})
                         if book_result['metadata_reconciliation'].get('status') == 'completed':
                             book_result['metadata'] = book_result['metadata_reconciliation']
                     def characters():
@@ -519,7 +531,8 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                                                    'included_pages': len(input_pages),
                                                    'eligible_story_pages': sum(row.get('status') == 'completed' and row.get('contains_story') is True for row in predicted_pages),
                                                    'unresolved_pages': sum(row.get('contains_story') is None for row in predicted_pages)}}
-                    book_result["characters"] = perform(f"{stage_prefix}:characters", characters)
+                    book_result["characters"] = perform(f"{stage_prefix}:characters", characters,
+                                                        inputs=book_result['pages'])
                     atomic_json(out / ("dry_run_predictions.json" if dry_run else "predictions.json"), results)
                 results["unavailable_books"] = sum(book.get('status') == 'unavailable'
                                                    for book in results['books'].values())

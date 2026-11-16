@@ -108,8 +108,9 @@ def billing_rejection(exc):
     code = getattr(exc, 'status_code', None)
     if code in {401, 402, 403}:
         return True
-    message = str(exc).casefold()
+    message = f"{exc} {getattr(exc, 'body', '')}".casefold()
     return code in {400, 429} and any(word in message for word in (
         'credit balance', 'insufficient credit', 'credits exhausted',
         'billing', 'payment required', 'spend limit', 'usage limit', 'insufficient_quota',
+        'credit_balance_exhausted', 'enforced_spend_limit_reached',
     ))

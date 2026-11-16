@@ -199,14 +199,14 @@ def test_interrupted_dispatch_is_not_repaid(config, ledger_factory):
     assert provider.calls == []
 
 
-def test_only_definite_rate_limit_rejections_retry(config, ledger_factory):
+def test_definite_rate_limit_rejections_retry(config, ledger_factory):
     class Rejected(RuntimeError):
         status_code = 429
 
     config['max_attempts'] = 2
     ledger = ledger_factory()
     provider = FakeProvider(Rejected('rate limit'), response())
-    result = Gateway(provider, ledger, config).create(**request())
+    result = Gateway(provider, ledger, config, wait=lambda _: None).create(**request())
     assert result.id == 'fixture-response'
     assert len(provider.calls) == 2
     rows = ledger.rows()
@@ -226,6 +226,132 @@ def test_permanent_rejection_is_cached(config, ledger_factory):
             gateway.create(**request())
     assert len(provider.calls) == 1
     assert ledger.rows()[0]['reserved_usd'] > 0
+
+
+@pytest.mark.parametrize('status', [429, 500, 529])
+def test_retry_exhaustion_explicit_recovery_and_free_replay(config, ledger_factory, status):
+    class Rejected(RuntimeError):
+        status_code = status
+
+    config['max_attempts'] = 5
+    ledger = ledger_factory()
+    provider = FakeProvider(response(), *(Rejected('busy') for _ in range(5)), response())
+    waits = []
+    gateway = Gateway(provider, ledger, config, wait=waits.append)
+    completed = gateway.create(**request('already paid'))
+    paid = ledger.get(completed._eval_key)
+    with pytest.raises(CachedFailure, match='retry-failed'):
+        gateway.create(**request())
+    assert len(waits) == 4
+    assert all(2 ** attempt / 2 <= delay <= 2 ** attempt for attempt, delay in enumerate(waits))
+    before = [dict(row) for row in ledger.db.execute('SELECT * FROM calls ORDER BY rowid')]
+    for _ in range(2):
+        with pytest.raises(CachedFailure, match='retry-failed'):
+            gateway.create(**request())
+    assert len(provider.calls) == 6
+    result = ledger.retry_failed()
+    assert result['keys'] == [before[-1]['key']]
+    assert ledger.retry_failed()['keys'] == []  # Repeated command is harmless.
+    assert [dict(row) for row in ledger.db.execute('SELECT * FROM calls ORDER BY rowid')] == before
+    event = dict(ledger.db.execute('SELECT * FROM retry_events').fetchone())
+    assert event == dict(key=before[-1]['key'], run_id=ledger.run_id, created=result['created'])
+    gateway = Gateway(provider, ledger, config, wait=waits.append)
+    assert gateway.create(**request('already paid'))._eval_cached
+    assert not gateway.create(**request())._eval_cached
+    assert gateway.create(**request())._eval_cached
+    assert len(provider.calls) == 7
+    assert len(waits) == 4  # Cache traversal never sleeps.
+    assert ledger.get(completed._eval_key) == paid
+    assert ledger.retry_failed()['keys'] == []  # Earlier rejected attempts stay history.
+    assert ledger_factory(run='another-run').retry_failed()['keys'] == []
+
+
+@pytest.mark.parametrize('header,expected', [('4.5', 4.5), ('600', 600),
+    ('Mon, 16 Nov 2026 12:10:00 GMT', 600),
+    ('Mon, 16 Nov 2026 12:00:09 GMT', 9), ('invalid', None), ('-1', None), ('nan', None)])
+def test_sdk_retry_after_or_bounded_backoff(config, ledger_factory, header, expected):
+    from datetime import datetime, timezone
+
+    class Rejected(RuntimeError):
+        status_code = 529
+        response = SimpleNamespace(headers={'retry-after': header})
+
+    ledger = ledger_factory()
+    ledger.clock = lambda: datetime(2026, 11, 16, 12, tzinfo=timezone.utc)
+    config['max_attempts'] = 2
+    provider = FakeProvider(Rejected('overloaded'), response())
+    waits = []
+    Gateway(provider, ledger, config, wait=waits.append).create(**request())
+    assert len(waits) == 1
+    assert waits == [expected] if expected is not None else .5 <= waits[0] <= 1
+
+
+@pytest.mark.parametrize('attempts', [1, 5])
+@pytest.mark.parametrize('header,seconds', [
+    ('601', 601), ('3600', 3600), ('Mon, 16 Nov 2026 12:10:01 GMT', 601),
+])
+def test_long_retry_wait_stops_until_explicit_recovery(config, ledger_factory, header, seconds, attempts):
+    from datetime import datetime, timezone
+
+    class Rejected(RuntimeError):
+        status_code = 529
+        response = SimpleNamespace(headers={'retry-after': header})
+
+    config['max_attempts'] = attempts
+    ledger = ledger_factory()
+    ledger.clock = lambda: datetime(2026, 11, 16, 12, tzinfo=timezone.utc)
+    provider = FakeProvider(Rejected('overloaded'), response())
+    waits = []
+    for _ in range(2):  # Fresh rejection and ordinary resume both stop.
+        gateway = Gateway(provider, ledger, config, wait=waits.append)
+        with pytest.raises(CachedFailure, match=rf'{seconds} seconds.*retry-failed'):
+            gateway.create(**request())
+        assert waits == []
+        assert len(provider.calls) == 1
+    rows = ledger.rows()
+    assert len(rows) == 1
+    assert rows[0]['state'] == 'retryable'
+    assert ledger.retry_failed()['keys'] == [rows[0]['key']]
+    assert not gateway.create(**request())._eval_cached
+    assert len(provider.calls) == 2
+    assert waits == []
+
+
+def test_resume_interrupted_retry_waits_before_next_dispatch(config, ledger_factory):
+    class Rejected(RuntimeError):
+        status_code = 429
+        response = SimpleNamespace(headers={'retry-after': '3'})
+
+    def interrupted_wait(_):
+        raise KeyboardInterrupt()
+
+    config['max_attempts'] = 2
+    ledger = ledger_factory()
+    provider = FakeProvider(Rejected('busy'), response())
+    with pytest.raises(KeyboardInterrupt):
+        Gateway(provider, ledger, config, wait=interrupted_wait).create(**request())
+    assert len(provider.calls) == 1
+    waits = []
+    Gateway(provider, ledger, config, wait=waits.append).create(**request())
+    assert waits == [3]
+    assert len(provider.calls) == 2
+
+
+def test_retry_failed_only_reopens_eligible_requests_in_selected_run(config, ledger_factory):
+    ledger = ledger_factory()
+    for key in ('retry', 'permanent', 'unknown', 'dispatched', 'paid'):
+        ledger.reserve(key, {'request': key}, .01)
+    ledger.fail('retry', 'busy', rejected=True, retryable=True)
+    ledger.fail('permanent', 'bad request', rejected=True)
+    ledger.fail('unknown', 'timeout')
+    ledger.settle('paid', response(), .001)
+    other = ledger_factory(run='other')
+    other.reserve('other-retry', {'request': 'other'}, .01)
+    other.fail('other-retry', 'busy', rejected=True, retryable=True)
+    result = ledger.retry_failed()
+    assert result['keys'] == ['retry']
+    assert result['unknown'] == ['dispatched', 'unknown']
+    assert not ledger.retry_authorized('other-retry')
 
 
 def test_provider_limits_fail_before_dispatch(config, ledger_factory):
@@ -963,3 +1089,54 @@ def test_provider_failure_and_request_cache_never_complete_blank(
         if kind == 'outcome_unknown':
             assert result['incomplete'] is True
             assert ledger.rows()[0]['reserved_usd'] > 0
+
+
+@pytest.mark.usefixtures('synthetic_cohort')
+@pytest.mark.parametrize('status', [429, 529, 402, None])
+def test_retry_failed_command_recovers_cached_stages_but_never_unknown(
+        snapshot_fixture, tmp_path, config, ledger_factory, status, capsys):
+    from scripts.extraction_eval.cli import main
+
+    class Rejected(RuntimeError):
+        status_code = status
+
+    error = Rejected('busy') if status else TimeoutError('lost response')
+    # Metadata completes, then a page fails; the second page is attempted only
+    # for nonfatal rejections. Successful stages must remain free on recovery.
+    provider = FakeProvider(response(), error, response(), response())
+    ledger = ledger_factory()
+    snapshot, manifest, selection = snapshot_fixture
+    out = tmp_path / 'retry-run'
+    out.mkdir()
+    atomic_json(out / 'run.json', {'run_id': ledger.run_id,
+        'contract': {'ledger': str(tmp_path / 'ledger.sqlite'), 'max_spend_usd': 1}})
+    core = FakeCore(paid=True)
+
+    def run():
+        return run_extract(snapshot, manifest, selection, out,
+                           Gateway(provider, ledger, config), config,
+                           loader=current_loader(), core=core, progress=lambda _: None)
+
+    initial = run()
+    assert any(page['status'] == 'failed' for page in initial['books']['selected']['pages'].values())
+    count = len(provider.calls)
+    paid = [dict(row) for row in ledger.db.execute("SELECT * FROM calls WHERE state='completed'")]
+    run()  # Merely resuming does not authorize another charge.
+    assert len(provider.calls) == count
+    assert main(['retry-failed', '--run', str(out)]) == 0
+    output = capsys.readouterr().out
+    assert len(provider.calls) == count
+    recovered = run()
+    if status is None:
+        assert recovered['incomplete']
+        assert 'unknown outcome; not retried' in output
+        assert ledger.rows()[-1]['key'] in output
+        assert len(provider.calls) == count
+    else:
+        assert not recovered['incomplete']
+        assert all(page['status'] == 'completed' for page in recovered['books']['selected']['pages'].values())
+        assert len(recovered['books']['selected']['characters']['input_pages']) == 2
+        assert 'Retry authorized for 1 requests' in output
+        assert len(provider.calls) == 4  # Metadata + 2 pages + one rejection.
+    for row in paid:
+        assert ledger.get(row['key']) == row
