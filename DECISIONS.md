@@ -816,3 +816,40 @@ averages repeated runs for the cheap character stage. In simulation it keeps a
 elsewhere essentially never. It costs about $19 of extra calibration for the
 character stage and $136 for transcription, within the existing caps.
 
+## 021 — Aliases tuned for accuracy; pronouns handled by the LLM in the pipeline (2026-11-16)
+
+**Context.** Chris holds that aliases are key information. An experiment on the
+twenty development books (`planning/alias_value_experiment_2026-11-16.md`)
+compared the original coders' sparse alias coding with the pipeline's denser
+one on the same text: 12.5% more mentions found, about one in six of the extra
+ones wrong on an agent's reading, the share of verbs by gender barely changed,
+and speech resolution no better. About half of all verb subjects in those books
+are pronouns, which alias matching cannot attribute under either coding.
+
+1. **Aliases are tuned for accuracy, not quantity.** Three figures, with no human
+   annotation: how many of the coders' recorded names the pipeline also records
+   (explicit-alias coverage), whether each alias appears in the book's text
+   (groundedness), and an agent check of a sample of the pipeline's aliases on the
+   tuning books (right character, wrong character, not an alias). A change that
+   adds aliases is kept only if their accuracy does not fall. Aliases do not
+   become a sixth headline measure.
+
+2. **Pronouns are resolved by a language model, not by alias matching.** Chris:
+   "this should be handled by the analysis pipeline using the LLM. Speech and
+   receiver detection and attribution is already handled this way." Speech and
+   receiver attribution live in the language-analysis repository, which also
+   holds action and adjective extraction. The data-entry pipeline's new
+   character-stage prompts separately ask the model to tie each piece of a
+   character's language to a character with page and quote, using pronouns as
+   evidence; that has never been run. Which of the two is the right home, and
+   how to avoid doing it twice, is for the review in item 4 to establish rather
+   than assumed here.
+
+3. **It is tested first on the twenty development books** (about 20 cents once
+   the evaluation key exists), with an agent checking a sample of attributions
+   against the text, and Chris sees the numbers before it becomes a tuning
+   target.
+
+4. **Astra reviews the LLM pronoun handling for the language analysis** before
+   that test, to check it is designed cleanly end to end.
+

@@ -51,6 +51,8 @@
 
 **Open, from Chris on 16 November.** Aliases are key information and the pipeline must be tuned for their detection and accuracy. Before deciding how alias accuracy is measured he wants evidence that the pipeline's denser alias coding actually changes the language analysis: a comparison, on a subset of books, of speech attribution and verb frequency under the original sparse coding and under the pipeline's. That experiment runs at no API cost on the development books.
 
+**Added 16 November (DECISIONS 021).** P2: run the candidate character stage on the twenty development books to test LLM pronoun handling for the language analysis, and have an agent check a sample of its character attributions against the text. About 20 cents; needs the evaluation key (A1a) and the adapter and configuration items it depends on. Preceded by an Astra review of how the pronoun handling is designed. Aliases are tuned for accuracy, not quantity, on three figures (coverage, groundedness and an agent-checked sample), so an agent alias check on the tuning books is added to the tuning measures.
+
 ## B. Before `claude-dev` can go to `main`
 
 | ID/reference | Change and files | Runnable acceptance → expected result | Depends; size |
