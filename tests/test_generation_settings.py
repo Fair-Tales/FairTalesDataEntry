@@ -8,11 +8,39 @@ import pytest
 
 from ai_runtime import extraction_runtime
 from pipeline_config import (
-    STAGE_MAX_TOKENS, generation_request, requested_generation, validate_settings,
+    STAGE_MAX_TOKENS, OPENAI_REASONING_EFFORTS, generation_request, requested_generation, validate_settings,
 )
 from scripts.extraction_eval.billing import cycle_budgets
 from scripts.extraction_eval.gateway import Gateway, DryRunMiss, RequestLimitError
 from scripts.extraction_eval.store import Ledger
+
+
+@pytest.mark.parametrize('stage', STAGE_MAX_TOKENS)
+@pytest.mark.parametrize('model', OPENAI_REASONING_EFFORTS)
+def test_each_stage_has_validated_openai_settings_and_output_floor(stage, model):
+    for effort in OPENAI_REASONING_EFFORTS[model]:
+        settings = validate_settings({f'{stage}_model': model,
+                                      f'{stage}_openai_reasoning_effort': effort}, model_ids=[model])
+        request = generation_request(settings, stage)
+        assert request['reasoning'] == {'effort': effort}
+        assert request['openai_output_floor'] == request['max_tokens'] == 25000
+    for effort in ('minimal', 'ultra', 'default', None, True):
+        with pytest.raises(ValueError):
+            validate_settings({f'{stage}_model': model,
+                               f'{stage}_openai_reasoning_effort': effort}, model_ids=[model])
+
+
+@pytest.mark.parametrize('model', ['gpt-6-astra', 'gpt-6.1-sol'])
+def test_none_effort_rejected_on_models_that_require_reasoning(model):
+    with pytest.raises(ValueError):
+        validate_settings({'rotation_model': model, 'rotation_openai_reasoning_effort': 'none'},
+                          model_ids=[model])
+
+
+@pytest.mark.parametrize('floor', [0, 16, 255, True, 25000.0, 128001, None])
+def test_invalid_openai_floor(floor):
+    with pytest.raises(ValueError):
+        validate_settings({'rotation_openai_output_floor': floor})
 
 
 @pytest.fixture

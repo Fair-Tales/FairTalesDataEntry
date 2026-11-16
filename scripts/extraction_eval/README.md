@@ -174,7 +174,8 @@ The harness checks Anthropic refusal stops, and transcription/character token
 limits, through its local usage sink after accounting and before parsing. Even
 valid blank-page JSON with a refusal stop is a failure. An explicit successful
 wordless answer remains `completed` with empty text. Short orientation checks
-retain their existing fallback behaviour. OpenAI outcomes are separate (A12b).
+retain their existing fallback behaviour. OpenAI checks every reply before
+settlement, including orientation and crop checks (see A12–A13 below).
 
 Each scan book reports `page_failures`: `failed`, `by_kind`, `attempted`,
 `completed`, `unrun`, and `failed_pages_per_100 = 100 * failed / attempted`.
@@ -636,8 +637,8 @@ Opus 4.8 also allow xhigh. Haiku 4.5 accepts only disabled thinking here, with
 effort omitted. Manual `enabled` thinking needs a budget and is not implemented.
 An evaluation model known only to the price table may use omitted options;
 explicit overrides require documented support in the shared definition. This
-prevents accidental invalid requests without guessing capabilities. OpenAI
-reasoning mappings and token floors remain A12a.
+prevents accidental invalid requests without guessing capabilities. OpenAI has
+separate reasoning settings and output floors, documented below.
 
 The local source consulted offline was bundled `claude-api` reference **2.1.322**,
 at `/tmp/claude-1000/bundled-skills/2.1.322/98c07a88497fde2ff3d554084d8bd7d5/claude-api/shared/`:
@@ -984,6 +985,81 @@ Every OpenAI Responses and Chat Completions payload includes `store: false`, and
 attempts to enable storage or background execution are refused before reservation.
 This avoids stored-response state, not all retention: abuse-monitoring logs can
 retain content for up to 30 days.
+
+### OpenAI reasoning, outcomes and prices (A12a, A12b, A13)
+
+Official OpenAI documentation checked **2026-11-16**; no API calls were made.
+The supported model IDs and standard USD prices per million tokens are:
+
+| Model/source | Allowed reasoning efforts | Input | Cache read | Write 30m | Write 12h | Output |
+|---|---|---:|---:|---:|---:|---:|
+| [GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) | low, medium, high, xhigh, max | 10 | 1 | 12.5 | 25 | 50 |
+| [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol) | low, medium, high, xhigh, max | 2 | .1 | 2.5 | 5 | 10 |
+| [GPT-6.1 Terra](https://developers.openai.com/api/docs/models/gpt-6.1-terra) | none, low, medium, high, xhigh, max | 1 | .05 | 1.25 | 2.5 | 5 |
+| [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna) | none, low, medium, high, xhigh, max | .1 | .01 | .125 | .25 | .5 |
+
+The design's “Sol” means `gpt-6.1-sol`. The earlier
+[GPT-6 Sol](https://developers.openai.com/api/docs/models/gpt-6-sol) documents
+`none` support, but is not in this adapter's supported registry. Unknown model
+capabilities are refused before reservation.
+
+Every stage in `pipeline_config.py` has `<stage>_openai_reasoning_effort`
+(default `low`) and `<stage>_openai_output_floor` (default `25000`, configurable
+from 256 to 128000). The effective cap is the larger of its ordinary
+`max_tokens` and this floor. The shared helpers forward both; the gateway records
+the effort, floor, effective cap and cache lifetime in the request identity.
+Changing even a floor below the effective cap misses the local cache. Anthropic
+request bodies retain their previous defaults.
+Pinned `max_output_tokens` limits must accommodate the floor; a smaller limit
+refuses the request before reservation rather than silently raising the limit.
+
+The [reasoning guide](https://developers.openai.com/api/docs/guides/reasoning)
+recommends an initial allowance of at least 25,000 tokens. This is a starting
+budget, **not evidence of successful extraction or a guarantee of visible output**;
+no finite floor prevents reasoning from exhausting it. A smaller tuned floor
+needs evidence. Reasoning appears in `output_tokens_details.reasoning_tokens`
+(Chat: `completion_tokens_details.reasoning_tokens`), already within the billed
+output total. We never add it again.
+
+The [Responses reference](https://developers.openai.com/api/reference/resources/responses/methods/create)
+specifies `reasoning.effort`, `max_output_tokens`, refusal content blocks, and
+`status=incomplete` with `incomplete_details.reason=max_output_tokens` or
+`content_filter`. The
+[Chat Completions reference](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)
+uses `reasoning_effort`, `max_completion_tokens`, `message.refusal`, and
+`finish_reason=length` or `content_filter`. These map to A8a's `refusal`,
+`truncated`, and `output_blocked`. Empty/whitespace or malformed output maps to
+`invalid_response`; a failed/cancelled response maps to `provider_error`.
+Known usage is charged and stored atomically as `failed`, retaining the native
+response and request ID. Replay raises the same kind; old completed-but-invalid
+records are also refused. Explicit wordless-page JSON remains a success.
+
+The [prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching)
+prices writes at 1.25 times input for `30m`, or 2.5 times input for `12h`.
+These replace ordinary input pricing. Ordinary input is total input minus reads
+minus writes. Responses supplies `input_tokens_details.cache_write_tokens` and
+`cache_write_tokens_details.{ttl_30m_tokens,ttl_12h_tokens}`; the split must sum
+to writes. Chat supplies `prompt_tokens_details.cache_write_tokens` and supports
+only `30m` at request level. Both endpoints default here to explicit
+`prompt_cache_options: {"ttl": "30m"}`. Each pinned price row must contain
+`cache_ttl: "30m"` and the model's write tariff above; the reservation includes
+the highest input/read/write rate. Responses can explicitly request `12h` only
+with a matching pinned row. Mixed lifetimes and per-block overrides are refused.
+
+The Responses reference labels the lifetime split optional, whereas the caching
+guide says both counts are returned. We fail closed on its absence, even with
+zero writes. Chat's write count is optional in the schema; we require it
+explicitly. Missing/null/invalid counts, inconsistent splits, unexpected lifetime
+usage or usage beyond 272K input leave the reservation outstanding and stop
+further OpenAI dispatch in that run, including through a restarted gateway.
+Missing write tariffs stop before dispatch. Long-context surcharges and regional
+or nonstandard service tiers are outside this adapter's priced scope.
+
+Offline fixtures in `tests/fixtures/provider_gateway/openai.json` are synthetic
+recorded-format shapes, not live captures. Tests cover both endpoint payloads,
+every stage/model effort mapping, rotation, floor/lifetime cache misses, charged
+failures and replay, explicit wordless output, all four models' four tariffs,
+reasoning counted once, and unknown usage stopping subsequent requests.
 
 ## Review, adjudication and comparisons
 

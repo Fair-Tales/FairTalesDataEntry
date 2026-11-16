@@ -49,12 +49,12 @@ PRICING_PER_MTOK = {
     # without regional surcharges. Longer prompts remain counted but unpriced.
     # All four cached-input rates are published:
     # https://developers.openai.com/api/docs/pricing
-    # Write rates depend on 30m/12h retention, absent from our normalized usage;
-    # leave writes unpriced rather than assuming either duration's tariff.
-    "gpt-6-astra": {"input": 10.0, "output": 50.0, "cache_read": 1.0, "cache_write": None},
-    "gpt-6.1-sol": {"input": 2.0, "output": 10.0, "cache_read": .1, "cache_write": None},
-    "gpt-6.1-terra": {"input": 1.0, "output": 5.0, "cache_read": .05, "cache_write": None},
-    "gpt-6-luna": {"input": .1, "output": .5, "cache_read": .01, "cache_write": None},
+    # 30m total write tariffs, verified 2026-11-16 (not input surcharges).
+    # https://developers.openai.com/api/docs/guides/prompt-caching
+    "gpt-6-astra": {"input": 10.0, "output": 50.0, "cache_read": 1.0, "cache_write": 12.5},
+    "gpt-6.1-sol": {"input": 2.0, "output": 10.0, "cache_read": .1, "cache_write": 2.5},
+    "gpt-6.1-terra": {"input": 1.0, "output": 5.0, "cache_read": .05, "cache_write": 1.25},
+    "gpt-6-luna": {"input": .1, "output": .5, "cache_read": .01, "cache_write": .125},
     # Deprecated: retained only for historical accounting, not model candidates.
     # https://developers.openai.com/api/docs/models/gpt-4.1
     # https://developers.openai.com/api/docs/models/gpt-4.1-mini
@@ -64,6 +64,12 @@ PRICING_PER_MTOK = {
 # Only documented snapshots; do not strip arbitrary model suffixes to guess rates.
 for _model in ("gpt-4.1", "gpt-4.1-mini"):
     PRICING_PER_MTOK[f"{_model}-2025-04-14"] = PRICING_PER_MTOK[_model].copy()
+
+OPENAI_CACHE_WRITE_PER_MTOK = {
+    model: {'30m': PRICING_PER_MTOK[model]['cache_write'],
+            '12h': 2 * PRICING_PER_MTOK[model]['cache_write']}
+    for model in ('gpt-6-astra', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-luna')
+}
 
 
 def usage_field(value, field, default=None):
@@ -84,7 +90,7 @@ def _token_count(value):
     return value
 
 
-def normalize_usage(usage, provider="anthropic"):
+def normalize_usage(usage, provider="anthropic", *, cache_ttl='30m'):
     """Convert native usage to disjoint input/output/cache buckets.
 
     Missing required counts stay None. Anthropic's optional null/absent cache
@@ -113,9 +119,22 @@ def normalize_usage(usage, provider="anthropic"):
     output = _token_count(usage_field(usage, "completion_tokens" if chat else "output_tokens"))
     details = usage_field(usage, "prompt_tokens_details" if chat else "input_tokens_details")
     cache_read = _token_count(usage_field(details, "cached_tokens"))
-    # Preserve explicit cache-write usage as its own bucket, even when its
-    # model/duration has no applicable rate in the table.
-    cache_write = _token_count(usage_field(details, "cache_write_tokens", 0))
+    # Never turn an absent write count into a free call. Responses reports the
+    # lifetime split; Chat supports only 30m and reports the aggregate count.
+    cache_write = _token_count(usage_field(details, "cache_write_tokens"))
+    split = usage_field(details, 'cache_write_tokens_details')
+    if cache_ttl not in ('30m', '12h') or (chat and cache_ttl != '30m'):
+        raise ValueError('Unsupported cache lifetime')
+    if not chat or split is not None:
+        short = _token_count(usage_field(split, 'ttl_30m_tokens'))
+        long = _token_count(usage_field(split, 'ttl_12h_tokens'))
+        if short is None or long is None:
+            cache_write = None
+        elif cache_write is not None:
+            if short + long != cache_write:
+                raise ValueError('Cache-write lifetime counts do not sum to total')
+            if (long if cache_ttl == '30m' else short):
+                raise ValueError('Cache-write usage disagrees with pinned lifetime')
     ordinary = None
     if input_tokens is not None and cache_read is not None and cache_write is not None:
         ordinary = input_tokens - cache_read - cache_write
@@ -125,7 +144,7 @@ def normalize_usage(usage, provider="anthropic"):
             "cache_read": cache_read, "cache_write": cache_write}
 
 
-def usage_cost(model, input_tokens=0, output_tokens=0, cache_read=0, cache_write=0):
+def usage_cost(model, input_tokens=0, output_tokens=0, cache_read=0, cache_write=0, *, cache_ttl='30m'):
     """Price normalized, disjoint token buckets; return None for an unknown cost."""
     prices = PRICING_PER_MTOK.get(model)
     if prices is None:
@@ -141,6 +160,8 @@ def usage_cost(model, input_tokens=0, output_tokens=0, cache_read=0, cache_write
             return None
         if count:
             rate = prices.get(field)
+            if field == 'cache_write' and model in OPENAI_CACHE_WRITE_PER_MTOK:
+                rate = OPENAI_CACHE_WRITE_PER_MTOK[model].get(cache_ttl)
             if rate is None:
                 logger.warning("ai_pricing: unpriced %s tokens for %s", field, model)
                 return None

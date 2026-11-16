@@ -10,6 +10,40 @@ from ai_pricing import (
 )
 
 
+@pytest.mark.parametrize('model,rates', [
+    ('gpt-6-astra', (10, 1, 12.5, 50)),
+    ('gpt-6.1-sol', (2, .1, 2.5, 10)),
+    ('gpt-6.1-terra', (1, .05, 1.25, 5)),
+    ('gpt-6-luna', (.1, .01, .125, .5)),
+])
+@pytest.mark.parametrize('endpoint,ttl', [('responses', '30m'), ('responses', '12h'), ('chat-completions', '30m')])
+def test_all_four_tariffs_reconcile_native_usage(model, rates, endpoint, ttl):
+    from decimal import Decimal
+    from scripts.extraction_eval.gateway import usage_charge
+    chat = endpoint == 'chat-completions'
+    details = {'cached_tokens': 4000, 'cache_write_tokens': 7000}
+    if not chat:
+        details['cache_write_tokens_details'] = {
+            'ttl_30m_tokens': 7000 if ttl == '30m' else 0,
+            'ttl_12h_tokens': 7000 if ttl == '12h' else 0}
+    usage = {
+        'prompt_tokens' if chat else 'input_tokens': 12000,
+        'completion_tokens' if chat else 'output_tokens': 200,
+        'prompt_tokens_details' if chat else 'input_tokens_details': details,
+        'completion_tokens_details' if chat else 'output_tokens_details': {'reasoning_tokens': 180},
+    }
+    counts = normalize_usage(usage, 'openai-' + endpoint, cache_ttl=ttl)
+    assert counts == {'input': 1000, 'output': 200, 'cache_read': 4000, 'cache_write': 7000}
+    input_rate, read_rate, write_rate, output_rate = map(lambda value: Decimal(str(value)), rates)
+    if ttl == '12h':
+        write_rate *= 2
+    expected = (1000 * input_rate + 4000 * read_rate + 7000 * write_rate + 200 * output_rate) / 1000000
+    price = {'input': input_rate, 'output': output_rate, 'cache_read': read_rate,
+             'cache_write': write_rate, 'cache_ttl': ttl}
+    assert usage_charge({'usage': usage}, price, 'openai-' + endpoint) == expected
+    assert usage_cost(model, *counts.values(), cache_ttl=ttl) == pytest.approx(float(expected))
+
+
 def sdk_object(value):
     """Represent nested fixture dictionaries as SDK-style attribute objects."""
     if isinstance(value, dict):
@@ -38,8 +72,9 @@ def test_frontier_standard_rates(model, input_cost, cached_cost, output_cost):
     assert usage_cost(model, input_tokens=1000) == pytest.approx(input_cost)
     assert usage_cost(model, cache_read=1000) == pytest.approx(cached_cost)
     assert usage_cost(model, output_tokens=1000) == pytest.approx(output_cost)
-    # Write retention is not available to distinguish the published tariffs.
-    assert usage_cost(model, cache_write=1) is None
+    # Default writes use the pinned 30-minute tariff.
+    assert usage_cost(model, cache_write=1000) == pytest.approx(input_cost * 1.25)
+    assert usage_cost(model, cache_write=1000, cache_ttl="12h") == pytest.approx(input_cost * 2.5)
 
 
 @pytest.mark.parametrize("model, short_context_cost", [
@@ -53,7 +88,8 @@ def test_frontier_long_context_is_counted_but_unpriced(model, short_context_cost
     # The threshold includes cached input, even when ordinary input is small.
     _, metrics = usage_metrics({
         "input_tokens": total_input, "output_tokens": 100,
-        "input_tokens_details": {"cached_tokens": 200_000},
+        "input_tokens_details": {"cached_tokens": 200_000, "cache_write_tokens": 0,
+            "cache_write_tokens_details": {"ttl_30m_tokens": 0, "ttl_12h_tokens": 0}},
     }, model)
     assert metrics["input_tokens"] == total_input - 200_000
     assert metrics["cache_read_tokens"] == 200_000
@@ -74,7 +110,8 @@ def test_missing_cache_rate_is_never_inferred(monkeypatch, cached_tokens):
                         {**PRICING_PER_MTOK[model], "cache_read": None})
     provider, metrics = usage_metrics({
         "input_tokens": 1000, "output_tokens": 100,
-        "input_tokens_details": {"cached_tokens": cached_tokens},
+        "input_tokens_details": {"cached_tokens": cached_tokens, "cache_write_tokens": 0,
+            "cache_write_tokens_details": {"ttl_30m_tokens": 0, "ttl_12h_tokens": 0}},
     }, model)
     assert provider == "openai"
     assert metrics["input_tokens"] == 1000 - cached_tokens
@@ -104,9 +141,10 @@ def test_anthropic_usage_keeps_cache_tokens_separate(wrap):
 @pytest.mark.parametrize("wrap", [dict, sdk_object])
 @pytest.mark.parametrize("fields", [
     {"input_tokens": 1000, "output_tokens": 100,
-     "input_tokens_details": {"cached_tokens": 200}},
+     "input_tokens_details": {"cached_tokens": 200, "cache_write_tokens": 0,
+            "cache_write_tokens_details": {"ttl_30m_tokens": 0, "ttl_12h_tokens": 0}}},
     {"prompt_tokens": 1000, "completion_tokens": 100,
-     "prompt_tokens_details": {"cached_tokens": 200}},
+     "prompt_tokens_details": {"cached_tokens": 200, "cache_write_tokens": 0}},
 ])
 def test_openai_usage_subtracts_cached_input_once(wrap, fields):
     counts = normalize_usage(wrap(fields), "openai")
@@ -158,7 +196,8 @@ def test_nonobject_usage_is_rejected(usage):
 def test_cached_input_cannot_exceed_total_openai_input():
     with pytest.raises(ValueError):
         normalize_usage({"input_tokens": 10, "output_tokens": 1,
-                         "input_tokens_details": {"cached_tokens": 11}}, "openai")
+                         "input_tokens_details": {"cached_tokens": 11, "cache_write_tokens": 0,
+            "cache_write_tokens_details": {"ttl_30m_tokens": 0, "ttl_12h_tokens": 0}}}, "openai")
 
 
 @pytest.mark.parametrize("model", [
@@ -193,7 +232,8 @@ def test_accumulator_records_openai_and_logs_malformed_usage(caplog):
     accumulator = UsageAccumulator()
     accumulator.record("relations", "gpt-4.1", {
         "input_tokens": 1000, "output_tokens": 100,
-        "input_tokens_details": {"cached_tokens": 200},
+        "input_tokens_details": {"cached_tokens": 200, "cache_write_tokens": 0,
+            "cache_write_tokens_details": {"ttl_30m_tokens": 0, "ttl_12h_tokens": 0}},
     }, provider="openai")
     accumulator.record("relations", "gpt-4.1", "broken", provider="openai")
     assert accumulator.total_calls == 1

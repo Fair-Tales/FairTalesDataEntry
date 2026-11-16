@@ -78,10 +78,11 @@ def test_anthropic_ledger_figures_and_schema_are_preserved(ledger):
 ])
 @pytest.mark.parametrize("response", [
     {"usage": {"input_tokens": 1000, "output_tokens": 100,
-               "input_tokens_details": {"cached_tokens": 200}}},
+               "input_tokens_details": {"cached_tokens": 200, "cache_write_tokens": 0,
+            "cache_write_tokens_details": {"ttl_30m_tokens": 0, "ttl_12h_tokens": 0}}}},
     SimpleNamespace(usage=SimpleNamespace(
         prompt_tokens=1000, completion_tokens=100,
-        prompt_tokens_details=SimpleNamespace(cached_tokens=200),
+        prompt_tokens_details=SimpleNamespace(cached_tokens=200, cache_write_tokens=0),
     )),
 ])
 def test_openai_ledger_infers_provider_and_prices_cache(ledger, response, model, cost):
@@ -95,24 +96,25 @@ def test_openai_ledger_infers_provider_and_prices_cache(ledger, response, model,
     assert "total_unknown_usage_calls" not in data
 
 
-def test_openai_cache_write_without_duration_keeps_counts_unpriced(ledger):
+def test_openai_cache_write_without_duration_marks_usage_unknown(ledger):
     utilities.record_api_usage({"usage": {
         "input_tokens": 1000, "output_tokens": 100,
         "input_tokens_details": {"cached_tokens": 200, "cache_write_tokens": 100},
     }}, "gpt-6.1-terra", "relations", provider="openai")
     data = recorded_values(ledger)
     assert_buckets(data, "gpt-6.1-terra", "openai", "relations", {
-        "calls": 1, "input_tokens": 700, "output_tokens": 100,
-        "cache_read_tokens": 200, "cache_write_tokens": 100, "unpriced_calls": 1,
+        "calls": 1, "output_tokens": 100, "cache_read_tokens": 200,
+        "unpriced_calls": 1, "unknown_usage_calls": 1,
     })
     assert "total_cost_usd" not in data
-    assert "total_unknown_usage_calls" not in data
+    assert data["total_unknown_usage_calls"] == 1
 
 
 def test_unknown_model_keeps_tokens_and_marks_cost_unpriced(ledger, caplog):
     utilities.record_api_usage({"usage": {
         "input_tokens": 1000, "output_tokens": 100,
-        "input_tokens_details": {"cached_tokens": 200},
+        "input_tokens_details": {"cached_tokens": 200, "cache_write_tokens": 0,
+            "cache_write_tokens_details": {"ttl_30m_tokens": 0, "ttl_12h_tokens": 0}},
     }}, "future-model", "relations", provider="openai")
     data = recorded_values(ledger)
     assert_buckets(data, "future-model", "openai", "relations", {
@@ -245,7 +247,8 @@ def worker_database():
 
 @pytest.mark.parametrize("usage, unknown", [
     ({"input_tokens": 20, "output_tokens": 10,
-      "input_tokens_details": {"cached_tokens": 5}}, False),
+      "input_tokens_details": {"cached_tokens": 5, "cache_write_tokens": 0,
+            "cache_write_tokens_details": {"ttl_30m_tokens": 0, "ttl_12h_tokens": 0}}}, False),
     (None, True),
 ])
 def test_worker_records_unpriced_usage_in_daily_job_and_batch_ledgers(

@@ -521,7 +521,8 @@ class VisionReply(str):
 
 def vision_text(client, images, prompt, *, model="claude-sonnet-4-6",
                 max_tokens=1024, downscale=True, max_edge=1568, label="",
-                request_validator=None, thinking=None, output_config=None):
+                request_validator=None, thinking=None, output_config=None,
+                reasoning=None, openai_output_floor=None):
     """Send ``images`` + ``prompt`` to a Claude vision model and return the raw
     reply text (stripped), or ``None`` when the response carried no text block.
 
@@ -546,6 +547,10 @@ def vision_text(client, images, prompt, *, model="claude-sonnet-4-6",
         request['thinking'] = thinking
     if output_config is not None:
         request['output_config'] = output_config
+    if reasoning is not None:
+        request['reasoning'] = reasoning
+    if openai_output_floor is not None:
+        request['openai_output_floor'] = openai_output_floor
     if request_validator is not None:
         request_validator(request)
     response = client.messages.create(**request)
@@ -564,7 +569,8 @@ def vision_text(client, images, prompt, *, model="claude-sonnet-4-6",
 
 def vision_json(client, images, prompt, *, model="claude-sonnet-4-6",
                 max_tokens=1024, downscale=True, max_edge=1568, label="",
-                request_validator=None, reject_partial=False, thinking=None, output_config=None):
+                request_validator=None, reject_partial=False, thinking=None, output_config=None,
+                reasoning=None, openai_output_floor=None):
     """Send ``images`` + ``prompt`` to a Claude vision model and parse the JSON
     reply, returning ``(data_or_None, raw_text)`` (#129).
 
@@ -582,6 +588,10 @@ def vision_json(client, images, prompt, *, model="claude-sonnet-4-6",
         options['thinking'] = thinking
     if output_config is not None:
         options['output_config'] = output_config
+    if reasoning is not None:
+        options['reasoning'] = reasoning
+    if openai_output_floor is not None:
+        options['openai_output_floor'] = openai_output_floor
     raw = vision_text(
         client, images, prompt, model=model, max_tokens=max_tokens,
         downscale=downscale, max_edge=max_edge, label=label, **options,
@@ -1474,7 +1484,8 @@ def lookup_person_details(name, role, client, book_title=None):
 
 
 def _claude_json(client, prompt, max_tokens=1024, label="character_detection",
-                 model=None, thinking=None, output_config=None):
+                 model=None, thinking=None, output_config=None,
+                 reasoning=None, openai_output_floor=None):
     """Send a text prompt to a Claude model and parse the JSON response.
 
     Reuses the JSON-fence-stripping convention used by the existing Claude
@@ -1499,6 +1510,10 @@ def _claude_json(client, prompt, max_tokens=1024, label="character_detection",
         request['thinking'] = thinking
     if output_config is not None:
         request['output_config'] = output_config
+    if reasoning is not None:
+        request['reasoning'] = reasoning
+    if openai_output_floor is not None:
+        request['openai_output_floor'] = openai_output_floor
     response = client.messages.create(**request)
     _log_usage(response, model, label)
     if getattr(response, "stop_reason", None) == "max_tokens":

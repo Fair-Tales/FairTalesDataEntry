@@ -10,14 +10,14 @@ import sqlite3
 import time
 from types import SimpleNamespace
 
-from ai_pricing import normalize_usage
+from ai_pricing import normalize_usage, OPENAI_CACHE_WRITE_PER_MTOK
 from pipeline_config import requested_generation, validate_generation_request
 from text_content.pipeline_runtime import EVALUATION_CLIENT_MISSING, RETRY_EXHAUSTED, RETRY_WAIT_EXCEEDED, REQUEST_UNKNOWN
 
 from .store import CachedFailure, OutcomeUnknown, canonical, digest, guard_cached_request
 from .billing import BILLING_EXHAUSTED, BillingStopped, billing_rejection, cycle_budgets
 from .openai_client import OPENAI_PROVIDERS
-from .openai_adapter import prepare_request, response_content
+from .openai_adapter import canonical_request, prepare_request, response_content, response_failure
 
 
 MAX_RETRY_WAIT_SECONDS = 600
@@ -97,11 +97,19 @@ def validate_prices(config, *, executing=False):
             raise ValueError(f"Unknown price for {model}; refusing a zero-price fallback")
         for field in ("input", "output", "cache_read", "cache_write", "max_input_tokens", "max_output_tokens", "max_images", "max_request_bytes"):
             value = row.get(field)
-            if field == "cache_write" and value is None and config.get("provider") in OPENAI_PROVIDERS:
-                continue  # No write tariff; explicit write usage remains unsettled.
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not Decimal(str(value)).is_finite() or value <= 0:
                 raise ValueError(f"Invalid {field} price/limit for {model}")
+        if config.get('provider') in OPENAI_PROVIDERS:
+            validate_openai_price(model, row, row.get('cache_ttl'))
     return rates
+
+
+def validate_openai_price(model, rate, ttl):
+    expected = OPENAI_CACHE_WRITE_PER_MTOK.get(model, {}).get(ttl)
+    if expected is None or rate.get('cache_ttl') != ttl or rate.get('cache_write') != expected:
+        raise RequestLimitError(f'Unknown or mismatched cache_write price/lifetime for {model}')
+    if not 0 < rate.get('max_input_tokens', 0) <= 272000:
+        raise RequestLimitError('OpenAI pricing supports at most 272000 input tokens')
 
 
 def request_ceiling(request, prices):
@@ -111,7 +119,7 @@ def request_ceiling(request, prices):
         raise ValueError(f"Unknown model price: {request.get('model')}")
     # Baseline makes plain messages requests. New billable features need an
     # explicit pricing implementation, rather than accidental under-reservation.
-    unsupported = set(request) - {"model", "max_tokens", "messages", "system", "temperature", "top_p", "top_k", "stop_sequences", "thinking", "output_config"}
+    unsupported = set(request) - {"model", "max_tokens", "messages", "system", "temperature", "top_p", "top_k", "stop_sequences", "thinking", "output_config", "reasoning", "openai_output_floor", "prompt_cache_options"}
     if unsupported:
         raise RequestLimitError(f"Unpriced request options: {sorted(unsupported)}")
     output = request.get("max_tokens")
@@ -131,10 +139,14 @@ def usage_charge(response, rate, provider="anthropic-messages"):
     if not isinstance(usage, dict):
         raise OutcomeUnknown("Missing usage; retaining the request reservation")
     try:
-        counts = normalize_usage(usage, provider)
+        counts = normalize_usage(usage, provider, cache_ttl=rate.get('cache_ttl', '30m'))
     except ValueError as exc:
         raise OutcomeUnknown(f"Invalid usage; retaining reservation: {exc}") from exc
     cost = Decimal(0)
+    if provider in OPENAI_PROVIDERS:
+        if all(counts[field] is not None for field in ('input', 'cache_read', 'cache_write')):
+            if sum(counts[field] for field in ('input', 'cache_read', 'cache_write')) > 272000:
+                raise OutcomeUnknown('Unpriced long-context usage; retaining reservation')
     for field, count in counts.items():
         if count is None:
             raise OutcomeUnknown(f"Missing {field} usage; retaining reservation")
@@ -184,6 +196,13 @@ class Gateway:
         try:
             if self.provider not in OPENAI_PROVIDERS:
                 validate_generation_request(request)
+            else:
+                # Storage checks run before normalization too, via prepare_request.
+                if any(request.get(option, False) is not False for option in ('store', 'background')):
+                    prepare_request(request, self.provider)
+                request = canonical_request(request, self.provider)
+                validate_openai_price(request['model'], self.prices.get(request['model'], {}),
+                                      request['prompt_cache_options']['ttl'])
             endpoint, payload = prepare_request(request, self.provider) if self.provider in OPENAI_PROVIDERS else (None, request)
         except ValueError as exc:
             raise RequestLimitError(str(exc)) from exc
@@ -206,14 +225,20 @@ class Gateway:
                 guard_cached_request(cached.get("request"))
                 state = cached.get("state")
                 if state == "completed":
+                    result = self._response(key, json.loads(cached.get("response")), True)
                     self.cache_hits += 1
-                    return self._response(key, json.loads(cached.get("response")), True)
+                    return result
                 if state in {"dispatched", "outcome_unknown"}:
                     raise OutcomeUnknown(REQUEST_UNKNOWN.format(key=key))
                 if self.ledger.retry_authorized(key):
                     key_identity = {**identity, "retry": key}
                     attempt, delay = 0, None
                     continue
+                if state == 'failed' and endpoint and cached.get('response'):
+                    raw = json.loads(cached['response'])
+                    failure = response_failure(raw, self.provider) if 'usage' in raw else None
+                    if failure:
+                        raise failure
                 if state == "retryable":
                     raw = json.loads(cached.get("response") or "{}")
                     delay = retry_delay(raw.get("_retry_after"), attempt, self.ledger.clock())
@@ -228,6 +253,8 @@ class Gateway:
                 raise CachedFailure(f"Request {key} permanently failed: {cached.get('error')}")
             if self.dry_run:
                 raise DryRunMiss(f"Uncached request for {request.get('model')}; no paid call dispatched")
+            if endpoint:
+                self.ledger.guard_unknown_usage(self.provider)
             if endpoint and len(json.dumps(payload, ensure_ascii=False).encode()) > self.prices[request["model"]]["max_request_bytes"]:
                 raise RequestLimitError("Converted request exceeds pinned byte limit; no automatic chunking")
             if delay is not None:
@@ -292,16 +319,24 @@ class Gateway:
                 self.ledger.fail(key, exc, response=raw)
                 raise OutcomeUnknown(f"{REQUEST_UNKNOWN.format(key=key)} {exc}") from exc
             try:
-                self.ledger.settle(key, raw, charge)
+                failure = response_failure(raw, self.provider) if endpoint else None
+                self.ledger.settle(key, raw, charge, failure=failure)
             except OutcomeUnknown as exc:
                 raise OutcomeUnknown(f"{REQUEST_UNKNOWN.format(key=key)} {exc}") from exc
             except (sqlite3.Error, OSError) as exc:
                 raise OutcomeUnknown(REQUEST_UNKNOWN.format(key=key)) from exc
+            if failure:
+                raise failure
             return self._response(key, raw, False)
         raise CachedFailure("Retry allowance exhausted")
 
     def _response(self, key, raw, cached):
         if self.provider in OPENAI_PROVIDERS:
+            failure = response_failure(raw, self.provider)
+            if failure:
+                if cached:
+                    self.ledger.fail(key, f'{failure.failure_kind}: {failure}', rejected=True, response=raw)
+                raise failure
             content, stop_reason = response_content(raw, self.provider)
             raw = {**raw, "content": content, "stop_reason": stop_reason}
         result = _namespace(raw)

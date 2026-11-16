@@ -46,11 +46,30 @@ STAGE_MAX_TOKENS = {
     'locate': 128, 'rotation': 16, 'crop_quality': 16, 'theme': 512,
     'story_context': 8192,
 }
+OPENAI_OUTPUT_FLOOR = 25000
 GENERATION_DEFAULTS = {
     f'{stage}_{field}': value
     for stage, tokens in STAGE_MAX_TOKENS.items()
-    for field, value in (('max_tokens', tokens), ('thinking', 'default'), ('effort', 'default'))
+    for field, value in (('max_tokens', tokens), ('thinking', 'default'), ('effort', 'default'),
+                         ('openai_reasoning_effort', 'low'), ('openai_output_floor', OPENAI_OUTPUT_FLOOR))
 }
+
+# Official model pages, checked 2026-11-16; citations in extraction_eval/README.
+OPENAI_REASONING_EFFORTS = {
+    'gpt-6-astra': ('low', 'medium', 'high', 'xhigh', 'max'),
+    'gpt-6.1-sol': ('low', 'medium', 'high', 'xhigh', 'max'),
+    'gpt-6.1-terra': ('none', 'low', 'medium', 'high', 'xhigh', 'max'),
+    'gpt-6-luna': ('none', 'low', 'medium', 'high', 'xhigh', 'max'),
+}
+
+
+def validate_openai_generation(model, effort, floor):
+    if effort not in OPENAI_REASONING_EFFORTS.get(model, ()):
+        raise ValueError(PIPELINE_SETTING_INVALID.format(
+            key=f'{model}.openai_reasoning_effort', expected='documented model effort'))
+    if type(floor) is not int or not 256 <= floor <= 128000:
+        raise ValueError(PIPELINE_SETTING_INVALID.format(
+            key='openai_output_floor', expected='integer from 256 to 128000'))
 
 # Offline source: bundled claude-api reference 2.1.322, shared/models.md and
 # shared/model-migration.md (Sonnet 5, Sonnet 4.6, Opus 4.7/4.8 sections).
@@ -78,12 +97,18 @@ def validate_generation(model, thinking='default', effort='default'):
 
 
 def generation_request(settings, stage, *, model=None):
-    """Provider kwargs, retaining the old body exactly when options are default."""
+    """Provider kwargs; Anthropic defaults retain their previous request body."""
     model = model or settings.get(f'{stage}_model', PIPELINE_SETTINGS_DEFAULTS[f'{stage}_model'])
     thinking = settings.get(f'{stage}_thinking', 'default')
     effort = settings.get(f'{stage}_effort', 'default')
     validate_generation(model, thinking, effort)
     request = dict(model=model, max_tokens=settings.get(f'{stage}_max_tokens', STAGE_MAX_TOKENS[stage]))
+    if model in OPENAI_REASONING_EFFORTS:
+        reasoning = settings.get(f'{stage}_openai_reasoning_effort', 'low')
+        floor = settings.get(f'{stage}_openai_output_floor', OPENAI_OUTPUT_FLOOR)
+        validate_openai_generation(model, reasoning, floor)
+        request.update(reasoning={'effort': reasoning}, openai_output_floor=floor)
+        request['max_tokens'] = max(request['max_tokens'], floor)
     if thinking != 'default':
         request['thinking'] = {'type': thinking}
     if effort != 'default':
@@ -94,6 +119,11 @@ def generation_request(settings, stage, *, model=None):
 def requested_generation(request):
     """Record omission honestly, plus the locally documented default meaning."""
     model = request.get('model')
+    if model in OPENAI_REASONING_EFFORTS:
+        return dict(model=model, max_tokens=request.get('max_tokens'),
+                    reasoning=request.get('reasoning'),
+                    openai_output_floor=request.get('openai_output_floor'),
+                    prompt_cache_options=request.get('prompt_cache_options'))
     _, _, thinking_default, effort_default = ANTHROPIC_GENERATION.get(model, ((), (), None, None))
     return dict(model=model, max_tokens=request.get('max_tokens'),
                 thinking=request.get('thinking', {}).get('type', 'default'),
@@ -160,6 +190,12 @@ def validate_settings(values, *, model_ids=()):
         elif key in _CHOICES:
             valid = isinstance(value, str) and value in _CHOICES[key]
             expected = ', '.join(_CHOICES[key])
+        elif key.endswith('_openai_reasoning_effort'):
+            valid = isinstance(value, str) and value in ('none', 'low', 'medium', 'high', 'xhigh', 'max')
+            expected = 'none, low, medium, high, xhigh, max'
+        elif key.endswith('_openai_output_floor'):
+            valid = type(value) is int and 256 <= value <= 128000
+            expected = 'integer from 256 to 128000'
         elif key.endswith('_thinking') or key.endswith('_effort'):
             choices = (('default', 'adaptive', 'disabled') if key.endswith('_thinking')
                        else ('default', 'low', 'medium', 'high', 'xhigh', 'max'))
@@ -186,4 +222,8 @@ def validate_settings(values, *, model_ids=()):
         result[key] = deepcopy(value)
     for stage in STAGE_MAX_TOKENS:
         validate_generation(result[f'{stage}_model'], result[f'{stage}_thinking'], result[f'{stage}_effort'])
+        if result[f'{stage}_model'] in OPENAI_REASONING_EFFORTS:
+            validate_openai_generation(result[f'{stage}_model'],
+                                       result[f'{stage}_openai_reasoning_effort'],
+                                       result[f'{stage}_openai_output_floor'])
     return result

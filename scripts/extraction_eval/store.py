@@ -12,7 +12,7 @@ import sqlite3
 import tempfile
 
 from ai_pricing import usage_provider
-from .openai_adapter import response_content
+from .openai_adapter import response_content, response_failure
 from text_content.pipeline_runtime import BUDGET_REFUSED, CYCLE_REQUIRED, CYCLE_DAY_IMMUTABLE
 
 
@@ -226,7 +226,7 @@ class Ledger:
         with self.transaction():
             self.db.execute("UPDATE calls SET response=? WHERE key=?", (canonical(response), key))
 
-    def settle(self, key, response, cost):
+    def settle(self, key, response, cost, *, failure=None):
         with self.transaction():
             row = self.get(key)
             if row is None:
@@ -235,9 +235,19 @@ class Ledger:
             if charge > row["reservation"]:
                 self.db.execute("UPDATE calls SET state='outcome_unknown',response=?,cost=?,reservation=0,error='Usage exceeded pinned ceiling' WHERE key=?", (canonical(response), charge, key))
             else:
-                self.db.execute("UPDATE calls SET state='completed',response=?,cost=?,reservation=0 WHERE key=?", (canonical(response),charge,key))
+                self.db.execute("UPDATE calls SET state=?,response=?,cost=?,reservation=0,error=? WHERE key=?",
+                                ('failed' if failure else 'completed', canonical(response), charge,
+                                 f'{failure.failure_kind}: {failure}' if failure else None, key))
         if charge > row["reservation"]:
             raise OutcomeUnknown("Returned usage exceeded the price ceiling; reconcile ledger before continuing")
+
+    def guard_unknown_usage(self, provider):
+        """A restarted gateway must not spend past an unreconciled response."""
+        row = self.db.execute("""SELECT key FROM calls WHERE run_id=? AND provider=?
+          AND state IN ('dispatched', 'outcome_unknown') LIMIT 1""",
+                              (self.run_id, usage_provider(provider=provider))).fetchone()
+        if row:
+            raise OutcomeUnknown(f"Request {row['key']} has unknown usage/outcome; reconcile before dispatch")
 
     def fail(self, key, error, *, rejected=False, response=None, retryable=False):
         state = "retryable" if rejected and retryable else "failed" if rejected else "outcome_unknown"
@@ -328,6 +338,10 @@ def call_rows(db, run_id):
                 _, stop_reason = response_content(response, provider)
             except (ValueError, TypeError):
                 stop_reason = "invalid_response"
+            if result['state'] == 'failed':
+                failure = response_failure(response, provider)
+                if failure:
+                    result['failure_kind'] = failure.failure_kind
         result.update(model=request.get("request", {}).get("model"),
                       usage=response.get("usage"), request_id=response.get("_request_id") or response.get("id"),
                       stop_reason=stop_reason)

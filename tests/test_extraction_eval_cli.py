@@ -98,10 +98,11 @@ def fake_core(monkeypatch):
     events = []
 
     def call(stage, content, gateway, settings, sink):
-        response = gateway.messages.create(model="fixture", max_tokens=10,
+        model = settings['extraction_model']
+        response = gateway.messages.create(model=model, max_tokens=10,
                     messages=[{"role": "user", "content": f"{stage}:{content}"}])
         with extraction_runtime(client=gateway, settings=settings, usage_sink=sink):
-            utilities.record_api_usage(response, "fixture", label=stage)
+            utilities.record_api_usage(response, model, label=stage)
         events.append((stage, content))
 
     def metadata(images, gateway, settings, sink, lookup):
@@ -416,6 +417,17 @@ def test_inventory_cli_reports_counts_only(tmp_path, cohort_loader_factory, caps
     assert read_json(out)['unmapped'] == [{'id': 'check', 'reason': 'missing_folder'}]
 
 
+def openai_fixture_config(config):
+    from ai_pricing import PRICING_PER_MTOK
+    config['provider'] = 'openai-responses'
+    config['settings'] = {key: 'gpt-6.1-sol' if key.endswith('_model') else value
+                          for key, value in config['settings'].items()}
+    config['pricing']['models'] = {'gpt-6.1-sol': {
+        **config['pricing']['models']['fixture'], **PRICING_PER_MTOK['gpt-6.1-sol'],
+        'cache_ttl': '30m', 'max_output_tokens': 128000}}
+    return config
+
+
 @pytest.mark.parametrize('provider', ['anthropic-messages', 'openai-responses'])
 def test_dry_run_limit_twenty_no_credentials_no_paid_calls_no_isbn(offline_inputs, fake_core, tmp_path, monkeypatch, capsys, provider):
     import utilities
@@ -423,7 +435,8 @@ def test_dry_run_limit_twenty_no_credentials_no_paid_calls_no_isbn(offline_input
     monkeypatch.setattr(utilities, "lookup_isbn", forbidden)
     monkeypatch.setattr(openai_client, 'create_openai_client', forbidden)
     snapshot, config = offline_inputs
-    atomic_json(config, {**read_json(config), 'provider': provider})
+    values = read_json(config)
+    atomic_json(config, openai_fixture_config(values) if provider == 'openai-responses' else values)
     out = tmp_path / "dry-run"
     assert cli.main(["extract", "--snapshot", str(snapshot), "--out", str(out), "--config", str(config),
                      "--limit", "20", "--dry-run"]) == 0
@@ -445,8 +458,7 @@ def test_openai_cli_executes_and_replays_with_confirmed_key(offline_inputs, fake
     from scripts import data_cleanup
     from scripts.extraction_eval import openai_client
     snapshot, config_path = offline_inputs
-    config = read_json(config_path)
-    config['provider'] = 'openai-responses'
+    config = openai_fixture_config(read_json(config_path))
     config['billing'].update(secret_name='EVAL_OPENAI_API_KEY', funding='prepaid_credits')
     atomic_json(config_path, config)
     requests = []
@@ -456,11 +468,12 @@ def test_openai_cli_executes_and_replays_with_confirmed_key(offline_inputs, fake
         assert str(request.url) == 'https://api.openai.com/v1/responses'
         requests.append(request)
         return httpx.Response(200, headers={'x-request-id': f'req-{len(requests)}'}, json={
-            'id': f'resp-{len(requests)}', 'model': 'fixture', 'status': 'completed',
-            'output': [{'type': 'message', 'role': 'assistant', 'content': [
+            'id': f'resp-{len(requests)}', 'model': 'gpt-6.1-sol', 'status': 'completed',
+            'output': [{'type': 'message', 'status': 'completed', 'role': 'assistant', 'content': [
                 {'type': 'output_text', 'text': '{}'}]}],
             'usage': {'input_tokens': 5, 'output_tokens': 3,
-                      'input_tokens_details': {'cached_tokens': 2}},
+                      'input_tokens_details': {'cached_tokens': 2, 'cache_write_tokens': 0,
+                          'cache_write_tokens_details': {'ttl_30m_tokens': 0, 'ttl_12h_tokens': 0}}},
         })
 
     def create_client(key):
@@ -481,7 +494,7 @@ def test_openai_cli_executes_and_replays_with_confirmed_key(offline_inputs, fake
     assert len(requests) == 3
     calls = read_json(out / 'calls.json')
     assert len(calls) == 3
-    assert all(call['state'] == 'completed' and call['cost_usd'] == pytest.approx(11 / 1e6)
+    assert all(call['state'] == 'completed' and call['cost_usd'] == pytest.approx(36.2 / 1e6)
                for call in calls)
     assert cli.main(args) == 0
     assert len(requests) == 3
