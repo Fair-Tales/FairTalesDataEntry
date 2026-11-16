@@ -8,13 +8,14 @@ import pytest
 from scripts.extraction_eval.tuning import current_loader
 
 
-from scripts.extraction_eval.billing import BillingStopped, validate_billing
+from scripts.extraction_eval.billing import BillingStopped, validate_billing, cycle_budgets
 from scripts.extraction_eval.gateway import Gateway
 from scripts.extraction_eval.store import Ledger
 
 
 def configuration():
-    return {'billing': {'funding': 'subscription_credits', 'confirmed': True,
+    return {'billing_cycles': {'anthropic': {'start_day': 1}, 'openai': {'start_day': 10}},
+            'billing': {'funding': 'subscription_credits', 'confirmed': True,
                         'organisation': 'fixture-org', 'project': 'fixture-project',
                         'confirmed_by': 'owner', 'confirmed_at': '2026-11-05',
                         'secret_name': 'EVAL_ANTHROPIC_API_KEY',
@@ -78,7 +79,7 @@ def test_billing_rejection_halts_gateway_without_retry_or_key_switch(tmp_path, c
         calls.append(request)
         raise Rejected(message)
     provider = SimpleNamespace(messages=SimpleNamespace(create=dispatch))
-    ledger = Ledger(tmp_path / 'spend.sqlite', 'test-run', 1, 1)
+    ledger = Ledger(tmp_path / 'spend.sqlite', 'test-run', 1, budgets=cycle_budgets(configuration(), 1))
     try:
         gateway = Gateway(provider, ledger, configuration())
         request = {'model': 'fixture-model', 'max_tokens': 10,
@@ -89,7 +90,7 @@ def test_billing_rejection_halts_gateway_without_retry_or_key_switch(tmp_path, c
             gateway.create(**{**request, 'max_tokens': 20})
         assert len(calls) == 1
         assert ledger.rows()[0]['state'] == 'failed'
-        assert ledger.rows()[0]['reserved_usd'] == 0
+        assert ledger.rows()[0]['reserved_usd'] > 0
         replay = Gateway(provider, ledger, configuration())
         with pytest.raises(BillingStopped):
             replay.create(**request)

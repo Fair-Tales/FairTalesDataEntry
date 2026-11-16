@@ -49,7 +49,7 @@ def configure_inputs(config, inputs, *, inputs_manifest=None, scan_root=None,
     return result
 
 
-def freeze_run(out, snapshot, selection, config, replicate, cap, monthly_cap, ledger):
+def freeze_run(out, snapshot, selection, config, replicate, cap, cycle_cap, ledger):
     loader = _require_loader()
     admitted = snapshot
     if config.get('inputs') == 'scans':
@@ -62,7 +62,7 @@ def freeze_run(out, snapshot, selection, config, replicate, cap, monthly_cap, le
     contract = {"version": 1, "snapshot_id": snapshot.get("snapshot_id"),
                 "snapshot_hash": digest(snapshot), "selection": selection, "config": config,
                 "replicate": str(replicate), "max_spend_usd": cap,
-                "monthly_cap_usd": monthly_cap, "ledger": str(Path(ledger).resolve()),
+                "cycle_cap_usd": cycle_cap, "ledger": str(Path(ledger).resolve()),
                 "sources": code_fingerprint()}
     saved = loader.run_record(path) if path.exists() else {"tuning": loader.state}
     if path.exists() and set(saved) != {"tuning"}:

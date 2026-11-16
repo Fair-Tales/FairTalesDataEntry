@@ -13,6 +13,9 @@ from .evidence import evidence_dir
 from .store import atomic_json, read_json, run_lock
 from .tuning import DEFAULT_FREEZE_DIR, TuningLoader, TuningRefused, TuningExposure
 from text_content.tuning import TuningErrors, TuningHelp
+from text_content.pipeline_runtime import (
+    CYCLE_CAP_HELP, HEADROOM_HELP, HEADROOM_LINE, HEADROOM_UNCONFIGURED, RUN_BUDGET, CYCLE_UNCONFIGURED,
+)
 
 PACKAGE = Path(__file__).resolve().parent
 
@@ -51,7 +54,7 @@ def build_parser():
     extract.add_argument("--seed", type=int, default=20261104)
     extract.add_argument("--replicate", default="1", help="Independent response cache identity; never select the best replicate")
     extract.add_argument("--max-spend-usd", type=float, default=16)
-    extract.add_argument("--monthly-cap-usd", type=float, default=200)
+    extract.add_argument("--cycle-cap-usd", type=float, help=CYCLE_CAP_HELP)
     extract.add_argument("--ledger", type=Path, help="Shared evaluator ledger; defaults to snapshot parent's spend.sqlite")
     extract.add_argument("--secrets", default=".streamlit/secrets.toml", help="Read only AFTER paid-call confirmation")
     extract.add_argument("--freeze-dir", type=Path, default=DEFAULT_FREEZE_DIR, help=TuningHelp.freeze_dir)
@@ -60,6 +63,9 @@ def build_parser():
     group = extract.add_mutually_exclusive_group()
     group.add_argument("--execute", action="store_true")
     group.add_argument("--dry-run", action="store_true", help="Default: local preprocessing/cache replay, zero network calls")
+
+    headroom = commands.add_parser("headroom", help=HEADROOM_HELP)
+    headroom.add_argument("--ledger", type=Path, default=evidence_dir() / 'spend.sqlite')
 
     score = commands.add_parser("score", help="Pure offline scoring; never reads credentials or creates a cloud client")
     score.add_argument("--snapshot", type=Path, required=True)
@@ -258,6 +264,9 @@ def _extract_loaded(args, loader):
     from .runner import configure_inputs, estimate, freeze_run, run_extract, validate_inputs
     from .sampling import select_books
     from .store import Ledger
+    from .billing import billing_provider, cycle_budgets
+    config = read_json(args.config)
+    budgets = cycle_budgets(config, args.cycle_cap_usd, required=args.execute)
     paired_inputs = None
     if args.inputs == 'scans':
         from .inputs_manifest import load_manifest, extraction_manifest
@@ -281,7 +290,6 @@ def _extract_loaded(args, loader):
         manifest = _load_snapshot(args.snapshot, loader=loader, book_ids=requested,
                                   additional_ids=args.challenge_books)
         input_manifest = manifest
-    config = read_json(args.config)
     required = read_json(PACKAGE / "baseline.json").get("settings", {})
     settings = config.get("settings", {})
     for key, default in required.items():
@@ -318,7 +326,9 @@ def _extract_loaded(args, loader):
     previous = loader.predictions(previous_path) if previous_path.exists() else None
     plan = estimate(input_manifest, selection, previous)
     print(json.dumps(plan, indent=2))
-    print(f"Run cap: ${args.max_spend_usd:.2f}; shared monthly cap: ${args.monthly_cap_usd:.2f}. Ledger: {ledger_path}")
+    provider = billing_provider(config.get('provider', 'anthropic-messages'))
+    cycle_cap = f"${budgets[provider]['effective_cap_usd']:.2f}" if provider in budgets else CYCLE_UNCONFIGURED
+    print(RUN_BUDGET.format(cap=args.max_spend_usd, provider=provider, cycle_cap=cycle_cap, ledger=ledger_path))
     # No credentials, SDK client, lookups or paid requests before this point.
     if args.execute:
         answer = input("Type AFFIRMATIVE to allow metered paid calls up to this run cap: ")
@@ -335,8 +345,8 @@ def _extract_loaded(args, loader):
                     f"durable storage, such as {evidence_dir()}.")
         from .billing import validate_billing
         validate_billing(config)
-    frozen = freeze_run(args.out, manifest, selection, config, args.replicate, args.max_spend_usd, args.monthly_cap_usd, ledger_path)
-    ledger = Ledger(ledger_path, frozen.get("run_id"), args.max_spend_usd, args.monthly_cap_usd)
+    frozen = freeze_run(args.out, manifest, selection, config, args.replicate, args.max_spend_usd, args.cycle_cap_usd, ledger_path)
+    ledger = Ledger(ledger_path, frozen.get("run_id"), args.max_spend_usd, budgets=budgets)
     client = None
     try:
         ledger.recover()
@@ -522,8 +532,7 @@ def _score_scans(args, contract, predictions, selection, manifest, *, run_record
         if ledger and Path(ledger).is_file():
             with sqlite3.connect(Path(ledger).resolve().as_uri() + '?mode=ro', uri=True) as db:
                 settled, outstanding = db.execute(
-                    "SELECT sum(cost)/1e9, sum(CASE WHEN state NOT IN ('completed','settled','failed') "
-                    "THEN reservation ELSE 0 END)/1e9 FROM calls WHERE run_id=?",
+                    "SELECT sum(cost)/1e9, sum(reservation)/1e9 FROM calls WHERE run_id=?",
                     (run_record['run_id'],)).fetchone()
             cost = {'settled_usd': settled or 0, 'outstanding_reservations_usd': outstanding or 0,
                     'per_book_usd': (settled or 0) / len(scores) if scores else None}
@@ -546,9 +555,16 @@ def main(argv=None):
     try:
         return {"snapshot": _snapshot, "extract": _extract, "score": _score, "inventory": _inventory,
                 "audit-tuning": _audit_tuning, 'tuning-noise': _tuning_noise,
-                'tuning-attempt': _tuning_attempt}.get(args.command)(args)
+                'tuning-attempt': _tuning_attempt, 'headroom': _headroom}.get(args.command)(args)
     except (OSError, ValueError, TypeError, sqlite3.Error, EOFError, TuningRefused, TuningExposure) as exc:
         parser.exit(2, f"{type(exc).__name__}: {exc}\n")
+
+
+def _headroom(args):
+    from .store import read_headroom
+    for row in read_headroom(args.ledger):
+        print((HEADROOM_LINE if row['configured'] else HEADROOM_UNCONFIGURED).format(**row))
+    return 0
 
 
 def _tuning_noise(args):

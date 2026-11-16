@@ -308,7 +308,7 @@ def test_tune_reports_show_check_figures_without_any_check_rows(tmp_path, monkey
     manifest["excluded_books"] = [{"id": check_id, "reason": "CHECK_EXCLUSION_SENTINEL"}]
     calls = [{"book_id": "a", "cost_usd": 1},
              {"book_id": check_id, "cost_usd": 2, "reserved_usd": 4, "state": "dispatched", "error": "CHECK_ERROR_SENTINEL"},
-             {"error": "UNATTRIBUTED_ERROR_SENTINEL", "cost_usd": 3, "reserved_usd": 8, "state": "settled"}]
+             {"error": "UNATTRIBUTED_ERROR_SENTINEL", "cost_usd": 3, "reserved_usd": 8, "state": "failed"}]
     protocol = {"reviewed_equivalences": {"characters": {"CHECK_EQUIVALENCE_SENTINEL": "Alias"}},
                 "publication_equivalences": {"version": "fixture", "reviewed": True, "records": [
                     {"names": ["CHECK_PUBLISHER_SENTINEL"], "evidence": "CHECK_EVIDENCE_SENTINEL"}]}}
@@ -326,13 +326,13 @@ def test_tune_reports_show_check_figures_without_any_check_rows(tmp_path, monkey
     assert summary["cohort_aggregates"]["check"]["wordless"]["books_count"] == 1
     assert summary["cohort_aggregates"]["check"]["metadata_lookup_failures"]["affected_books"] == 1
     assert summary["settled_cost_usd"] == 6
-    assert summary["outstanding_reservations_usd"] == 4
+    assert summary["outstanding_reservations_usd"] == 12
     assert summary["empty_reference_monitoring"]["completed_monitoring_pages"] == 1
     assert summary["empty_reference_monitoring"]["records"] == []
     assert [row["id"] for row in summary["book_scores"]] == ["a"]
     exported_calls = report_calls(calls, loader)
     assert exported_calls == [calls[0], {"aggregate_only": True, "call_count": 2,
-                                        "cost_usd": 5, "reserved_usd": 4, "state": "aggregate"}]
+                                        "cost_usd": 5, "reserved_usd": 12, "state": "aggregate"}]
     assert report_calls(exported_calls, loader) == exported_calls
     fallback = write_reports(manifest, predictions, tmp_path / "portable-reports", selection=selection,
                              calls=exported_calls, protocol=protocol, loader=loader)

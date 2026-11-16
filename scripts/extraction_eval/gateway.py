@@ -10,7 +10,7 @@ from ai_pricing import normalize_usage
 from text_content.pipeline_runtime import EVALUATION_CLIENT_MISSING
 
 from .store import CachedFailure, OutcomeUnknown, canonical, digest, guard_cached_request
-from .billing import BILLING_EXHAUSTED, BillingStopped, billing_rejection
+from .billing import BILLING_EXHAUSTED, BillingStopped, billing_rejection, cycle_budgets
 from .openai_client import OPENAI_PROVIDERS
 from .openai_adapter import prepare_request, response_content
 
@@ -134,6 +134,8 @@ class Gateway:
         if client is None and not dry_run:
             provider_name = "OpenAI" if self.provider in OPENAI_PROVIDERS else "Anthropic"
             raise ValueError(EVALUATION_CLIENT_MISSING.format(provider=provider_name))
+        if not dry_run:
+            cycle_budgets(config, required=True)
         self.client = client
         self.ledger = ledger
         self.config = config

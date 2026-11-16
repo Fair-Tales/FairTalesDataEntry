@@ -19,6 +19,20 @@ def forbidden(*args, **kwargs):
     raise AssertionError("This fixture must never contact a live service or read secrets")
 
 
+def test_paid_run_requires_cycle_before_confirmation_or_clients(offline_inputs, tmp_path, monkeypatch, capsys):
+    snapshot, config_path = offline_inputs
+    config = read_json(config_path)
+    del config['billing_cycles']
+    atomic_json(config_path, config)
+    monkeypatch.setattr('builtins.input', forbidden)
+    monkeypatch.setattr(cli, '_live_provider', forbidden)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(['extract', '--snapshot', str(snapshot), '--out', str(tmp_path / 'run'),
+                  '--config', str(config_path), '--execute'])
+    assert exc.value.code == 2
+    assert 'billing_cycles.anthropic.start_day' in capsys.readouterr().err
+
+
 @pytest.fixture
 def system_temporary_dir(tmp_path, monkeypatch):
     """Model temporary and durable storage locally; all paid providers are fake."""
@@ -57,6 +71,7 @@ def offline_inputs(tmp_path, monkeypatch):
     frozen_settings = read_json(cli.PACKAGE / "baseline.json").get("settings", {})
     config["settings"] = {key: "fixture" if key.endswith("_model") else value
                           for key, value in frozen_settings.items()}
+    config['billing_cycles'] = {'anthropic': {'start_day': 1}, 'openai': {'start_day': 10}}
     config['billing'] = {'funding': 'subscription_credits', 'confirmed': True,
                          'organisation': 'fixture', 'project': 'fixture',
                          'confirmed_by': 'fixture', 'confirmed_at': '2026-11-05',

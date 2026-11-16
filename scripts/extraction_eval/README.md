@@ -794,11 +794,68 @@ does not guess or automatically repay it. Known charges above a configured
 ceiling are retained and flagged. No model is silently substituted.
 
 All runs should share `--ledger "$EVIDENCE_DIR/spend.sqlite"` (the default
-for the paths above). The shared monthly cap defaults to $200 and the run cap to
-$16; both are frozen, not authorization to spend beyond the human's allowance.
-Reconcile application/other-workspace spending separately and configure an
-account-level spend limit as an additional backstop. Three replicates or a new
-pipeline are additional potential spend, not included in the $16 subset plan.
+for the paths above). Anthropic evaluation defaults to **$150 per billing cycle**,
+leaving $50 of its stated allowance for the app; OpenAI defaults to **$200 per
+cycle**. Headroom never transfers between providers. The run cap remains $16.
+
+Put each provider's actual renewal day in the run's configuration file. There is
+**no default start day**; paid execution refuses to start without the selected
+provider's setting, before confirmation or client construction. For example,
+these are **illustrative days, not verified account dates**:
+
+```json
+"billing_cycles": {
+  "anthropic": {"start_day": 5},
+  "openai": {"start_day": 12}
+}
+```
+
+Cycles begin at 00:00 UTC on that day and end just before the next start.
+Days 29, 30 and 31 clamp to the last day of a shorter month, then return to the
+configured day: day 31 means January 31 → February 28 (29 in a leap year) →
+March 31. Admission checks the current time on every reservation, including a
+run spanning renewal. Settlement stays in the cycle where the request was
+reserved. Old-cycle reservations remain recorded against that cycle; they do
+not consume the next cycle's allowance.
+
+Use `--cycle-cap-usd AMOUNT` to lower the selected provider's **total cycle cap**
+to the actual remaining credit after app/other usage. This is not additional
+headroom. The harness cannot discover that balance from its local ledger; check
+it separately before paid work. The option cannot exceed the provider maximum.
+Changing the maximum requires editing that provider's `cap_usd` in
+`billing_cycles`; an already recorded cycle cap can only decrease. A lower cap
+persists for that cycle across other runs, even if they omit the option. A new
+cycle starts with the configured maximum unless the option lowers it again.
+The recorded start day is fixed to prevent accidentally moving existing spend
+into a different cycle. The former `--monthly-cap-usd` option is removed.
+
+All attempts count: successful calls settle to their measured charge; failed
+and retried calls retain their reservation until explicitly settled, even after
+an HTTP rejection. Unknown outcomes stay reserved. Confirmed zero-cost attempts
+can be explicitly settled to zero during reconciliation; error status alone
+does not release headroom. An over-cap reservation is refused before dispatch,
+with the cap, reservation, used amount and headroom in the error.
+
+Read the current cycle's cap, settled spend, outstanding reservations and
+headroom for both providers without credentials, network access or writes:
+
+```bash
+.venv/bin/python -m scripts.extraction_eval headroom \
+  --ledger "$EVIDENCE_DIR/spend.sqlite"
+```
+
+The command uses the cycle settings recorded in the ledger; an unconfigured
+provider is reported as unavailable, never assigned an assumed calendar cycle.
+Opening an old ledger with `Ledger` adds a `calls.provider` column and the
+`billing_providers`/`billing_cycles` tables. Existing timestamps and nano-dollar
+charges are preserved; the provider tag is extracted inside SQLite without
+loading book content. The old `month` column and `months` table remain for
+compatibility but no longer govern admission. `headroom` never migrates files.
+Test preserved evidence on a copy under `.cache/`; do not migrate the original.
+
+Three replicates or a new pipeline are additional potential spend, not included
+in the $16 subset plan. These caps do not authorize spending beyond the actual
+allowance, buying credits or switching providers to use another balance.
 
 Local artifacts are `manifest.json`, content-addressed images, `selection.json`,
 `run.json` (source/dependency/config hashes), `eval.sqlite` (stage state), the

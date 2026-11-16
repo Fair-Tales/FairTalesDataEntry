@@ -102,8 +102,7 @@ def report_calls(calls, loader):
         rows.append({"aggregate_only": True,
                      "call_count": sum(call.get("call_count", 1) for call in omitted),
                      "cost_usd": sum(call.get("cost_usd") or 0 for call in omitted),
-                     "reserved_usd": sum(call.get("reserved_usd") or 0 for call in omitted
-                                         if call.get("state") not in {"completed", "settled", "failed"}),
+                     "reserved_usd": sum(call.get("reserved_usd") or 0 for call in omitted),
                      "state": "aggregate"})
     return rows
 
@@ -191,8 +190,7 @@ def write_reports(manifest, predictions, out, protocol=None, selection=None, cal
                     "adjudication": manifest.get("adjudication"),
                     "equivalence_version": protocol.get("equivalence_version"),
                     "settled_cost_usd": sum(call.get("cost_usd") or 0 for call in calls),
-                    "outstanding_reservations_usd": sum(call.get("reserved_usd") or 0 for call in calls
-                                                        if call.get("state") not in {"completed", "settled", "failed"})})
+                    "outstanding_reservations_usd": sum(call.get("reserved_usd") or 0 for call in calls)})
     from .comparison import book_comparison_record, comparison_protocol
     identity = comparison_protocol(protocol, manifest)
     summary["comparison_protocol"] = identity

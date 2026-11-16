@@ -13,6 +13,7 @@ import tempfile
 
 from ai_pricing import usage_provider
 from .openai_adapter import response_content
+from text_content.pipeline_runtime import BUDGET_REFUSED, CYCLE_REQUIRED, CYCLE_DAY_IMMUTABLE
 
 
 def canonical(value):
@@ -78,30 +79,69 @@ class Ledger:
     """Reservations and responses live in the SAME SQLite transaction boundary.
 
     Currency uses integer nano-dollars. Unknown outcomes retain their reservation.
-    All evaluator runs must use the same ledger for the monthly cap to apply.
+    All evaluator runs must use the same ledger for provider cycle caps to apply.
     """
-    def __init__(self, path, run_id, cap, monthly_cap=200, month=None):
+    def __init__(self, path, run_id, cap, *, budgets=None, clock=None):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, timeout=30)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=FULL")
         self.run_id = run_id
-        self.month = month or datetime.now(timezone.utc).strftime("%Y-%m")
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.budgets = budgets or {}
         self.db.executescript("""
         CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY, cap INTEGER NOT NULL);
-        CREATE TABLE IF NOT EXISTS months(id TEXT PRIMARY KEY, cap INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS calls(
           key TEXT PRIMARY KEY, run_id TEXT, month TEXT, state TEXT,
           reservation INTEGER, cost INTEGER DEFAULT 0, request TEXT,
           response TEXT, error TEXT, label TEXT, created TEXT);
+        CREATE TABLE IF NOT EXISTS billing_providers(
+          provider TEXT PRIMARY KEY, start_day INTEGER NOT NULL, cap INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS billing_cycles(
+          provider TEXT, start TEXT, cap INTEGER NOT NULL, PRIMARY KEY(provider,start));
         """)
-        with self.transaction():
-            for table, identifier, amount in (("runs", run_id, money(cap)), ("months", self.month, money(monthly_cap))):
-                row = self.db.execute(f"SELECT cap FROM {table} WHERE id=?", (identifier,)).fetchone()
-                if row and row["cap"] != amount:
-                    raise ValueError(f"The existing {table} spend cap is immutable")
-                self.db.execute(f"INSERT OR IGNORE INTO {table}(id,cap) VALUES (?,?)", (identifier, amount))
+        try:
+            with self.transaction():
+                if 'provider' not in {row['name'] for row in self.db.execute('PRAGMA table_info(calls)')}:
+                    self.db.execute('ALTER TABLE calls ADD COLUMN provider TEXT')
+                    # SQLite extracts only the provider tag, never returning book content.
+                    self.db.execute("""UPDATE calls SET provider = CASE
+                      WHEN COALESCE(json_extract(request, '$.provider'), 'anthropic-messages')
+                        IN ('anthropic', 'anthropic-messages') THEN 'anthropic'
+                      WHEN json_extract(request, '$.provider')
+                        IN ('openai', 'openai-responses', 'openai-chat-completions') THEN 'openai'
+                      ELSE 'unsupported' END""")
+                amount = money(cap)
+                row = self.db.execute('SELECT cap FROM runs WHERE id=?', (run_id,)).fetchone()
+                if row and row['cap'] != amount:
+                    raise ValueError('The existing runs spend cap is immutable')
+                self.db.execute('INSERT OR IGNORE INTO runs(id,cap) VALUES (?,?)', (run_id, amount))
+                for provider, policy in self.budgets.items():
+                    row = self.db.execute('SELECT start_day FROM billing_providers WHERE provider=?', (provider,)).fetchone()
+                    if row and row['start_day'] != policy['start_day']:
+                        raise ValueError(CYCLE_DAY_IMMUTABLE.format(provider=provider))
+                    self.db.execute("""INSERT INTO billing_providers VALUES (?,?,?)
+                      ON CONFLICT(provider) DO UPDATE SET cap=excluded.cap""",
+                                    (provider, policy['start_day'], money(policy['cap_usd'])))
+                    self._cycle_cap(provider, self.clock())
+        except BaseException:
+            self.db.close()
+            raise
+
+    def _cycle_cap(self, provider, now):
+        from .billing import cycle_bounds
+        policy = self.budgets.get(provider)
+        if policy is None:
+            raise ValueError(CYCLE_REQUIRED.format(provider=provider))
+        start, end = cycle_bounds(policy['start_day'], now)
+        # A later run cannot restore headroom removed by an earlier lower cap.
+        self.db.execute("""INSERT INTO billing_cycles VALUES (?,?,?)
+          ON CONFLICT(provider,start) DO UPDATE SET cap=MIN(cap,excluded.cap)""",
+                        (provider, start.isoformat(), money(policy['effective_cap_usd'])))
+        cap = self.db.execute('SELECT cap FROM billing_cycles WHERE provider=? AND start=?',
+                              (provider, start.isoformat())).fetchone()['cap']
+        return start, end, cap
 
     @contextmanager
     def transaction(self):
@@ -126,16 +166,26 @@ class Ledger:
         return dict(row) if row else None
 
     def reserve(self, key, request, ceiling):
+        from .billing import billing_provider
         reservation = money(ceiling)
+        provider = billing_provider(request.get('provider', 'anthropic-messages'))
         with self.transaction():
+            now = self.clock().astimezone(timezone.utc)
             if self.get(key):
                 raise OutcomeUnknown("Request already exists; reload its persisted state")
-            for table, field, identifier in (("runs", "run_id", self.run_id), ("months", "month", self.month)):
-                cap = self.db.execute(f"SELECT cap FROM {table} WHERE id=?", (identifier,)).fetchone()["cap"]
-                used = self.db.execute(f"SELECT COALESCE(SUM(cost+reservation),0) FROM calls WHERE {field}=?", (identifier,)).fetchone()[0]
+            start, end, cycle_cap = self._cycle_cap(provider, now)
+            settled, outstanding = cycle_spend(self.db, provider, start, end)
+            run_cap = self.db.execute('SELECT cap FROM runs WHERE id=?', (self.run_id,)).fetchone()['cap']
+            run_used = self.db.execute('SELECT COALESCE(SUM(cost+reservation),0) FROM calls WHERE run_id=?',
+                                       (self.run_id,)).fetchone()[0]
+            for scope, cap, used in ((provider, cycle_cap, settled + outstanding), ('run', run_cap, run_used)):
                 if used + reservation > cap:
-                    raise BudgetStopped(f"{table} cap cannot admit ${float(ceiling):.4f} reservation; remaining ${(cap-used)/1e9:.4f}")
-            self.db.execute("INSERT INTO calls(key,run_id,month,state,reservation,request,created) VALUES (?,?,?,'dispatched',?,?,?)", (key,self.run_id,self.month,reservation,canonical(request),datetime.now(timezone.utc).isoformat()))
+                    raise BudgetStopped(BUDGET_REFUSED.format(scope=scope, cap=cap/1e9,
+                        reservation=reservation/1e9, headroom=(cap-used)/1e9, used=used/1e9))
+            self.db.execute("""INSERT INTO calls(key,run_id,month,provider,state,reservation,request,created)
+              VALUES (?,?,?,?,'dispatched',?,?,?)""",
+                            (key, self.run_id, now.strftime('%Y-%m'), provider,
+                             reservation, canonical(request), now.isoformat()))
 
     def capture_response(self, key, response):
         """Keep the reservation until usage is settled; crashes stay unknown."""
@@ -158,7 +208,7 @@ class Ledger:
     def fail(self, key, error, *, rejected=False, response=None, retryable=False):
         state = "retryable" if rejected and retryable else "failed" if rejected else "outcome_unknown"
         with self.transaction():
-            self.db.execute("UPDATE calls SET state=?,error=?,reservation=CASE WHEN ? THEN 0 ELSE reservation END,response=? WHERE key=?", (state,str(error),rejected,canonical(response) if response is not None else None,key))
+            self.db.execute("UPDATE calls SET state=?,error=?,response=? WHERE key=?", (state,str(error),canonical(response) if response is not None else None,key))
 
     def annotate(self, key, label):
         with self.transaction():
@@ -166,6 +216,43 @@ class Ledger:
 
     def rows(self):
         return call_rows(self.db, self.run_id)
+
+
+def cycle_spend(db, provider, start, end):
+    """Sum every attempt, regardless of outcome, by its reservation timestamp."""
+    return db.execute("""SELECT COALESCE(SUM(cost),0), COALESCE(SUM(reservation),0)
+      FROM calls WHERE provider=? AND created>=? AND created<?""",
+                      (provider, start.isoformat(), end.isoformat())).fetchone()
+
+
+def read_headroom(path, *, now=None):
+    """Read only accounting columns. Never migrate or decode request/response bodies."""
+    from .billing import cycle_bounds
+    db = sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)
+    db.row_factory = sqlite3.Row
+    try:
+        db.execute('BEGIN')  # One consistent view while another run reserves.
+        now = now or datetime.now(timezone.utc)
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        rows = []
+        for provider in ('anthropic', 'openai'):
+            policy = (db.execute('SELECT * FROM billing_providers WHERE provider=?', (provider,)).fetchone()
+                      if 'billing_providers' in tables else None)
+            if policy is None:
+                rows.append({'provider': provider, 'configured': False})
+                continue
+            start, end = cycle_bounds(policy['start_day'], now)
+            cycle = db.execute('SELECT cap FROM billing_cycles WHERE provider=? AND start=?',
+                               (provider, start.isoformat())).fetchone()
+            cap = cycle['cap'] if cycle else policy['cap']
+            settled, outstanding = cycle_spend(db, provider, start, end)
+            rows.append(dict(provider=provider, configured=True,
+                             start=start.date().isoformat(), end=end.date().isoformat(),
+                             cap=cap/1e9, settled=settled/1e9, outstanding=outstanding/1e9,
+                             headroom=(cap-settled-outstanding)/1e9))
+        return rows
+    finally:
+        db.close()
 
 
 def read_calls(path, run_id):

@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from scripts.extraction_eval.tuning import current_loader
-from scripts.extraction_eval.billing import BillingStopped
+from scripts.extraction_eval.billing import BillingStopped, cycle_budgets
 
 
 from scripts.extraction_eval.gateway import (
@@ -26,6 +26,7 @@ from scripts.extraction_eval.store import (
 @pytest.fixture
 def config():
     return {
+        'billing_cycles': {'anthropic': {'start_day': 1}},
         'request_version': '1', 'parser_version': 'eval-v1', 'max_attempts': 1,
         'settings': {'extraction_model': 'fake-model'},
         'pricing': {'verified': True, 'verified_at': 'fixture', 'source': 'fixture',
@@ -53,8 +54,9 @@ def cli_config(config):
 def ledger_factory(tmp_path):
     ledgers = []
 
-    def create(run='run', cap=1, monthly=2):
-        ledger = Ledger(tmp_path / 'ledger.sqlite', run, cap, monthly, month='2026-11')
+    def create(run='run', cap=1, cycle_cap=2):
+        budgets = cycle_budgets({'billing_cycles': {'anthropic': {'start_day': 1}}}, cycle_cap)
+        ledger = Ledger(tmp_path / 'ledger.sqlite', run, cap, budgets=budgets)
         ledgers.append(ledger)
         return ledger
 
@@ -88,25 +90,25 @@ class FakeProvider:
         return value
 
 
-def test_reservation_exact_cap_and_shared_monthly_limit(ledger_factory):
-    first = ledger_factory(cap=.1, monthly=.1)
+def test_reservation_exact_cap_and_shared_provider_cycle_limit(ledger_factory):
+    first = ledger_factory(cap=.1, cycle_cap=.1)
     first.reserve('a', {}, Decimal('.1'))
     assert first.get('a')['reservation'] == 100_000_000
     with pytest.raises(BudgetStopped):
         first.reserve('b', {}, Decimal('.000000001'))
-    second = ledger_factory(run='other', cap=.1, monthly=.1)
+    second = ledger_factory(run='other', cap=.1, cycle_cap=.1)
     with pytest.raises(BudgetStopped):
         second.reserve('c', {}, Decimal('.000000001'))
     assert first.get('b') is None
     assert second.get('c') is None
 
 
-def test_run_and_month_caps_cannot_be_increased_on_resume(ledger_factory):
-    ledger_factory(cap=.1, monthly=.2)
+def test_run_cap_is_immutable_and_cycle_cap_cannot_be_restored(ledger_factory):
+    ledger_factory(cap=.1, cycle_cap=.2)
     with pytest.raises(ValueError, match='immutable'):
-        ledger_factory(cap=.2, monthly=.2)
-    with pytest.raises(ValueError, match='immutable'):
-        ledger_factory(run='other', cap=.1, monthly=.3)
+        ledger_factory(cap=.2, cycle_cap=.2)
+    other = ledger_factory(run='other', cap=.1, cycle_cap=.3)
+    assert other.db.execute('SELECT cap FROM billing_cycles').fetchone()[0] == 200_000_000
 
 
 def test_free_cache_hit_does_not_charge_again_and_raw_is_retained(config, ledger_factory):
@@ -209,7 +211,7 @@ def test_only_definite_rate_limit_rejections_retry(config, ledger_factory):
     assert len(provider.calls) == 2
     rows = ledger.rows()
     assert {row['state'] for row in rows} == {'retryable', 'completed'}
-    assert sum(row['reserved_usd'] for row in rows) == 0
+    assert sum(row['reserved_usd'] for row in rows) > 0
 
 
 def test_permanent_rejection_is_cached(config, ledger_factory):
@@ -223,7 +225,7 @@ def test_permanent_rejection_is_cached(config, ledger_factory):
         with pytest.raises(CachedFailure):
             gateway.create(**request())
     assert len(provider.calls) == 1
-    assert ledger.rows()[0]['reserved_usd'] == 0
+    assert ledger.rows()[0]['reserved_usd'] > 0
 
 
 def test_provider_limits_fail_before_dispatch(config, ledger_factory):

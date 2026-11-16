@@ -11,6 +11,7 @@ from unittest.mock import Mock
 import httpx
 import pytest
 
+from scripts.extraction_eval.billing import cycle_budgets
 from scripts.extraction_eval import gateway as gateway_module
 from scripts.extraction_eval.gateway import DryRunMiss, Gateway, RequestLimitError, usage_charge
 from scripts.extraction_eval.openai_adapter import prepare_request
@@ -84,6 +85,7 @@ def test_gateway_rejects_unknown_provider_before_using_client():
 @pytest.fixture
 def openai_config():
     return {
+        "billing_cycles": {"anthropic": {"start_day": 1}, "openai": {"start_day": 10}},
         "provider": "openai", "request_version": "1", "max_attempts": 2,
         "settings": {"extraction_model": "fixture-openai"},
         "pricing": {"verified": True, "verified_at": "fixture", "source": "fixture",
@@ -96,8 +98,8 @@ def openai_config():
 
 
 @pytest.fixture
-def openai_ledger(tmp_path):
-    ledger = Ledger(tmp_path / "ledger.sqlite", "fixture", 1, 2, month="2026-11")
+def openai_ledger(tmp_path, openai_config):
+    ledger = Ledger(tmp_path / "ledger.sqlite", "fixture", 1, budgets=cycle_budgets(openai_config, 2))
     yield ledger
     ledger.close()
 
@@ -219,7 +221,7 @@ def test_openai_429_retries_once_with_separate_reservations_and_records(
     assert [row["state"] for row in rows] == ["retryable", "completed"]
     assert [row["request_id"] for row in rows] == ["req-fixture-rate-limit", "req-fixture-responses"]
     assert sum(row["cost_usd"] for row in rows) == pytest.approx(.000250)
-    assert sum(row["reserved_usd"] for row in rows) == 0
+    assert sum(row["reserved_usd"] for row in rows) > 0
     assert gateway.create(**openai_request())._eval_key == reply._eval_key
     assert len(requests) == 2
 

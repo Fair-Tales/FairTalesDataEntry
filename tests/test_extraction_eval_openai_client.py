@@ -7,7 +7,7 @@ from scripts.extraction_eval import cli, openai_client
 
 
 def configuration(provider='openai-responses'):
-    return {'provider': provider, 'billing': {
+    return {'provider': provider, 'billing_cycles': {'openai': {'start_day': 10}}, 'billing': {
         'funding': 'prepaid_credits', 'confirmed': True,
         'organisation': 'fixture-org', 'project': 'fixture-project',
         'confirmed_by': 'fixture', 'confirmed_at': '2026-11-07',
