@@ -28,8 +28,7 @@ def validate_character_response_structure(result):
                     and character["name"].strip()):
                 valid = False
                 break
-            for field in ("mentions", "identity_evidence", "member_of", "editorial_labels",
-                          "coreference_evidence", "language_relations"):
+            for field in ("mentions", "identity_evidence", "member_of", "editorial_labels"):
                 if field in character and not isinstance(character[field], list):
                     valid = False
             if "aliases" in character and not isinstance(character["aliases"], (str, list)):
@@ -120,10 +119,9 @@ def validate_character_evidence(result, pages):
                 for mention in mentions):
             issues.append({"path": f"{prefix}.name", "status": "unsupported_surface",
                            "surface": name, "reason": "missing_page_quote_evidence"})
-        for field in ("identity_evidence", "coreference_evidence", "language_relations"):
-            records = character.get(field, [])
-            for ordinal, record in enumerate(records if isinstance(records, list) else []):
-                inspect(record, f"{prefix}.{field}[{ordinal}]")
+        records = character.get("identity_evidence", [])
+        for ordinal, record in enumerate(records if isinstance(records, list) else []):
+            inspect(record, f"{prefix}.identity_evidence[{ordinal}]")
         character["evidence_validation"] = [issue for issue in issues
                                              if issue["path"].startswith(prefix + ".")]
     unresolved = output.get("unresolved_mentions", [])

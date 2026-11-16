@@ -29,17 +29,18 @@ LEGACY_PROMPT_HASHES = {
     "copyright_page_extraction": "1398ae638c53599c4aad5df8fa73cdfa2b67c9e4632bb9a4c4c85e24a0b8fd50",
 }
 
-# Captured before A4; pin both existing variants and the application's default.
+# Captured before A4; character hashes updated for P3's attribution removal.
+# Pin both existing variants and the application's default.
 EXISTING_PROMPT_HASHES = {
     "rules-only": {
-        "character_detection": "651b7d5d85c8c57cdf5bc8d4670de8fab2cc75b158b8e096e5ad04df78c4b021",
+        "character_detection": "49c1bdcb96ab51dd012e068c30eb18108d4a23b38bc9db73632eeaaec0dcd6e4",
         "page_extraction": "0d0287d61f0c1426ee9cc1f18ef94a6a32c842f8a88268ff73d3a02c5ef4b9d5",
         "story_classification": "c10ef168da457ad744ad1c52f892572cc561a257a09d48f8391f808b6336edc3",
         "locate_key_pages": "a16a1ecb5d35cb88ed1c8361924252f5786cdbfc4aeaf98bfb132a80fb4ce9b7",
         "joint_metadata_extraction": "54c98c7f72fe1356f1e25d6b0be080f12dcab3791f8ae255a0ddc048253c1687",
     },
     "rules-plus-icl": {
-        "character_detection": "596a3eb529adad7ff8c77f89f27848d36bf00f930676343fd401cceac0ea72a5",
+        "character_detection": "e0b6675cf90ab379552d84d1e928e1cedfa5a3878f463b8df641fbe1e2c1d7c8",
         "page_extraction": "78084ce367c9a678fba8475ca6e3c07a34cca495c141067951c77a63d18edc61",
         "story_classification": "e6f08277c325e176eda19ba5e4e13a85591064afd4cb9aa872e535971dddb3b1",
         "locate_key_pages": "a16a1ecb5d35cb88ed1c8361924252f5786cdbfc4aeaf98bfb132a80fb4ce9b7",
@@ -261,6 +262,25 @@ def test_rules_and_icl_variants_have_exact_request_bytes(stage):
     assert prompt_request_manifest(stage, "rules-only")["examples"] == []
 
 
+@pytest.mark.parametrize("variant", ["rules-only", "rules-plus-icl"])
+def test_character_prompt_requests_cast_without_language_attribution(variant):
+    rendered = prompt_for("character_detection", variant).format(pages_json="[]")
+    assert "language_relations" not in rendered
+    assert "coreference_evidence" not in rendered
+    assert ("Pronouns provide coreference evidence; do not put "
+            "he/she/it/they/I/me/you/us in aliases.") in rendered
+    for field in ("id", "name", "name_is_label", "entity_kind", "aliases", "gender",
+                  "human", "plural", "protagonist", "mentions", "surface", "page",
+                  "quote", "identity_evidence", "member_of", "editorial_labels",
+                  "unresolved_mentions", "candidate_entity_ids"):
+        assert f'"{field}"' in rendered
+    assert "For every name or alias, copy a referring expression" in rendered
+    assert "give its page and a short exact supporting quote" in rendered
+    assert "identity_evidence contains page/quote records supporting nontrivial merges" in rendered
+    assert "unresolved_mentions contains surface/page/quote/candidate_entity_ids" in rendered
+    assert "linked by member_of" in rendered
+
+
 def test_convention_status_and_coverage_rule_are_explicit():
     assert all(DEFAULT_CONVENTIONS[key]["status"] == "provisional" for key in ["C1", "C2", "C6", "C7"])
     assert all(DEFAULT_CONVENTIONS[key]["status"] == "accepted" for key in ["C3", "C4"])
@@ -332,15 +352,13 @@ def test_character_adapter_keeps_all_evidence_and_empty_cast_unresolved(monkeypa
     import utilities
     response = {"characters": [{"name": "his mother", "aliases": [{"surface": "mother", "page": 1,
         "quote": "his mother spoke", "surface_scope": "embedded_short_form", "full_surface": "his mother"}],
-        "mentions": [{"surface": "his mother", "page": 1, "quote": "his mother spoke"}],
-        "language_relations": [{"relation": "speech", "page": 1, "quote": "his mother spoke"}]}],
+        "mentions": [{"surface": "his mother", "page": 1, "quote": "his mother spoke"}]}],
         "unresolved_mentions": [{"surface": "someone", "page": 2, "quote": "someone"}]}
     monkeypatch.setattr(utilities, "_claude_json", lambda *a, **kw: response)
     result = utilities.detect_book_characters([(1, "his mother spoke")], object(), model="offline",
                                              prompt_variant="rules-only")
     assert result[0]["aliases"] == ["mother"]
     assert result[0]["raw_alias_entries"] == response["characters"][0]["aliases"]
-    assert result[0]["language_relations"] == response["characters"][0]["language_relations"]
     assert result.raw_response["unresolved_mentions"] == response["unresolved_mentions"]
     assert result.raw_response["prompt_manifest"]["prompt_variant"] == "rules-only"
     response["characters"] = []

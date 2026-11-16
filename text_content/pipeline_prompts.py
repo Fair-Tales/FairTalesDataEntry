@@ -244,8 +244,7 @@ give its page and a short exact supporting quote. Do not create nicknames,
 expand names, translate Mum to mom, pluralize an individual, or add familiar
 names from your knowledge of the book. Keep punctuation/case as printed.
 Pronouns provide coreference evidence; do not put he/she/it/they/I/me/you/us in aliases.
-A body part such as "long grey trunk" is not an alias for its owner. Preserve it
-as coreference evidence when useful, without adding it to lexical aliases.
+A body part such as "long grey trunk" is not an alias for its owner.
 
 Merge only when the text supports identity: explicit naming, unambiguous
 continuity, apposition, or a clearly identified actor under a disguise. Shared
@@ -321,11 +320,7 @@ stripped at match time. Add the shorter surface as evidence-backed data.
 Aliases may be structured entries: {"surface":"...","page":1,"quote":"...",
 "surface_scope":"full_expression","full_surface":"...",
 "candidate_entity_ids":[]}. full_expression and embedded_short_form are the
-surface_scope values. Keep every raw emitted alias and uncertainty record.
-Preserve speech, narration_about and language_addressed_to relations separately
-in language_relations, with page/quote, speaker/addressee candidate IDs and
-unknown values when the text does not resolve them. Pronouns and body parts may
-be retained in coreference_evidence, never lexical aliases.""",
+surface_scope values. Keep every raw emitted alias and uncertainty record.""",
     'page_extraction': """\
 Transcribe the supplied photographed book page or spread. Read the visible book,
 not your memory of it. Inspect the whole page, including margins, small isolated
