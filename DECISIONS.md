@@ -753,7 +753,7 @@ only Chris could answer. His rulings:
 
 ## 019 — Exposure of ten reference aliases from sealed books (2026-11-16)
 
-**Status:** facts recorded; treatment awaits Chris.
+**Status:** closed by Chris's ruling of 16 November, below.
 
 **What happened.** While building the summary code (work item A5e), the
 implementing agent wanted to see the structure of the sealed snapshot and loaded
@@ -790,7 +790,13 @@ described as untouched for the alias figures; there is no redraw.
 opening the sealed files directly for any reason, and says how to get structure,
 ids and counts without doing so.
 
-**For Chris to decide.** How the three books are treated in the proof, and
-whether to close the sealed files to everything but a guarded rehearsal or proof
-run, so that the rule does not rest on instructions alone.
+**Chris's ruling, 16 November.** On the three books: "Don't worry about it not
+a big deal." They stay in the proof with no special treatment. On closing the
+sealed files: "Written rule only." The files stay readable and protection rests
+on the standing instruction and on checking each run's log for direct reads.
+
+In the same answer he raised what does concern him: that aliases were not among
+the five primary measures. "They are key information and the pipeline needs to
+be tuned for alias detection and accuracy. Why are they not included?" That is
+taken up separately.
 
