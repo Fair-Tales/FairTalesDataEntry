@@ -3,6 +3,7 @@ import logging
 from datetime import datetime
 import anthropic
 import streamlit as st
+from pipeline_config import generation_request
 from streamlit_option_menu import option_menu
 from text_content import Alerts, Instructions, AIPrompts, BookForm, BookEditHome
 from utilities import (
@@ -102,8 +103,7 @@ def suggest_themes():
     with st.spinner(BookEditHome.analysing_spinner):
         try:
             response = client.messages.create(
-                model=get_ai_settings()['theme_model'],
-                max_tokens=512,
+                **generation_request(get_ai_settings(), 'theme'),
                 messages=[{"role": "user", "content": prompt}]
             )
         except anthropic.AnthropicError as e:
@@ -184,5 +184,4 @@ if st.button(BookEditHome.back_to_home_button, key="book_edit_back_home_button")
 
 if st.button(BookEditHome.finish_submit_button, key="book_edit_finish_submit_button"):
     confirm_submit()
-
 

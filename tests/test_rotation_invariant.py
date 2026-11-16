@@ -27,7 +27,7 @@ def calls(monkeypatch):
     """Instrument the pipeline's collaborators; returns the call recorder."""
     record = {"rotation_checked_on": [], "rotated": []}
 
-    def fake_rotation(image_bytes, client, model=None):
+    def fake_rotation(image_bytes, client, model=None, **kwargs):
         record["rotation_checked_on"].append(image_bytes)
         return record.get("angle", 0), record.get("uncertain", False)
 

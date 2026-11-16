@@ -9,7 +9,7 @@ import background_pipeline as production
 import extraction_core as harness
 import utilities
 from ai_runtime import extraction_runtime
-from pipeline_config import AI_SETTINGS_DEFAULTS, validate_settings
+from pipeline_config import AI_SETTINGS_DEFAULTS, GENERATION_DEFAULTS, validate_settings
 from scripts.extraction_eval import cli, runner
 from text_content.pipeline_prompts import PROMPT_VARIANTS, evaluation_prompt_context
 from test_background_pipeline import FakeClient as FakeDB, FakeFs, _make_job
@@ -34,7 +34,7 @@ def test_current_production_defaults_are_pinned(monkeypatch):
                 'page_schema_version': 'legacy-compatible-page-v1',
                 'story_context_enabled': False, 'story_context_model': 'claude-sonnet-5',
                 'story_context_max_tokens': 8192, 'story_context_limits': None,
-                'metadata_reconciliation_enabled': False}
+                'metadata_reconciliation_enabled': False, **GENERATION_DEFAULTS}
     monkeypatch.setattr(utilities, '_read_ai_settings_doc', lambda: {})
     assert AI_SETTINGS_DEFAULTS == admin_defaults
     assert utilities.get_ai_settings() == production._validated_settings({}) == expected
@@ -147,7 +147,10 @@ def test_production_worker_and_harness_build_identical_request_bytes(
         variant, schema, image_bytes, isolated, monkeypatch):  # noqa: F811 - pytest fixtures
     overrides = {**isolated, 'prompt_variant': variant, 'page_schema_version': schema,
                  'extraction_model': 'claude-sonnet-4-6', 'extraction_max_edge': 1024,
-                 'extraction_max_tokens': 4096, 'character_detection_model': 'claude-opus-4-8'}
+                 'extraction_max_tokens': 4096, 'character_detection_model': 'claude-opus-4-8',
+                 'extraction_thinking': 'adaptive', 'extraction_effort': 'low',
+                 'character_detection_thinking': 'adaptive', 'character_detection_effort': 'low',
+                 'character_detection_max_tokens': 4096}
     monkeypatch.setattr(utilities, '_read_ai_settings_doc', lambda: overrides)
     app_settings = production._validated_settings(utilities.get_ai_settings())
     eval_settings = validate_settings(overrides)
@@ -171,6 +174,9 @@ def test_production_worker_and_harness_build_identical_request_bytes(
                                     eval_settings, lambda *args: None)
     assert len(live.requests) == len(evaluated.requests) == 2
     for production_request, harness_request in zip(live.requests, evaluated.requests):
+        assert production_request['thinking'] == {'type': 'adaptive'}
+        assert production_request['output_config'] == {'effort': 'low'}
+        assert production_request['max_tokens'] == 4096
         # Compare complete serialized payloads, including images, models and caps.
         assert (json.dumps(production_request, ensure_ascii=False).encode('utf-8')
                 == json.dumps(harness_request, ensure_ascii=False).encode('utf-8'))

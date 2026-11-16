@@ -32,7 +32,7 @@ from pipeline_config import (  # noqa: F401
     AI_SETTINGS_DEFAULTS, AI_SETTINGS_MODEL_KEYS, AI_MODEL_ALLOWLIST,
     AI_EDGE_MIN, AI_EDGE_MAX, AI_TOKENS_MIN, AI_TOKENS_MAX,
     EXTRACTION_MODEL, EXTRACTION_OCR_MAX_TOKENS, LOCATE_MAX_EDGE,
-    PIPELINE_SETTINGS_DEFAULTS, validate_settings,
+    PIPELINE_SETTINGS_DEFAULTS, validate_settings, generation_request,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,9 +83,11 @@ def get_ai_settings():
     if not isinstance(stored, Mapping):
         return validate_settings(stored)
     settings = validate_settings({})
-    for key, value in stored.items():
+    # Model first: effort validity depends on the configured model, not the
+    # default model or the order of fields in the stored document.
+    for key, value in sorted(stored.items(), key=lambda item: not str(item[0]).endswith('_model')):
         try:
-            validated = validate_settings({key: value})
+            validated = validate_settings({**settings, key: value})
         except ValueError as exc:
             logger.warning("get_ai_settings: ignoring stored setting %r=%r: %s",
                            key, value, exc)
@@ -519,7 +521,7 @@ class VisionReply(str):
 
 def vision_text(client, images, prompt, *, model="claude-sonnet-4-6",
                 max_tokens=1024, downscale=True, max_edge=1568, label="",
-                request_validator=None):
+                request_validator=None, thinking=None, output_config=None):
     """Send ``images`` + ``prompt`` to a Claude vision model and return the raw
     reply text (stripped), or ``None`` when the response carried no text block.
 
@@ -540,6 +542,10 @@ def vision_text(client, images, prompt, *, model="claude-sonnet-4-6",
                 images, prompt, downscale=downscale, max_edge=max_edge
             ),
         }])
+    if thinking is not None:
+        request['thinking'] = thinking
+    if output_config is not None:
+        request['output_config'] = output_config
     if request_validator is not None:
         request_validator(request)
     response = client.messages.create(**request)
@@ -558,7 +564,7 @@ def vision_text(client, images, prompt, *, model="claude-sonnet-4-6",
 
 def vision_json(client, images, prompt, *, model="claude-sonnet-4-6",
                 max_tokens=1024, downscale=True, max_edge=1568, label="",
-                request_validator=None, reject_partial=False):
+                request_validator=None, reject_partial=False, thinking=None, output_config=None):
     """Send ``images`` + ``prompt`` to a Claude vision model and parse the JSON
     reply, returning ``(data_or_None, raw_text)`` (#129).
 
@@ -572,6 +578,10 @@ def vision_json(client, images, prompt, *, model="claude-sonnet-4-6",
     DATA-EXTRACTION callers can OCR at the higher ``EXTRACTION_MAX_EDGE`` (#135).
     """
     options = {} if request_validator is None else {'request_validator': request_validator}
+    if thinking is not None:
+        options['thinking'] = thinking
+    if output_config is not None:
+        options['output_config'] = output_config
     raw = vision_text(
         client, images, prompt, model=model, max_tokens=max_tokens,
         downscale=downscale, max_edge=max_edge, label=label, **options,
@@ -1464,7 +1474,7 @@ def lookup_person_details(name, role, client, book_title=None):
 
 
 def _claude_json(client, prompt, max_tokens=1024, label="character_detection",
-                 model=None):
+                 model=None, thinking=None, output_config=None):
     """Send a text prompt to a Claude model and parse the JSON response.
 
     Reuses the JSON-fence-stripping convention used by the existing Claude
@@ -1483,11 +1493,13 @@ def _claude_json(client, prompt, max_tokens=1024, label="character_detection",
     from character_evidence import IncompleteCharacterResponse
     from text_content.pipeline_prompts import CHARACTER_PARTIAL, CHARACTER_TRUNCATED
     model = model or EXTRACTION_MODEL
-    response = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}]
-    )
+    request = dict(model=model, max_tokens=max_tokens,
+                   messages=[{"role": "user", "content": prompt}])
+    if thinking is not None:
+        request['thinking'] = thinking
+    if output_config is not None:
+        request['output_config'] = output_config
+    response = client.messages.create(**request)
     _log_usage(response, model, label)
     if getattr(response, "stop_reason", None) == "max_tokens":
         logger.warning(
@@ -1527,7 +1539,7 @@ def _claude_json(client, prompt, max_tokens=1024, label="character_detection",
 #: truncated/unparseable (#183 — the pilot's "Expecting ',' delimiter" failure),
 #: so this uses the validated maximum (``AI_TOKENS_MAX``); output tokens are
 #: only billed when actually generated.
-CHARACTER_DETECTION_MAX_TOKENS = 8192
+CHARACTER_DETECTION_MAX_TOKENS = PIPELINE_SETTINGS_DEFAULTS['character_detection_max_tokens']
 
 
 def detect_book_characters(pages, client, progress_callback=None, model=None,
@@ -1560,6 +1572,8 @@ def detect_book_characters(pages, client, progress_callback=None, model=None,
     from conventions import convention_metadata
     from text_content.pipeline_prompts import prompt_for, prompt_request_manifest
 
+    runtime = current_runtime()
+    settings = runtime.settings if runtime else PIPELINE_SETTINGS_DEFAULTS
     if model is None:
         settings = get_ai_settings()
         model = settings['character_detection_model']
@@ -1582,8 +1596,7 @@ def detect_book_characters(pages, client, progress_callback=None, model=None,
     result = _claude_json(
         client,
         prompt,
-        max_tokens=CHARACTER_DETECTION_MAX_TOKENS,
-        model=model,
+        **generation_request(settings, 'character_detection', model=model),
     )
     validate_character_response_structure(result)
     result = validate_character_evidence(result, pages)
@@ -2004,7 +2017,7 @@ def locate_key_pages(pages, client):
     prompt += "\n" + T.image_labels.format(pages=json.dumps(labels, ensure_ascii=False))
     result, _raw = vision_json(
         client, [image for _, image in pages], prompt,
-        model=ai_settings['locate_model'], max_tokens=128,
+        **generation_request(ai_settings, 'locate'),
         max_edge=ai_settings['locate_max_edge'], label='locate_key_pages', reject_partial=True,
     )
     if not isinstance(result, dict):
@@ -2145,8 +2158,8 @@ def extract_joint_metadata(pages, client, *, previous=None):
             ('title_candidates', 'credits', 'publication_events', 'metadata_conflicts')
         }, ensure_ascii=False))
     result, raw = vision_json(
-        client, [data for _, data in pages], prompt, max_tokens=4096,
-        model=ai_settings['metadata_model'], max_edge=ai_settings['extraction_max_edge'],
+        client, [data for _, data in pages], prompt,
+        **generation_request(ai_settings, 'metadata'), max_edge=ai_settings['extraction_max_edge'],
         label='joint_metadata', reject_partial=True,
     )
     valid = _valid_joint_metadata_payload(result)

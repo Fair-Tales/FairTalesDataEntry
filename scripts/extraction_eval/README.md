@@ -594,8 +594,68 @@ variants are refused. `baseline.json` uses `legacy-v1`, the prompts from the
 5 November baseline, and `candidate_pipeline_v2.json` uses `rules-plus-icl`.
 These configs do not change the live application's prompt default. Confirm the
 other settings match the intended run; they are not read from a live
-admin-settings document. Generation temperatures are left as production
-currently sends them.
+admin-settings document. Generation settings follow the shared definition below;
+no temperature is added.
+
+### Stage generation settings (A9)
+
+`pipeline_config.py` defines `<stage>_model`, `<stage>_thinking`,
+`<stage>_effort` and `<stage>_max_tokens` for these stages:
+
+| Stage prefix | Default model | Maximum output tokens |
+|---|---|---:|
+| `extraction` | `claude-sonnet-5` | 2048 |
+| `metadata` | `claude-sonnet-5` | 4096 |
+| `character_detection` | `claude-sonnet-5` | 8192 |
+| `locate` | `claude-haiku-4-5` | 128 |
+| `rotation` (all three probes) | `claude-sonnet-4-6` | 16 |
+| `crop_quality` | `claude-haiku-4-5` | 16 |
+| `theme` (application only) | `claude-sonnet-4-6` | 512 |
+| `story_context` | `claude-sonnet-5` | 8192 |
+
+Thinking and effort default to the explicit sentinel `"default"`, meaning
+**omit the API option**, as before A9. This retains the exact old request body
+and cache identity. The model and token cap were already sent and remain sent.
+For Sonnet 5, omission means adaptive thinking and high effort according to the
+bundled reference; Sonnet 4.6 and Opus 4.8 omit thinking as disabled and effort
+as high. Haiku 4.5 omits thinking as disabled and has no effort parameter.
+These documented defaults are expectations, not measurements of provider internals.
+
+An override such as `"extraction_effort": "low"` sends
+`"output_config": {"effort": "low"}`. `"extraction_thinking": "disabled"`
+sends `"thinking": {"type": "disabled"}`. Even explicitly choosing `"high"`
+or `"adaptive"` sends that choice: only the `"default"` sentinel preserves
+omission. Each override changes that stage's request identity. Downstream calls
+can also change if the stage produces different inputs; unchanged input bodies
+still replay. Token caps include thinking tokens as well as visible output.
+
+The shared definition validates model/option combinations, and the gateway
+checks the actual body before any reservation. Supported overrides are adaptive
+or disabled thinking and low/medium/high/max effort on Sonnet 4.6; Sonnet 5 and
+Opus 4.8 also allow xhigh. Haiku 4.5 accepts only disabled thinking here, with
+effort omitted. Manual `enabled` thinking needs a budget and is not implemented.
+An evaluation model known only to the price table may use omitted options;
+explicit overrides require documented support in the shared definition. This
+prevents accidental invalid requests without guessing capabilities. OpenAI
+reasoning mappings and token floors remain A12a.
+
+The local source consulted offline was bundled `claude-api` reference **2.1.322**,
+at `/tmp/claude-1000/bundled-skills/2.1.322/98c07a88497fde2ff3d554084d8bd7d5/claude-api/shared/`:
+`models.md` (Haiku 4.5) and `model-migration.md` (Sonnet 5, Sonnet 4.6 and
+Opus 4.7/4.8 sections). Its upstream references are
+[adaptive thinking](https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking)
+and [effort](https://platform.claude.com/docs/en/build-with-claude/effort).
+No network verification was performed for A9.
+
+The ledger already stored full provider responses, including `model`, `usage`,
+`stop_reason` and request ID, beside the exact request. New reservations also
+store `context.requested_settings` (model, thinking, effort, token cap and
+documented default meanings), outside the cache identity. `calls.json` now
+exposes `served_model` and `requested_settings` alongside its existing `model`
+(requested), usage and stop reason. Historical rows replay unchanged; their
+`requested_settings` is null because no contemporaneous settings record exists.
+Their original request and provider response remain available. No old record is
+backfilled with today's assumptions, and no database schema change is needed.
 
 `legacy-v1` restores page, character, page-location, title-page and copyright-page
 prompts. It has no joint-metadata or whole-book classification prompt: those

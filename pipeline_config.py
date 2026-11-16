@@ -40,8 +40,87 @@ AI_SETTINGS_DEFAULTS = {
     'enable_rotation_correction': True,
     'enable_crop_quality_gate': True,
 }
+# One group per pipeline stage. Rotation's three probes share one group.
+STAGE_MAX_TOKENS = {
+    'extraction': 2048, 'metadata': 4096, 'character_detection': 8192,
+    'locate': 128, 'rotation': 16, 'crop_quality': 16, 'theme': 512,
+    'story_context': 8192,
+}
+GENERATION_DEFAULTS = {
+    f'{stage}_{field}': value
+    for stage, tokens in STAGE_MAX_TOKENS.items()
+    for field, value in (('max_tokens', tokens), ('thinking', 'default'), ('effort', 'default'))
+}
+
+# Offline source: bundled claude-api reference 2.1.322, shared/models.md and
+# shared/model-migration.md (Sonnet 5, Sonnet 4.6, Opus 4.7/4.8 sections).
+# See the extraction_eval README for source paths and documented limitations.
+# These are supported overrides, not an exhaustive provider capability registry.
+ANTHROPIC_GENERATION = {
+    'claude-sonnet-5': (('adaptive', 'disabled'), ('low', 'medium', 'high', 'xhigh', 'max'), 'adaptive', 'high'),
+    'claude-sonnet-4-6': (('adaptive', 'disabled'), ('low', 'medium', 'high', 'max'), 'disabled', 'high'),
+    'claude-opus-4-8': (('adaptive', 'disabled'), ('low', 'medium', 'high', 'xhigh', 'max'), 'disabled', 'high'),
+    'claude-haiku-4-5': (('disabled',), (), 'disabled', None),
+}
+
+
+def validate_generation(model, thinking='default', effort='default'):
+    """Refuse unsupported overrides; unknown models may retain omission only.
+
+    Manual thinking needs a budget and is outside this setting surface. OpenAI
+    reasoning belongs in its own provider mapping (A12a), not this one.
+    """
+    modes, efforts, _, _ = ANTHROPIC_GENERATION.get(model, ((), (), None, None))
+    for field, value, allowed in (('thinking', thinking, modes), ('effort', effort, efforts)):
+        if value != 'default' and value not in allowed:
+            raise ValueError(PIPELINE_SETTING_INVALID.format(
+                key=f'{model}.{field}', expected=', '.join(('default', *allowed))))
+
+
+def generation_request(settings, stage, *, model=None):
+    """Provider kwargs, retaining the old body exactly when options are default."""
+    model = model or settings.get(f'{stage}_model', PIPELINE_SETTINGS_DEFAULTS[f'{stage}_model'])
+    thinking = settings.get(f'{stage}_thinking', 'default')
+    effort = settings.get(f'{stage}_effort', 'default')
+    validate_generation(model, thinking, effort)
+    request = dict(model=model, max_tokens=settings.get(f'{stage}_max_tokens', STAGE_MAX_TOKENS[stage]))
+    if thinking != 'default':
+        request['thinking'] = {'type': thinking}
+    if effort != 'default':
+        request['output_config'] = {'effort': effort}
+    return request
+
+
+def requested_generation(request):
+    """Record omission honestly, plus the locally documented default meaning."""
+    model = request.get('model')
+    _, _, thinking_default, effort_default = ANTHROPIC_GENERATION.get(model, ((), (), None, None))
+    return dict(model=model, max_tokens=request.get('max_tokens'),
+                thinking=request.get('thinking', {}).get('type', 'default'),
+                effort=request.get('output_config', {}).get('effort', 'default'),
+                documented_defaults=dict(thinking=thinking_default, effort=effort_default))
+
+
+def validate_generation_request(request):
+    """Validate the actual Anthropic body before a gateway reserves anything."""
+    thinking = request.get('thinking', {})
+    output = request.get('output_config', {})
+    if (not isinstance(thinking, dict) or set(thinking) - {'type'}
+            or ('thinking' in request and 'type' not in thinking)
+            or thinking.get('type') == 'default'
+            or not isinstance(output, dict) or set(output) - {'effort'}
+            or output.get('effort') == 'default'
+            or ('output_config' in request and 'effort' not in output)):
+        raise ValueError(PIPELINE_SETTING_INVALID.format(
+            key='generation', expected='thinking.type and output_config.effort only'))
+    validate_generation(request.get('model'), thinking.get('type', 'default'), output.get('effort', 'default'))
+    if any(key in request for key in ('temperature', 'top_p', 'top_k')) and request.get('model') in {'claude-sonnet-5', 'claude-opus-4-8'}:
+        raise ValueError(PIPELINE_SETTING_INVALID.format(key='sampling', expected='omitted for this model'))
+
+
 PIPELINE_SETTINGS_DEFAULTS = {
     **AI_SETTINGS_DEFAULTS,
+    **GENERATION_DEFAULTS,
     'prompt_variant': 'rules-plus-icl',
     'page_schema_version': 'legacy-compatible-page-v1',
     'story_context_enabled': False,
@@ -81,9 +160,16 @@ def validate_settings(values, *, model_ids=()):
         elif key in _CHOICES:
             valid = isinstance(value, str) and value in _CHOICES[key]
             expected = ', '.join(_CHOICES[key])
+        elif key.endswith('_thinking') or key.endswith('_effort'):
+            choices = (('default', 'adaptive', 'disabled') if key.endswith('_thinking')
+                       else ('default', 'low', 'medium', 'high', 'xhigh', 'max'))
+            valid = isinstance(value, str) and value in choices
+            expected = ', '.join(choices)
         elif key.endswith('_max_edge') or key.endswith('_max_tokens'):
             low, high = ((AI_EDGE_MIN, AI_EDGE_MAX) if key.endswith('_max_edge')
                          else (AI_TOKENS_MIN, AI_TOKENS_MAX))
+            if key in {'rotation_max_tokens', 'crop_quality_max_tokens', 'locate_max_tokens'}:
+                low = 1
             valid = type(value) is int and low <= value <= high
             expected = f'integer from {low} to {high}'
         elif key == 'story_context_limits':
@@ -98,4 +184,6 @@ def validate_settings(values, *, model_ids=()):
         if not valid:
             raise ValueError(PIPELINE_SETTING_INVALID.format(key=key, expected=expected))
         result[key] = deepcopy(value)
+    for stage in STAGE_MAX_TOKENS:
+        validate_generation(result[f'{stage}_model'], result[f'{stage}_thinking'], result[f'{stage}_effort'])
     return result

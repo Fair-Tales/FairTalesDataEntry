@@ -332,5 +332,9 @@ def call_rows(db, run_id):
                       usage=response.get("usage"), request_id=response.get("_request_id") or response.get("id"),
                       stop_reason=stop_reason)
         result.update(request.get("context", {}))
+        result['served_model'] = response.get('model')
+        # Old rows have no settings sidecar. Preserve that absence: interpreting
+        # historical provider defaults using today's table would invent evidence.
+        result.setdefault('requested_settings', None)
         rows.append(result)
     return rows

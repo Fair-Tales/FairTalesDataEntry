@@ -11,6 +11,7 @@ import time
 from types import SimpleNamespace
 
 from ai_pricing import normalize_usage
+from pipeline_config import requested_generation, validate_generation_request
 from text_content.pipeline_runtime import EVALUATION_CLIENT_MISSING, RETRY_EXHAUSTED, RETRY_WAIT_EXCEEDED, REQUEST_UNKNOWN
 
 from .store import CachedFailure, OutcomeUnknown, canonical, digest, guard_cached_request
@@ -110,11 +111,11 @@ def request_ceiling(request, prices):
         raise ValueError(f"Unknown model price: {request.get('model')}")
     # Baseline makes plain messages requests. New billable features need an
     # explicit pricing implementation, rather than accidental under-reservation.
-    unsupported = set(request) - {"model", "max_tokens", "messages", "system", "temperature", "top_p", "top_k", "stop_sequences"}
+    unsupported = set(request) - {"model", "max_tokens", "messages", "system", "temperature", "top_p", "top_k", "stop_sequences", "thinking", "output_config"}
     if unsupported:
         raise RequestLimitError(f"Unpriced request options: {sorted(unsupported)}")
     output = request.get("max_tokens")
-    if not isinstance(output, int) or output <= 0 or output > rate.get("max_output_tokens", 0):
+    if type(output) is not int or output <= 0 or output > rate.get("max_output_tokens", 0):
         raise RequestLimitError("Requested output exceeds pinned model limit")
     images = sum(1 for message in request.get("messages", []) for block in (message.get("content", []) if isinstance(message.get("content"), list) else []) if isinstance(block, dict) and block.get("type") == "image")
     if images > rate.get("max_images", 0):
@@ -181,6 +182,8 @@ class Gateway:
         if self.billing_stopped:
             raise BillingStopped(BILLING_EXHAUSTED)
         try:
+            if self.provider not in OPENAI_PROVIDERS:
+                validate_generation_request(request)
             endpoint, payload = prepare_request(request, self.provider) if self.provider in OPENAI_PROVIDERS else (None, request)
         except ValueError as exc:
             raise RequestLimitError(str(exc)) from exc
@@ -229,7 +232,10 @@ class Gateway:
                 raise RequestLimitError("Converted request exceeds pinned byte limit; no automatic chunking")
             if delay is not None:
                 self.wait(delay)
-            self.ledger.reserve(key, {**identity, "context": self.context}, ceiling)
+            # Metadata is outside the identity: defaults must replay old bodies.
+            self.ledger.reserve(key, {**identity, "context": {
+                **self.context, "requested_settings": requested_generation(request),
+            }}, ceiling)
             raw = None
             try:
                 if endpoint:

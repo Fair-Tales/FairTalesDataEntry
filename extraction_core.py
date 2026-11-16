@@ -7,7 +7,7 @@ need to initialize the application's dependency graph.
 """
 
 from ai_runtime import extraction_runtime
-from pipeline_config import PIPELINE_SETTINGS_DEFAULTS
+from pipeline_config import PIPELINE_SETTINGS_DEFAULTS, generation_request
 
 
 class PageExtractionPayload(tuple):
@@ -73,6 +73,9 @@ def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
         PAGE_SCHEMA_INVALID, PAGE_REPLY_INVALID, PAGE_REPLY_EMPTY,
     )
 
+    # Preserve the explicit caller contract for these long-standing fields.
+    for key in ('extraction_model', 'extraction_max_tokens', 'extraction_max_edge'):
+        ai_settings[key]
     if vision_json_call is None:
         from utilities import vision_json
         vision_json_call = vision_json
@@ -81,9 +84,8 @@ def attempt_page_extraction(image_bytes, client, ai_settings, *, label,
         prompt = prompt_for('page_extraction', prompt_variant)
         data, raw = vision_json_call(
             client, [image_bytes], prompt, downscale=True,
-            model=ai_settings['extraction_model'],
+            **generation_request(ai_settings, 'extraction'),
             max_edge=ai_settings['extraction_max_edge'],
-            max_tokens=ai_settings['extraction_max_tokens'],
             label=label, reject_partial=True,
         )
     except anthropic.AnthropicError as exc:
@@ -296,7 +298,7 @@ def classify_book_context(pages, images, client, settings, usage_sink):
     try:
         with extraction_runtime(client=client, settings=settings, usage_sink=usage_sink):
             data, raw = vision_json(client, [image for _, image in images], prompt,
-                                    model=model, max_tokens=max_tokens, max_edge=784,
+                                    **generation_request(settings, 'story_context'), max_edge=784,
                                     label='story_context', request_validator=validate,
                                     reject_partial=True)
     except ContextLimit as exc:

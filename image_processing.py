@@ -14,6 +14,7 @@ import re
 
 import cv2
 import numpy as np
+from pipeline_config import generation_request, PIPELINE_SETTINGS_DEFAULTS
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 logger = logging.getLogger(__name__)
@@ -354,7 +355,7 @@ _PROBE_WORDS = ("SINGLE", "FOLDVERTICAL", "FOLDHORIZONTAL")
 #: whole reply to be exactly one allowed word, so the extra room cannot let a
 #: hedged/multi-word answer slip through — it only lets the intended single word
 #: finish and the model stop naturally instead of hitting the cap.
-_CLASSIFY_MAX_TOKENS = 16
+_CLASSIFY_MAX_TOKENS = PIPELINE_SETTINGS_DEFAULTS['rotation_max_tokens']
 
 
 def parse_orientation_word(raw, allowed):
@@ -384,7 +385,7 @@ def _image_aspect(image_bytes):
     return (width / height) if height else None
 
 
-def get_rotation_angle(image_bytes, client, model=None):
+def get_rotation_angle(image_bytes, client, model=None, *, settings=None):
     """Detect the clockwise rotation needed to make a book page read the RIGHT
     WAY UP, using the validated two-step scheme (#217; supersedes the single
     0/90/180/270 question of #154/#181).
@@ -436,15 +437,19 @@ def get_rotation_angle(image_bytes, client, model=None):
     import anthropic
     from utilities import vision_text, get_ai_settings
 
-    if model is None:
-        model = get_ai_settings()['rotation_model']
+    from ai_runtime import current_runtime
+
+    if settings is None:
+        runtime = current_runtime()
+        settings = (runtime.settings if runtime else
+                    get_ai_settings() if model is None else PIPELINE_SETTINGS_DEFAULTS)
+    generation = generation_request(settings, 'rotation', model=model)
 
     def _ask(image, prompt, allowed):
         """One vision call, strictly parsed; ``None`` means uncertain."""
         try:
             raw = vision_text(
-                client, [image], prompt, model=model,
-                max_tokens=_CLASSIFY_MAX_TOKENS,
+                client, [image], prompt, **generation,
             )
         except anthropic.AnthropicError as exc:
             # Narrowed exception (#127): a transient API failure is logged and
@@ -611,14 +616,14 @@ def correct_page_image(raw_bytes, ai_client, ai_settings, report=None):
             if rotation_on:
                 report(Uploader.substep_detecting_rotation)
                 angle, uncertain = get_rotation_angle(
-                    corrected_bytes, ai_client, model=rotation_model
+                    corrected_bytes, ai_client, model=rotation_model, settings=ai_settings
                 )
                 if angle != 0:
                     corrected_bytes = rotate_image(corrected_bytes, angle)
             return corrected_bytes, corrected_bytes, 'opencv', uncertain
         if crop_gate_on:
             report(Uploader.substep_checking_crop)
-            crop_ok = check_crop_quality(corrected_bytes, ai_client, model=crop_model)
+            crop_ok = check_crop_quality(corrected_bytes, ai_client, model=crop_model, settings=ai_settings)
         else:
             # Gate disabled by the admin: trust the geometric result directly.
             crop_ok = True
@@ -640,7 +645,7 @@ def correct_page_image(raw_bytes, ai_client, ai_settings, report=None):
             if rotation_on:
                 report(Uploader.substep_detecting_rotation)
                 angle, uncertain = get_rotation_angle(
-                    corrected_bytes, ai_client, model=rotation_model
+                    corrected_bytes, ai_client, model=rotation_model, settings=ai_settings
                 )
                 if angle != 0:
                     corrected_bytes = rotate_image(corrected_bytes, angle)
@@ -658,7 +663,7 @@ def correct_page_image(raw_bytes, ai_client, ai_settings, report=None):
     # failed) rotated-only -> (rotation also not detected) raw.
     if rotation_on:
         report(Uploader.substep_detecting_rotation)
-        angle, uncertain = get_rotation_angle(raw_bytes, ai_client, model=rotation_model)
+        angle, uncertain = get_rotation_angle(raw_bytes, ai_client, model=rotation_model, settings=ai_settings)
         if angle != 0:
             rotated_bytes = rotate_image(raw_bytes, angle)
             return rotated_bytes, rotated_bytes, 'rotation', uncertain
@@ -667,7 +672,7 @@ def correct_page_image(raw_bytes, ai_client, ai_settings, report=None):
     return raw_bytes, None, None, False
 
 
-def check_crop_quality(image_bytes, client, model=None):
+def check_crop_quality(image_bytes, client, model=None, *, settings=None):
     """
     Ask Claude Haiku 4.5 whether the corrected image looks like a properly
     cropped, right-way-up book page. Returns True only on a clear 'yes'.
@@ -681,13 +686,18 @@ def check_crop_quality(image_bytes, client, model=None):
     import anthropic
     from utilities import vision_text, get_ai_settings
 
-    if model is None:
-        model = get_ai_settings()['crop_quality_model']
+    from ai_runtime import current_runtime
+
+    if settings is None:
+        runtime = current_runtime()
+        settings = (runtime.settings if runtime else
+                    get_ai_settings() if model is None else PIPELINE_SETTINGS_DEFAULTS)
+    generation = generation_request(settings, 'crop_quality', model=model)
 
     try:
         raw = vision_text(
             client, [image_bytes], AIPrompts.crop_quality_check,
-            model=model, max_tokens=_CLASSIFY_MAX_TOKENS,
+            **generation,
         )
     except anthropic.AnthropicError as exc:
         # Narrowed from a broad ``except`` (#127): a network/API error means we

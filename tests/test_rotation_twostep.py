@@ -229,7 +229,7 @@ def test_pipeline_propagates_uncertain_flag(settings, monkeypatch):
         ip, "correct_book_page", lambda raw: (b"crop", True, True)
     )
     monkeypatch.setattr(
-        ip, "get_rotation_angle", lambda image, client, model=None: (0, True)
+        ip, "get_rotation_angle", lambda image, client, model=None, **kwargs: (0, True)
     )
     _, corrected, method, uncertain = ip.correct_page_image(b"raw", object(), settings)
     assert uncertain is True
@@ -241,7 +241,7 @@ def test_pipeline_stage2_uncertain_no_rotation(settings, monkeypatch):
     # uncertainty is surfaced rather than silently treated as "no rotation".
     monkeypatch.setattr(ip, "correct_book_page", lambda raw: (None, False, False))
     monkeypatch.setattr(
-        ip, "get_rotation_angle", lambda image, client, model=None: (0, True)
+        ip, "get_rotation_angle", lambda image, client, model=None, **kwargs: (0, True)
     )
     for_extraction, corrected, method, uncertain = ip.correct_page_image(
         b"raw", object(), settings
@@ -252,7 +252,7 @@ def test_pipeline_stage2_uncertain_no_rotation(settings, monkeypatch):
 def test_pipeline_confident_zero_is_not_uncertain(settings, monkeypatch):
     monkeypatch.setattr(ip, "correct_book_page", lambda raw: (b"crop", True, True))
     monkeypatch.setattr(
-        ip, "get_rotation_angle", lambda image, client, model=None: (0, False)
+        ip, "get_rotation_angle", lambda image, client, model=None, **kwargs: (0, False)
     )
     _, corrected, _, uncertain = ip.correct_page_image(b"raw", object(), settings)
     assert uncertain is False and corrected == b"crop"
