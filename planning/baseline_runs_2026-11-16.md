@@ -73,3 +73,46 @@ Full-book cost from the probes: old prompts $0.51, new prompts $0.83, both arms
 $1.16 with rotation shared. Projected by pages: part 1 (1,130 pages, both arms)
 about $47; part 2 (1,593 pages) about $48 with the new prompts or $29 with the
 old. Probes so far $2.09. Part 1 per-run caps: $30 old, $36 new.
+
+### Part 1: old against new prompts on the 30 drawn books (code `e01cd1a`)
+
+Both arms completed every book. Cost $46.59: old prompts $21.37 ($0.71 a
+book), new prompts $25.23 ($0.84 a book, reusing the old arm's rotation calls).
+Paired new-minus-old equal-book differences with 95% book-bootstrap ranges
+(20,000 draws, seed 20261110); character measures exclude the three books with
+no reference characters.
+
+| Measure | Books | Old | New | New − old [95% range] |
+|---|---:|---:|---:|---|
+| Text accuracy | 30 | 0.791 | 0.732 | −0.059 [−0.100, −0.016] |
+| Unsuccessful pages per 100 | 30 | 0.0 | 3.2 | +3.2 [+2.3, +4.2] |
+| Inserted text per 100 reference tokens | 30 | 15.7 | 13.3 | −2.4 [−6.2, +0.9] |
+| Character recall | 27 | 0.918 | 0.522 | −0.396 [−0.564, −0.235] |
+| Gender | 27 | 0.874 | 0.487 | −0.387 [−0.551, −0.230] |
+| Human | 27 | 0.787 | 0.439 | −0.348 [−0.528, −0.175] |
+| Protagonist | 27 | 0.873 | 0.500 | −0.372 [−0.541, −0.208] |
+
+Why the new prompts lose. Their character call ran out of output on 14 of 30
+books even at 20,000 tokens: the model was still thinking (median 19,996
+thinking tokens on those books, 7,056 where it finished, against 194 under the
+old prompts), so those books scored zero on every character measure. The SDK
+refuses longer non-streaming requests, so the ceiling cannot simply rise again.
+On the 16 books where the new call finished, it is still no better: character
+recall −0.044 [−0.106, 0.000], gender −0.052 [−0.119, +0.013], human +0.001,
+protagonist −0.017. Separately, the strict parser rejected 36 new-prompt pages
+as `invalid_response`.
+
+Decision under the approved rule ("carry the better to the other 25 and the
+Check set"): the old prompts, better on all five primaries and cheaper. Part 2
+runs `baseline.json` on the other 25 Iterate books and the 20 Check books,
+cap $38. The new prompts' rules and examples remain candidate changes for the
+tuning loop, one at a time.
+
+Consequence for the `main` merge: the app on `claude-dev` defaults to the new
+prompts (`pipeline_config.PIPELINE_SETTINGS_DEFAULTS['prompt_variant'] =
+'rules-plus-icl'`). Until that changes, merging `claude-dev` into `main` would
+move the live app to the losing prompts (DECISIONS 022 holds the merge).
+
+Text accuracy from colour scans, about 0.79 under the old prompts, is the real
+starting point; the 0.99 measured on stored page images was void, because those
+images are renders of the reference text.
