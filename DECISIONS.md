@@ -922,3 +922,16 @@ metadata fallback; its source fingerprint changes, requiring a new run directory
 while scored-stage requests stay unchanged. Whole-book story context stays off
 (the new arm failed it on 29 of 30 books). Stored settings and existing job
 snapshots still override defaults. Tuning may change the default later.
+
+## 025 — Keep lettering in pictures, tagged separately (2026-11-17)
+
+Chris decided the corpus keeps lettering inside pictures (signs, sound effects,
+labels) as its own tagged kind of text, rather than following the human typists,
+who left it out. Story text is scored against the typists' references, and
+analyses choose whether to include picture lettering. Reason: it keeps language
+that later research may need; the typists' narrower convention would lose it.
+Consequences: the pipeline must tag picture lettering reliably, which is tuning
+work, since the new prompts' first region-tagging attempt caused page rejections
+(`planning/baseline_runs_2026-11-16.md`, diagnosis); and inserted-text scoring must
+not count tagged picture lettering against the pipeline. Raised by the review in
+`planning/review_value_method_reuse_2026-11-17.md`.
