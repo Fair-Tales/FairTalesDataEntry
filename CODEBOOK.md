@@ -389,10 +389,10 @@ author gender codes. These remain open documentation questions, not invented
 values or coding rules. Release questions are collected in
 [DATASHEET.md](DATASHEET.md).
 
-## Open questions for Chris
+## Settled questions
 
-- The character ethnicity and disability menus explicitly call their categories
-  placeholders. Should they remain provisional, or should the team settle a
-  revised vocabulary before research use? Keeping them provisional preserves
-  current records but limits comparisons; revision would need an explicit rule
-  for interpreting older codes, not silent recoding.
+- **Ethnicity and disability categories stay provisional** (Chris, 16 November
+  2026). The menus keep their placeholder vocabularies and the original study
+  never coded either field, so neither is used in the current validation. Settle
+  the vocabulary before anyone analyses these fields; any revision then needs an
+  explicit rule for reading older codes, never silent recoding.

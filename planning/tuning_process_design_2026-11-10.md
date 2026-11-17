@@ -49,7 +49,7 @@ Guardrails, each judged against its measured noise rather than against zero:
 
 - **Assumed**, unmeasured paired SD = 10 points. `2×SD/√n` gives half-widths, not detectable gains; approximate 80%-power gains are 3.8/6.3/2.9 points for 55/20/95 books. Measure paired spread at the first comparison.
 - **Check draw:** the first ten ids per stratum by SHA-256 of `tuning-check|20261110|<stratum>|<id>`, saved in the freeze folder before the baseline.
-- **Leave one book out:** a book that supplied an example is scored with its own examples removed. `load_example_pack(held_out_book_ids=…)` exists but is not wired in; ten dev20 books supply all 26 examples today.
+- **Leave one book out:** a book that supplied an example is scored with its own examples removed. Wired in: the runner renders each book's prompts inside `evaluation_prompt_context(book_id)`, which drops that book's examples and records the exclusions in the run state (checked 16 November; `tests/test_extraction_eval_runtime.py::test_leave_one_out_cannot_hit_full_pack_request_cache`). Ten dev20 books supply all 26 examples today.
 
 ## 4. Run-to-run noise
 
