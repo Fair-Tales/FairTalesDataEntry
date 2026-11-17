@@ -922,3 +922,51 @@ metadata fallback; its source fingerprint changes, requiring a new run directory
 while scored-stage requests stay unchanged. Whole-book story context stays off
 (the new arm failed it on 29 of 30 books). Stored settings and existing job
 snapshots still override defaults. Tuning may change the default later.
+
+## 025 — Keep lettering in pictures, tagged separately (2026-11-17)
+
+Chris decided the corpus keeps lettering inside pictures (signs, sound effects,
+labels) as its own tagged kind of text, rather than following the human typists,
+who left it out. Story text is scored against the typists' references, and
+analyses choose whether to include picture lettering. Reason: it keeps language
+that later research may need; the typists' narrower convention would lose it.
+Consequences: the pipeline must tag picture lettering reliably, which is tuning
+work, since the new prompts' first region-tagging attempt caused page rejections
+(`planning/baseline_runs_2026-11-16.md`, diagnosis); and inserted-text scoring must
+not count tagged picture lettering against the pipeline. Raised by the review in
+`planning/review_value_method_reuse_2026-11-17.md`.
+
+## 026 — Small-book screens, a like-for-like text headline and a duplicate guard (2026-11-17)
+
+Chris decided, after Astra's and Fable's reviews
+(`planning/review_value_method_reuse_2026-11-17.md`,
+`planning/review_fable_plan_2026-11-17.md`):
+
+- **Screens.** A prompt idea may be tried on 12–18 of the 55 open Iterate books,
+  without the Check books and without counting among the 30 formal attempts. A
+  screen may drop an idea only when it is clearly no good; anything that might
+  work goes on to the full approved test (decision 020) on all 75 books.
+- **Text headline.** Text accuracy compares like with like: the headline counts
+  story pages only, against the typists' story text, with the all-pages figure
+  reported beside it. Book-details transcription (title, credits, publisher,
+  ISBN) is measured separately; Astra designs that test, following the
+  small-screen approach.
+- **Duplicates.** A rise in duplicate alias forms counts as a harm and blocks a
+  change, consistent with accepting extra aliases only when they are not
+  duplicates.
+- **Plan.** The free work in Fable's plan starts now; paid steps need Chris's
+  typed `AFFIRMATIVE`, and full tests come back to him first.
+
+## 027 — Book details: agreement now, verified references before any accuracy claim (2026-11-17)
+
+Book-details transcription (title, credits, publisher, ISBN, year) is scored
+separately from story text (decision 026), as designed in
+`planning/metadata_test_design_2026-11-17.md`. Chris decided:
+
+- **References.** Existing records come from the pilot spreadsheet and an
+  automated web lookup, with no ISBNs, so tuning reports *agreement with
+  existing records*, labelled as such. A person checks the 75 books' covers,
+  title and copyright pages before any published book-details accuracy claim.
+- **Variability.** Run-to-run variation for book details is estimated from the
+  repeat runs each full test already makes (4 on Iterate, 8 on Check, both
+  versions), with no separate calibration.

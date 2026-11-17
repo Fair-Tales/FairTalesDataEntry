@@ -198,3 +198,31 @@ thinking that exhausts the output limit; (2) the legacy-compatible page format;
 (3) restore the old exclusion of lettering in pictures; (4) drop the
 second-pass instruction from the character rules; (5) rules without the
 examples.
+
+## Rescored with the like-for-like measures (17 November)
+
+Offline, no API spend: the three paid runs rescored with the scorer at
+`4c3e055` (story-page text headline, attributes among found characters, extra
+characters, duplicate aliases; DECISIONS 026) into each run's
+`reports-2026-11-17/`, leaving the original reports. One measurement id covers
+all three. Old prompts; equal-book means with 95% book-bootstrap ranges (20,000
+draws, seed 20261110); Check figures are aggregates only.
+
+| Measure | Iterate (55) | Check (20) |
+|---|---|---|
+| Story-page text accuracy (new headline) | 0.900 [0.845, 0.944] | 0.925 [0.850, 0.980] |
+| All-pages text accuracy (previous headline) | 0.774 [0.728, 0.815] | 0.806 [0.744, 0.860] |
+| Inserted text per 100 tokens, story pages | 14.9 [2.1, 38.9] | 3.3 [0.9, 6.7] |
+| Gender, among found characters | 0.919 [0.881, 0.954] | 0.961 [0.928, 0.989] |
+| Human, among found characters | 0.851 [0.765, 0.928] | 0.990 [0.973, 1.000] |
+| Protagonist, among found characters | 0.945 [0.899, 0.982] | 0.967 [0.917, 1.000] |
+| Extra characters per book | 1.49 [0.66, 2.84] | 1.45 [0.90, 2.00] |
+| Duplicate alias forms (share) | 0.016 [0.006, 0.028] | 0.030 [0.003, 0.075] |
+
+The typists' references do include front and back matter (59 non-story pages
+with publication markers across 44 Iterate books), but most extra text sits
+outside story pages: of 7,002 inserted tokens in the old-prompt Iterate runs,
+1,210 fall on story pages and 5,792 before, after or between them. Story-page
+insertions on Iterate are concentrated in a few books (the wide range). On part
+1's 30 books the new prompts remain worse on story-page text: −0.077
+[−0.162, −0.013].
