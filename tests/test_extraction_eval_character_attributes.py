@@ -192,3 +192,24 @@ def test_exposed_dev20_attribute_regression():
                                  'agreement': headline, 'strict_agreement': strict_expected,
                                  'strict_pairs': 82, 'excluded': 0}, disagreements[field]
     assert changed == set()
+
+
+def test_found_agreement_and_extra_characters_reach_numeric_reports():
+    from scripts.extraction_eval.reporting import scan_metric, summarize_scan_scores, scan_summary_markdown
+    refs = [character('cat', human=True), character('fox'), character('owl')]
+    preds = [character('cat', gender='Male', human=True), character('fox', human=None), character('rabbit')]
+    chars = score_character_recall(refs, preds)
+    row = {'id': 'fixture', 'characters': chars, 'attributes': score_character_attributes(chars)}
+    assert chars['extra_characters'] == 1
+    for field in ('gender', 'human'):
+        assert scan_metric(row, field + '_found_agreement') == {'value': .5, 'numerator': 1, 'denominator': 2}
+        assert scan_metric(row, field)['value'] == 1 / 3
+    assert scan_metric(row, 'protagonist_found_agreement')['value'] == 1
+    summary = summarize_scan_scores([row], {'book_strata': {'fixture': 'alias_zero'}}, cohort='tune')
+    rendered = scan_summary_markdown(summary)
+    assert 'Gender agreement among found characters: mean 50.00%; pooled 1/2' in rendered
+    assert 'Extra characters (unmatched predictions): mean 1.0000; total 1;' in rendered
+    chars = score_character_recall(refs, [character('rabbit')])
+    row.update(characters=chars, attributes=score_character_attributes(chars))
+    assert chars['extra_characters'] == 1
+    assert scan_metric(row, 'gender_found_agreement')['value'] is None

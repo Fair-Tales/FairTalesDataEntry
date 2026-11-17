@@ -15,6 +15,7 @@ def scored(book_id, value, *, denominator=100):
              'recall': value, 'strict_numerator': int(value * denominator), 'strict_recall': value}
     return {'id': book_id, 'status': 'ready', 'accuracy': value, 'reference_tokens': denominator,
             'insertions': 2, 'inserted_text_per_100_reference_tokens': 2,
+            'story_text': {'accuracy': value, 'reference_tokens': denominator},
             'characters': {**ratio, 'tolerant_numerator': ratio['numerator'], 'tolerant_recall': value},
             'attributes': {field: dict(ratio) for field in ('gender', 'human', 'protagonist')},
             'aliases': {'alias_recall': dict(ratio)},
@@ -75,7 +76,7 @@ def test_shared_draws_and_sensitivities_retain_books_and_stratum_counts(cohort, 
     assert selections == before  # no new cohort selection, replacements or mutations
     assert len(batches) == 3
     for index in range(3):
-        assert all(draw is batches[index][1] for draw in used[index * 6:(index + 1) * 6])
+        assert all(draw is batches[index][1] for draw in used[sum([7, 6, 6][:index]):sum([7, 6, 6][:index + 1])])
     for index, field in enumerate(('heldout_author_shared_ids', 'heldout_alias_quoted_ids'), 1):
         excluded = set(selections[field])
         assert batches[index][0] == batches[0][0] - excluded

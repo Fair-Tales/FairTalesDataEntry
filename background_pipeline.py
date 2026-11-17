@@ -686,8 +686,8 @@ def _detect_characters(db, job_id, client, settings):
             db, job_id, worker_id, revision, {'character_claimed_at': _now()},
         )):
             arguments = {'model': settings.get('character_detection_model')}
-            if 'prompt_variant' in settings:
-                arguments['prompt_variant'] = settings['prompt_variant']
+            if settings.get('character_prompt_variant') or 'prompt_variant' in settings:
+                arguments['prompt_variant'] = settings.get('character_prompt_variant') or settings['prompt_variant']
             suggestions = detect_book_characters(story_pages, client, **arguments)
             if not isinstance(suggestions, list):
                 raise ValueError('Character detector returned no suggestion list')

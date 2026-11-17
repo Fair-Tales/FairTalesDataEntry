@@ -25,7 +25,7 @@ from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone, timedelta
 
 from ai_pricing import usage_field, usage_metrics
-from ai_runtime import current_runtime
+from ai_runtime import create_message, current_runtime
 # Settings now live in pipeline_config; these names stay importable from
 # utilities for existing callers, so some are re-exports rather than used here.
 from pipeline_config import (  # noqa: F401
@@ -561,7 +561,7 @@ def vision_text(client, images, prompt, *, model="claude-sonnet-4-6",
         request['openai_output_floor'] = openai_output_floor
     if request_validator is not None:
         request_validator(request)
-    response = client.messages.create(**request)
+    response = create_message(client, label=label, **request)
     _log_usage(response, model, label)
     if getattr(response, "stop_reason", None) == "max_tokens":
         logger.warning(
@@ -1524,7 +1524,7 @@ def _claude_json(client, prompt, max_tokens=1024, label="character_detection",
         request['reasoning'] = reasoning
     if openai_output_floor is not None:
         request['openai_output_floor'] = openai_output_floor
-    response = client.messages.create(**request)
+    response = create_message(client, label=label, **request)
     _log_usage(response, model, label)
     if getattr(response, "stop_reason", None) == "max_tokens":
         logger.warning(
@@ -1615,10 +1615,9 @@ def detect_book_characters(pages, client, progress_callback=None, model=None,
     if model is None:
         settings = get_ai_settings()
         model = settings['character_detection_model']
-        if prompt_variant is None:
-            prompt_variant = settings['prompt_variant']
     if prompt_variant is None:
-        prompt_variant = PIPELINE_SETTINGS_DEFAULTS['prompt_variant']
+        prompt_variant = (settings.get('character_prompt_variant') or
+                          settings.get('prompt_variant', PIPELINE_SETTINGS_DEFAULTS['prompt_variant']))
     pages = list(pages)
     # Single call over the whole book — report a coarse 0 -> 1 so existing
     # progress UIs still update.

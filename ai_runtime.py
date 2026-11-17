@@ -23,6 +23,20 @@ class ExtractionRuntime:
 _runtime: ContextVar[ExtractionRuntime | None] = ContextVar(
     "extraction_runtime", default=None
 )
+_request_label: ContextVar[str] = ContextVar("request_label", default="")
+
+
+def current_request_label():
+    return _request_label.get()
+
+
+def create_message(client, *, label="", **request):
+    """Expose the usage label before dispatch without adding provider options."""
+    token = _request_label.set(label or request['model'])
+    try:
+        return client.messages.create(**request)
+    finally:
+        _request_label.reset(token)
 
 
 def current_runtime():

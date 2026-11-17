@@ -169,7 +169,7 @@ def test_checked_in_configs_name_their_prompt_variants():
 
 
 def test_scan_cli_uses_scan_pages_without_stored_renders(
-        offline_inputs, fake_core, tmp_path, capsys):
+        offline_inputs, fake_core, tmp_path, capsys, monkeypatch):
     from PIL import Image
     from test_extraction_eval_reference_inputs import make_pdf
     from scripts.extraction_eval import inputs_manifest
@@ -271,6 +271,21 @@ def test_scan_cli_uses_scan_pages_without_stored_renders(
     assert numeric['sets']['iterate']['book-02']['character_recall']['value'] == 1
     assert numeric['cost']['settled_usd'] == 0
     assert numeric['measurement_id'] != read_json(out / 'reports' / 'tuning_scores.json')['measurement_id']
+    # Even unchanged references/settings get a new measurement identity after scorer edits.
+    from scripts.extraction_eval import runner
+    scorer = runner.ROOT / 'scripts/extraction_eval/scoring.py'
+    read_bytes = type(scorer).read_bytes
+
+    def changed_bytes(path):
+        data = read_bytes(path)
+        return data + b'\n# Synthetic source change\n' if path == scorer else data
+
+    with monkeypatch.context() as changed_source:
+        changed_source.setattr(type(scorer), 'read_bytes', changed_bytes)
+        rescored = tmp_path / 'new-scorer'
+        assert cli.main([*score_args, '--out', str(rescored),
+                         '--text-output', 'analysis_without_illustration_lettering']) == 0
+    assert read_json(rescored / 'tuning_scores.json')['measurement_id'] != numeric['measurement_id']
     with pytest.raises(SystemExit):
         cli.main([*score_args, '--compare-run', str(out)])
     assert 'per-book text and character recall' in capsys.readouterr().err
@@ -356,6 +371,7 @@ def test_scan_character_failure_retains_recorded_denominator(tmp_path, monkeypat
 
     monkeypatch.setattr(inputs_manifest, 'scoring_inputs', lambda *args, **kwargs: [{
         'id': 'book', 'reference_text': '', 'prediction_text': '', 'forced_score': None,
+        'story_reference_text': '', 'story_prediction_text': '',
         'status': 'ready', 'reason': None, 'failed_pages': [],
         'page_failures': {}, 'unrun_pages': [],
     }])

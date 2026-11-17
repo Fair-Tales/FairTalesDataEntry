@@ -153,6 +153,7 @@ PIPELINE_SETTINGS_DEFAULTS = {
     **AI_SETTINGS_DEFAULTS,
     **GENERATION_DEFAULTS,
     'prompt_variant': 'legacy-v1',
+    'character_prompt_variant': None,
     'page_schema_version': 'legacy-compatible-page-v1',
     'story_context_enabled': False,
     'story_context_model': EXTRACTION_MODEL,
@@ -188,6 +189,9 @@ def validate_settings(values, *, model_ids=()):
         if key in AI_SETTINGS_MODEL_KEYS:
             valid = isinstance(value, str) and value in models
             expected = ', '.join(models)
+        elif key == 'character_prompt_variant':
+            valid = value is None or isinstance(value, str) and value in PROMPT_VARIANTS
+            expected = 'null or ' + ', '.join(PROMPT_VARIANTS)
         elif key in _CHOICES:
             valid = isinstance(value, str) and value in _CHOICES[key]
             expected = ', '.join(_CHOICES[key])

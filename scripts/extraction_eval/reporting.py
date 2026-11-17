@@ -285,10 +285,15 @@ def write_reports(manifest, predictions, out, protocol=None, selection=None, cal
 # (path, score, numerator, denominator, scale). Text accuracy is an edit score,
 # so its pooled edit components are reported separately, never as token recall.
 _SCAN_METRICS = {
+    'story_text_accuracy': (('story_text',), 'accuracy', None, 'reference_tokens', 1),
     'text_accuracy': ((), 'accuracy', None, 'reference_tokens', 1),
     'character_recall': (('characters',), 'tolerant_recall', 'tolerant_numerator', 'denominator', 1),
     **{field: (('attributes', field), 'recall', 'numerator', 'denominator', 1)
        for field in ('gender', 'human', 'protagonist')},
+    **{field + '_found_agreement': (('attributes', field, 'matched_pair_agreement'),
+                                  'agreement', 'numerator', 'denominator', 1)
+       for field in ('gender', 'human', 'protagonist')},
+    'extra_characters': (('characters',), 'extra_characters', 'extra_characters', None, 0),
     'strict_character_recall': (('characters',), 'strict_recall', 'strict_numerator', 'denominator', 1),
     **{'strict_' + field: (('attributes', field), 'strict_recall', 'strict_numerator', 'denominator', 1)
        for field in ('gender', 'human', 'protagonist')},
@@ -300,10 +305,12 @@ _SCAN_METRICS = {
            ('groundedness', 'groundedness', 'share'))},
     'additional_groundedness': (('aliases', 'additional_aliases', 'grounding'), 'share', 'numerator', 'denominator', 1),
     'duplicate_aliases': (('aliases', 'additional_aliases', 'duplicates'), 'share', 'numerator', 'denominator', 1),
+    'duplicate_alias_count': (('aliases', 'additional_aliases', 'duplicates'), 'numerator', 'numerator', None, 0),
+    'story_inserted_text_per_100': (('story_text',), 'inserted_text_per_100_reference_tokens', 'insertions', 'reference_tokens', 100),
     'inserted_text_per_100': ((), 'inserted_text_per_100_reference_tokens', 'insertions', 'reference_tokens', 100),
     'unsuccessful_pages_per_100': (('page_failures',), 'failed_pages_per_100', 'failed', 'attempted', 100),
 }
-_SCAN_PRIMARIES = ('text_accuracy', 'character_recall', 'gender', 'human', 'protagonist')
+_SCAN_PRIMARIES = ('story_text_accuracy', 'character_recall', 'gender', 'human', 'protagonist')
 
 
 def scan_metric(book, name):
@@ -313,7 +320,7 @@ def scan_metric(book, name):
     for key in path:
         measure = measure.get(key, {})
     value = measure.get(value_key)
-    if book.get('status') == 'unavailable' and (name in _SCAN_PRIMARIES or name.startswith('strict_')):
+    if book.get('status') == 'unavailable' and (name in (*_SCAN_PRIMARIES, 'text_accuracy') or name.startswith('strict_')):
         value = 0.0
     return {'value': value, 'numerator': measure.get(numerator_key),
             'denominator': measure.get(denominator_key)}
@@ -373,7 +380,7 @@ def summarize_scan_scores(scores, selections, *, cohort):
                          'shared_draws': True, 'weighting': 'equal_book', 'percentiles': [0.025, 0.975],
                          'interpolation': 'linear'},
               'qualification': T.scope, 'undefined_policy': T.undefined,
-              'primary': analysis(scores, _SCAN_METRICS, (*_SCAN_PRIMARIES, 'alias_recall'))}
+              'primary': analysis(scores, _SCAN_METRICS, (*_SCAN_PRIMARIES, 'text_accuracy', 'alias_recall'))}
     if cohort == 'proof':
         result['sensitivities'] = {}
         for field in ('heldout_author_shared_ids', 'heldout_alias_quoted_ids'):
@@ -408,16 +415,18 @@ def scan_summary_markdown(summary):
                           books=metric['books'], items=metric['items'] if metric['items'] is not None else T.unavailable,
                           undefined=metric['undefined_books'], unknown=metric['unknown_item_books'],
                           numerator=metric['numerator'] if metric['numerator'] is not None else T.unavailable)
-            output.append((T.line if name in _SCAN_PRIMARIES else T.descriptive_line).format(**values))
+            template = T.count_line if scale == 0 else T.line if name in _SCAN_PRIMARIES else T.descriptive_line
+            output.append(template.format(**values))
             if name not in _SCAN_PRIMARIES and 'range_95' in metric:
                 output[-1] += ' ' + T.range_clause.format(**values)
             if metric.get('qualification'):
                 output.append(metric['qualification'])
         return output
 
+    headline = (_SCAN_PRIMARIES[0], 'text_accuracy', *_SCAN_PRIMARIES[1:])
     output = [T.title, summary['qualification'], summary['undefined_policy'], T.primary,
-              *lines(summary['primary'], _SCAN_PRIMARIES), T.descriptive,
-              *lines(summary['primary'], [name for name in _SCAN_METRICS if name not in _SCAN_PRIMARIES])]
+              *lines(summary['primary'], headline), T.descriptive,
+              *lines(summary['primary'], [name for name in _SCAN_METRICS if name not in headline])]
     if summary['sensitivities'].get('status') == 'not_applicable':
         output.append(T.not_applicable)
     else:

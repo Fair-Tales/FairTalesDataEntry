@@ -11,6 +11,7 @@ import time
 from types import SimpleNamespace
 
 from ai_pricing import normalize_usage, OPENAI_CACHE_WRITE_PER_MTOK
+from ai_runtime import current_request_label
 from pipeline_config import requested_generation, validate_generation_request
 from text_content.pipeline_runtime import EVALUATION_CLIENT_MISSING, RETRY_EXHAUSTED, RETRY_WAIT_EXCEEDED, REQUEST_UNKNOWN
 
@@ -168,7 +169,8 @@ class Gateway:
     uncertain provider outcome is never replayed automatically. Only explicit
     rate/server rejections may retry; each gets its own reservation and record.
     """
-    def __init__(self, client, ledger, config, *, replicate="1", dry_run=False, wait=None):
+    def __init__(self, client, ledger, config, *, replicate="1", replicate_stages=None,
+                 dry_run=False, wait=None):
         self.provider = config.get("provider", "anthropic-messages")
         if self.provider not in ("anthropic", "anthropic-messages", *OPENAI_PROVIDERS):
             raise ValueError(f"Unsupported evaluation provider: {self.provider}")
@@ -182,6 +184,7 @@ class Gateway:
         self.config = config
         self.prices = validate_prices(config)
         self.replicate = str(replicate)
+        self.replicate_stages = None if replicate_stages is None else frozenset(replicate_stages)
         self.messages = self
         self.cache_hits = 0
         self.paid_calls = 0
@@ -212,7 +215,10 @@ class Gateway:
             request.pop("store", None)
             request.pop("background", None)
         ceiling = request_ceiling(request, self.prices)
-        identity = {"request_version": self.config.get("request_version", "1"), "replicate": self.replicate, "provider": self.provider, "request": request}
+        label = current_request_label() or request['model']
+        replicate = (self.replicate if self.replicate_stages is None or label in self.replicate_stages
+                     else "1")
+        identity = {"request_version": self.config.get("request_version", "1"), "replicate": replicate, "provider": self.provider, "request": request}
         attempts = self.config.get("max_attempts", 1)
         if not isinstance(attempts, int) or not 1 <= attempts <= 5:
             raise ValueError("max_attempts must be between 1 and 5")

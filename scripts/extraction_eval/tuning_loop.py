@@ -13,14 +13,17 @@ from .reporting import _SCAN_PRIMARIES, scan_metric
 from .store import digest, run_lock
 
 PRIMARIES = _SCAN_PRIMARIES
-GUARDRAILS = ('groundedness', 'inserted_text_per_100', 'unsuccessful_pages_per_100')
-MEASURES = (*PRIMARIES, 'alias_coverage', *GUARDRAILS)
-DIRECTION = {name: (-1 if name in GUARDRAILS[1:] else 1) for name in MEASURES}
+GUARDRAILS = ('groundedness', 'story_inserted_text_per_100', 'unsuccessful_pages_per_100', 'duplicate_alias_count')
+DESCRIPTIVE = ('text_accuracy', 'inserted_text_per_100', 'gender_found_agreement',
+               'human_found_agreement', 'protagonist_found_agreement', 'extra_characters', 'duplicate_aliases')
+MEASURES = (*PRIMARIES, 'alias_coverage', *GUARDRAILS, *DESCRIPTIVE)
+DIRECTION = {name: (-1 if name in (*GUARDRAILS[1:], 'inserted_text_per_100',
+                                 'extra_characters', 'duplicate_aliases') else 1) for name in MEASURES}
 SETS = ('iterate', 'check')
 
 
 def tuning_scores(scores, selections, *, run_id, configuration_id, replicate,
-                  measurement_id, reference_hashes, cost=None):
+                  measurement_id, reference_hashes, cost=None, replicate_stages=None):
     """Project scored books to numbers and ids for machine pairing, never names/text."""
     groups = {name: selections[key] for name, key in
               (('iterate', 'iterate55_ids'), ('check', 'check20_ids'))}
@@ -28,7 +31,8 @@ def tuning_scores(scores, selections, *, run_id, configuration_id, replicate,
     if len(set(ids)) != len(ids) or not set(ids) <= set(groups['iterate']) | set(groups['check']):
         raise ValueError(T.invalid_books)
     return {'version': 'tuning-scores-v1', 'run_id': run_id,
-            'configuration_id': configuration_id, 'replicate': replicate,
+            'configuration_id': configuration_id, 'replicate': str(replicate),
+            'replicate_stages': sorted(set(replicate_stages)) if replicate_stages is not None else None,
             'measurement_id': measurement_id,
             'reference_hashes': reference_hashes,
             'cohorts': {name: {'books': len(group), 'ids_sha256': digest(sorted(group))}
@@ -55,7 +59,17 @@ def _validate(run):
                         raise ValueError(T.invalid_metrics)
 
 
+def _same_replicate_stages(left, right):
+    # Missing/null means the historical all-stages policy, not an empty set.
+    def stages(run):
+        value = run.get('replicate_stages')
+        return None if value is None else frozenset(value)
+    if stages(left) != stages(right):
+        raise ValueError(T.replicate_stages_changed)
+
+
 def _compatible(left, right):
+    _same_replicate_stages(left, right)
     for key in ('measurement_id', 'cohorts', 'reference_hashes'):
         if left[key] != right[key]:
             raise ValueError(T.incompatible)
@@ -118,10 +132,12 @@ def noise_floors(runs):
             _complete(run, name)
     if len({run['configuration_id'] for run in runs}) != 1:
         raise ValueError(T.configuration_changed)
-    if any(len({run[key] for run in runs}) != len(runs) for key in ('run_id', 'replicate')):
+    if any(len({str(run[key]) for run in runs}) != len(runs) for key in ('run_id', 'replicate')):
         raise ValueError(T.duplicate_replicates)
     result = {key: runs[0][key] for key in ('configuration_id', 'measurement_id', 'cohorts')}
     result.update(version='tuning-noise-v2', run_ids=[run['run_id'] for run in runs],
+                  replicate_tokens=[str(run['replicate']) for run in runs],
+                  replicate_stages=runs[0].get('replicate_stages'),
                   reference_sha256=digest(runs[0]['reference_hashes']),
                   R=len(runs), replicates=len(runs), sets={})
     for name in SETS:
@@ -182,7 +198,7 @@ def _paired(before, after, metric):
 
 def verdict(baseline, candidate, floors, target):
     """Compare fresh arms using estimated difference noise and Student-t cutoffs."""
-    if target not in MEASURES:
+    if target not in (*PRIMARIES, 'alias_coverage', *GUARDRAILS):
         raise ValueError(T.invalid_target)
     baseline, candidate = _arms(baseline), _arms(candidate)
     if any(not arm[name] for arm in (baseline, candidate) for name in SETS):
@@ -192,10 +208,11 @@ def verdict(baseline, candidate, floors, target):
         if len({run['configuration_id'] for runs in arm.values() for run in runs}) != 1:
             raise ValueError(T.arm_configuration)
         for name, runs in arm.items():
-            if any(len({run[key] for run in runs}) != len(runs) for key in ('run_id', 'replicate')):
+            if any(len({str(run[key]) for run in runs}) != len(runs) for key in ('run_id', 'replicate')):
                 raise ValueError(T.duplicate_replicates)
             for run in runs:
                 _validate(run)
+                _same_replicate_stages(first, run)
                 if any(run[key] != first[key] for key in ('measurement_id', 'cohorts', 'reference_hashes')):
                     raise ValueError(T.incompatible)
                 if run['sets'][name].keys() != arm[name][0]['sets'][name].keys():
@@ -207,6 +224,14 @@ def verdict(baseline, candidate, floors, target):
     run_ids = [{run['run_id'] for runs in arm.values() for run in runs} for arm in (baseline, candidate)]
     if run_ids[0] & run_ids[1] or (run_ids[0] | run_ids[1]) & set((floors or {}).get('run_ids', [])):
         raise ValueError(T.fresh_runs)
+    tokens = [{str(run['replicate']) for runs in arm.values() for run in runs}
+              for arm in (baseline, candidate)]
+    if floors and 'replicate_tokens' not in floors:
+        raise ValueError(T.missing_replicate_tokens)
+    if tokens[0] & tokens[1] or (tokens[0] | tokens[1]) & set(map(str, (floors or {}).get('replicate_tokens', []))):
+        raise ValueError(T.fresh_replicates)
+    if floors:
+        _same_replicate_stages(first, floors)
     if floors and (any(floors.get(key) != first[key] for key in ('measurement_id', 'cohorts')) or
                    floors.get('reference_sha256') != digest(first['reference_hashes'])):
         raise ValueError(T.incompatible)
@@ -302,13 +327,16 @@ def append_attempt(path, baseline, candidate, floors, target, hypothesis, change
                'candidate_run_ids': {name: [run['run_id'] for run in runs] for name, runs in candidate.items()},
                **{key: result[key] for key in ('R', 'r', 'm', 'omitted_measures')},
                'noise_run_ids': (floors or {}).get('run_ids', []),
+               'baseline_replicate_tokens': sorted({str(run['replicate']) for runs in baseline.values() for run in runs}),
+               'candidate_replicate_tokens': sorted({str(run['replicate']) for runs in candidate.values() for run in runs}),
+               'noise_replicate_tokens': (floors or {}).get('replicate_tokens', []),
                'verdict': result['verdict'], 'clauses': result['clauses'],
-               'counts': {}, 'primaries': {}, 'guardrails': {}, 'alias_coverage': {},
+               'counts': {}, 'primaries': {}, 'guardrails': {}, 'alias_coverage': {}, 'descriptive': {},
                'cost': {'before': _arm_cost(baseline), 'after': _arm_cost(candidate), 'judgement': T.cost}}
         for name, figures in result['figures'].items():
             row['counts'][name] = {metric: figure['counts'] for metric, figure in figures.items()}
             for section, metrics in (('primaries', PRIMARIES), ('guardrails', GUARDRAILS),
-                                     ('alias_coverage', ('alias_coverage',))):
+                                     ('alias_coverage', ('alias_coverage',)), ('descriptive', DESCRIPTIVE)):
                 row[section][name] = {metric: {key: value for key, value in figures[metric].items() if key != 'counts'}
                                       for metric in metrics}
         encoded = json.dumps(row, ensure_ascii=False, sort_keys=True, allow_nan=False) + '\n'

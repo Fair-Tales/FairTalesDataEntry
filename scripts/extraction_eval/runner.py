@@ -50,7 +50,8 @@ def configure_inputs(config, inputs, *, inputs_manifest=None, scan_root=None,
     return result
 
 
-def freeze_run(out, snapshot, selection, config, replicate, cap, cycle_cap, ledger):
+def freeze_run(out, snapshot, selection, config, replicate, cap, cycle_cap, ledger,
+               *, replicate_stages=None):
     config = {**config, 'settings': validate_settings(
         config.get('settings', {}), model_ids=config.get('pricing', {}).get('models', {}))}
     loader = _require_loader()
@@ -65,6 +66,7 @@ def freeze_run(out, snapshot, selection, config, replicate, cap, cycle_cap, ledg
     contract = {"version": 1, "snapshot_id": snapshot.get("snapshot_id"),
                 "snapshot_hash": digest(snapshot), "selection": selection, "config": config,
                 "replicate": str(replicate), "max_spend_usd": cap,
+                "replicate_stages": sorted(set(replicate_stages)) if replicate_stages is not None else None,
                 "cycle_cap_usd": cycle_cap, "ledger": str(Path(ledger).resolve()),
                 "sources": code_fingerprint()}
     saved = loader.run_record(path) if path.exists() else {"tuning": loader.state}

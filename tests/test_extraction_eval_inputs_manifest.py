@@ -181,11 +181,13 @@ def test_scoring_contract_keeps_order_wordless_failed_and_unavailable_books(load
         {'id': 'book', 'status': 'ready', 'reason': None,
          'reference_text': '\n'.join(reference['pages']),
          'prediction_text': 'First\nInserted on blank\n\nLast',
+         'story_reference_text': None, 'story_prediction_text': 'First\nLast',
          'failed_pages': [3], 'forced_score': None, 'unrun_pages': [],
          'page_failures': score_page_failures([predictions['books']['book']['pages'][f'scan-{i}']
                                              for i in range(1, 5)])},
         {'id': 'missing', 'status': 'unavailable', 'reason': 'missing_snapshot_id',
          'reference_text': None, 'prediction_text': '', 'failed_pages': [], 'forced_score': 0,
+         'story_reference_text': None, 'story_prediction_text': '',
          'unrun_pages': [], 'page_failures': score_page_failures([])},
     ]
     with loader.activate():
@@ -275,3 +277,39 @@ def test_manifest_loader_admits_before_read_and_never_drops_requested_id(loader,
             inputs_manifest.load_manifest(path, ['missing'])
         with pytest.raises(TuningRefused):
             inputs_manifest.load_manifest(tmp_path / 'must-not-open.json', ['heldout'])
+
+
+def test_story_text_filters_reference_and_predictions_independently(loader, tmp_path):
+    from scripts.extraction_eval.scoring import score_book_text
+    snapshot, scans, references, _, _ = make_inputs(
+        tmp_path, scan_count=4, reference_pages=('Copyright', 'Mia waved.', 'Buy more books'))
+    reference_books = [{'id': 'book', 'pages': [
+        {'page_number': n, 'reference': {'contains_story': {'value': n == 2, 'status': 'observed'}}}
+        for n in range(1, 4)]}]
+    predictions = {'books': {'book': {'pages': {
+        'scan-1': {'status': 'completed', 'contains_story': False, 'text': 'Cover'},
+        'scan-2': {'status': 'completed', 'contains_story': True, 'text': 'Mia'},
+        'scan-3': {'status': 'completed', 'contains_story': True, 'text': 'waved.\n\nBANG',
+                   'regions': [{'kind': 'narrative', 'text': 'waved.'},
+                               {'kind': 'illustration_lettering', 'text': 'BANG'}]},
+        'scan-4': {'status': 'failed', 'contains_story': True, 'text': 'Never credit failed text'},
+    }}}}
+    with loader.activate():
+        manifest = inputs_manifest.build_manifest(snapshot, ['book'], scans, references, overrides=[])
+        row, = inputs_manifest.scoring_inputs(manifest, predictions, references, reference_books=reference_books)
+    score = score_book_text([row['story_reference_text']], [row['story_prediction_text']])
+    assert (score['accuracy'], score['reference_tokens'], score['insertions']) == (1, 2, 0)
+    assert row['prediction_text'] == 'Cover\nMia\nwaved.\n\nBANG\n'
+    assert row['failed_pages'] == [4]
+    # A predicted false/unknown story flag loses the word: reference inclusion stays fixed.
+    for flag in (False, None):
+        predictions['books']['book']['pages']['scan-2']['contains_story'] = flag
+        with loader.activate():
+            changed, = inputs_manifest.scoring_inputs(manifest, predictions, references, reference_books=reference_books)
+        score = score_book_text([changed['story_reference_text']], [changed['story_prediction_text']])
+        assert score['accuracy'] == .5 and score['deletions'] == 1
+    # Missing reference labels cannot silently turn into an empty perfect reference.
+    reference_books[0]['pages'].pop()
+    with loader.activate():
+        changed, = inputs_manifest.scoring_inputs(manifest, predictions, references, reference_books=reference_books)
+    assert changed['story_reference_text'] is None
