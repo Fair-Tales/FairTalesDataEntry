@@ -73,3 +73,85 @@ Full-book cost from the probes: old prompts $0.51, new prompts $0.83, both arms
 $1.16 with rotation shared. Projected by pages: part 1 (1,130 pages, both arms)
 about $47; part 2 (1,593 pages) about $48 with the new prompts or $29 with the
 old. Probes so far $2.09. Part 1 per-run caps: $30 old, $36 new.
+
+### Part 1: old against new prompts on the 30 drawn books (code `e01cd1a`)
+
+Both arms completed every book. Cost $46.59: old prompts $21.37 ($0.71 a
+book), new prompts $25.23 ($0.84 a book, reusing the old arm's rotation calls).
+Paired new-minus-old equal-book differences with 95% book-bootstrap ranges
+(20,000 draws, seed 20261110); character measures exclude the three books with
+no reference characters.
+
+| Measure | Books | Old | New | New − old [95% range] |
+|---|---:|---:|---:|---|
+| Text accuracy | 30 | 0.791 | 0.732 | −0.059 [−0.100, −0.016] |
+| Unsuccessful pages per 100 | 30 | 0.0 | 3.2 | +3.2 [+2.3, +4.2] |
+| Inserted text per 100 reference tokens | 30 | 15.7 | 13.3 | −2.4 [−6.2, +0.9] |
+| Character recall | 27 | 0.918 | 0.522 | −0.396 [−0.564, −0.235] |
+| Gender | 27 | 0.874 | 0.487 | −0.387 [−0.551, −0.230] |
+| Human | 27 | 0.787 | 0.439 | −0.348 [−0.528, −0.175] |
+| Protagonist | 27 | 0.873 | 0.500 | −0.372 [−0.541, −0.208] |
+
+Why the new prompts lose. Their character call ran out of output on 14 of 30
+books even at 20,000 tokens: the model was still thinking (median 19,996
+thinking tokens on those books, 7,056 where it finished, against 194 under the
+old prompts), so those books scored zero on every character measure. The SDK
+refuses longer non-streaming requests, so the ceiling cannot simply rise again.
+On the 16 books where the new call finished, it is still no better: character
+recall −0.044 [−0.106, 0.000], gender −0.052 [−0.119, +0.013], human +0.001,
+protagonist −0.017. Separately, the strict parser rejected 36 new-prompt pages
+as `invalid_response`.
+
+Decision under the approved rule ("carry the better to the other 25 and the
+Check set"): the old prompts, better on all five primaries and cheaper. Part 2
+runs `baseline.json` on the other 25 Iterate books and the 20 Check books,
+cap $38. The new prompts' rules and examples remain candidate changes for the
+tuning loop, one at a time.
+
+Consequence for the `main` merge: the app on `claude-dev` defaults to the new
+prompts (`pipeline_config.PIPELINE_SETTINGS_DEFAULTS['prompt_variant'] =
+'rules-plus-icl'`). Until that changes, merging `claude-dev` into `main` would
+move the live app to the losing prompts (DECISIONS 022 holds the merge).
+
+Text accuracy from colour scans, about 0.79 under the old prompts, is the real
+starting point; the 0.99 measured on stored page images was void, because those
+images are renders of the reference text.
+
+### Part 2: old prompts on the other 25 Iterate books and the 20 Check books (code `e01cd1a`)
+
+All 45 books completed (3,484 paid calls), cost $30.91, inside the $38 cap. The
+baseline as a whole cost $79.59 (probes $2.09, part 1 $46.59, part 2 $30.91);
+the ledger's $1.16 outstanding is the reservation on two refused calls, which
+are not billed. Anthropic cycle headroom afterwards: $53.25 of $134.
+
+Two pages of `how_the_grinch_stole_christmas` failed: the API refused two
+calls with "Output blocked by content filtering policy". A well-known
+copyrighted text can be refused for verbatim transcription; the app will meet
+the same refusal. One other Iterate page and one Check page also failed; three
+failed pages in 2,723.
+
+The old-prompt baseline: equal-book means with 95% book-bootstrap ranges
+(20,000 draws, seed 20261110). Iterate combines part 1's old-prompt run (30
+books) with part 2 (25). Check figures are aggregates only, read once.
+
+| Measure | Iterate books | Iterate (55) | Check books | Check (20) |
+|---|---:|---|---:|---|
+| Text accuracy | 55 | 0.774 [0.728, 0.815] | 20 | 0.806 [0.744, 0.860] |
+| Unsuccessful pages per 100 | 55 | 0.11 [0.00, 0.27] | 20 | 0.16 [0.00, 0.47] |
+| Inserted text per 100 reference tokens | 55 | 16.7 [12.7, 21.2] | 20 | 14.2 [9.8, 19.6] |
+| Character recall | 51 | 0.904 [0.859, 0.943] | 20 | 0.919 [0.853, 0.972] |
+| Gender | 51 | 0.837 [0.784, 0.886] | 20 | 0.884 [0.814, 0.942] |
+| Human | 51 | 0.769 [0.681, 0.849] | 20 | 0.911 [0.840, 0.967] |
+| Protagonist | 51 | 0.860 [0.805, 0.909] | 20 | 0.890 [0.810, 0.958] |
+| Groundedness | 54 | 0.936 [0.906, 0.961] | 20 | 0.928 [0.889, 0.961] |
+| Alias coverage | 35 | 0.705 [0.576, 0.826] | 10 | 0.305 [0.125, 0.505] |
+
+Check sits inside or near Iterate's ranges on every measure but two: human
+(0.911 against 0.769) and alias coverage (0.305 against 0.705, on only 10 Check
+books with reference aliases). Neither is examined further, under the Check
+rule. These are the figures each tuning change must beat on Iterate without
+losing on Check.
+
+Next, per the design: noise calibration (§4), then the model screen and the
+one-change-at-a-time loop. Inserted text (about 17 tokens per 100) and
+character attributes (human, gender) are the largest gaps on Iterate.
