@@ -9,9 +9,9 @@ import background_pipeline as production
 import extraction_core as harness
 import utilities
 from ai_runtime import extraction_runtime
-from pipeline_config import AI_SETTINGS_DEFAULTS, GENERATION_DEFAULTS, validate_settings
+from pipeline_config import AI_SETTINGS_DEFAULTS, GENERATION_DEFAULTS, generation_request, validate_settings
 from scripts.extraction_eval import cli, runner
-from text_content.pipeline_prompts import PROMPT_VARIANTS, evaluation_prompt_context
+from text_content.pipeline_prompts import PROMPT_VARIANTS, evaluation_prompt_context, prompt_for
 from test_background_pipeline import FakeClient as FakeDB, FakeFs, _make_job
 from test_extraction_eval_core import FakeClient, image_bytes, isolated  # noqa: F401,F811 - pytest fixtures
 
@@ -29,8 +29,7 @@ def test_current_production_defaults_are_pinned(monkeypatch):
         'locate_max_edge': 784,
         'enable_rotation_correction': True, 'enable_crop_quality_gate': True,
     }
-    # These were implicit fallbacks, not a switch to the legacy-v1 baseline.
-    expected = {**admin_defaults, 'prompt_variant': 'rules-plus-icl',
+    expected = {**admin_defaults, 'prompt_variant': 'legacy-v1',
                 'page_schema_version': 'legacy-compatible-page-v1',
                 'story_context_enabled': False, 'story_context_model': 'claude-sonnet-5',
                 'story_context_max_tokens': 20000, 'story_context_limits': None,
@@ -39,6 +38,65 @@ def test_current_production_defaults_are_pinned(monkeypatch):
     assert AI_SETTINGS_DEFAULTS == admin_defaults
     assert utilities.get_ai_settings() == production._validated_settings({}) == expected
     assert validate_settings({}) == expected
+
+
+@pytest.mark.parametrize('stage', ['extraction', 'character_detection'])
+def test_app_default_scored_requests_match_baseline(stage, image_bytes, monkeypatch):  # noqa: F811 - pytest fixture
+    baseline = validate_settings(json.loads((cli.PACKAGE / 'baseline.json').read_text())['settings'])
+    monkeypatch.setattr(utilities, '_read_ai_settings_doc', lambda: {})
+    monkeypatch.setattr(utilities, '_log_usage', lambda *args: None)
+    settings = utilities.get_ai_settings()
+    assert settings == baseline
+    assert settings['prompt_variant'] == 'legacy-v1'
+    assert settings['story_context_enabled'] is False
+    page = {'has_text': True, 'text': 'Mia waved.', 'is_story_page': True,
+            'page_type': 'story'}
+    reply = page if stage == 'extraction' else {'characters': []}
+    live, evaluated = FakeClient(reply), FakeClient(reply)
+    if stage == 'extraction':
+        assert harness.attempt_page_extraction(
+            image_bytes, live, settings, label='page_extraction')[0] == 'ok'
+        with extraction_runtime(client=evaluated, settings=baseline, usage_sink=lambda *args: None):
+            assert harness.attempt_page_extraction(
+                image_bytes, evaluated, baseline, label='page_extraction')[0] == 'ok'
+        prompt = prompt_for('page_extraction', 'legacy-v1')
+    else:
+        utilities.detect_book_characters([(1, page['text'])], live)
+        harness.extract_characters([{'page_number': 1, 'contains_story': True, 'text': page['text']}],
+                                   evaluated, baseline, lambda *args: None)
+        prompt = prompt_for('character_detection', 'legacy-v1').format(
+            pages_json=json.dumps([{'page': 1, 'text': page['text']}], ensure_ascii=False))
+    assert live.requests == evaluated.requests
+    request, = live.requests
+    expected_generation = generation_request(baseline, stage)
+    assert expected_generation == {
+        'model': 'claude-sonnet-5',
+        'max_tokens': 8192 if stage == 'extraction' else 20000,
+    }
+    assert all(request[key] == value for key, value in expected_generation.items())
+    assert not {'thinking', 'output_config', 'temperature', 'top_p', 'top_k'} & request.keys()
+    content = request['messages'][0]['content']
+    assert (content[-1]['text'] if stage == 'extraction' else content) == prompt
+
+
+@pytest.mark.parametrize('variant', [None, 'rules-only', 'rules-plus-icl'])
+@pytest.mark.parametrize('previous', [None, {}])
+def test_book_details_resolve_prompt_and_record_actual_variant(variant, previous, image_bytes, monkeypatch):  # noqa: F811 - pytest fixture
+    stored = {} if variant is None else {'prompt_variant': variant}
+    monkeypatch.setattr(utilities, '_read_ai_settings_doc', lambda: stored)
+    monkeypatch.setattr(utilities, '_log_usage', lambda *args: None)
+    client = FakeClient({'title': {'value': 'Fixture book', 'evidence': [
+        {'page_number': 1, 'quote': 'Fixture book'}]},
+        'credits': [], 'publisher_statements': [], 'isbns': [], 'conflicts': []})
+    metadata = utilities.extract_joint_metadata([(1, image_bytes)], client, previous=previous)
+    assert metadata['metadata_extraction_status'] == 'completed'
+    assert metadata['title'] == 'Fixture book'
+    expected_variant = variant or 'rules-plus-icl'
+    manifest = metadata['metadata_prompt_manifest']
+    assert manifest['prompt_variant'] == expected_variant
+    prompt = client.requests[0]['messages'][0]['content'][-1]['text']
+    assert prompt.startswith(prompt_for('joint_metadata_extraction', expected_variant))
+    assert manifest['rendered_prompt_utf8'] == prompt
 
 
 @pytest.mark.parametrize('values, message', [

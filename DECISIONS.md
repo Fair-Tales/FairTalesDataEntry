@@ -904,3 +904,21 @@ separate records; it is not their storage key. Replacing storage keys and moving
 dependent records is outside this conservative change. No migration, backfill,
 lookup service or dependency is added. Research exports include all three
 fields, with missing values represented as null (blank in CSV).
+
+## 024 — Default to the measured old prompts, retaining working book details (2026-11-17)
+
+Chris approved switching the app to `legacy-v1`: baseline part 1 on 30 Iterate
+books from colour scans favoured the old prompts on every scored measure
+(`planning/baseline_runs_2026-11-16.md`). This revisits the prompt-related hold
+in 022; Chris still handles deployment. Transcription and characters use
+`baseline.json`'s Sonnet 5 models and generation settings, with output ceilings
+of 8,192 and 20,000 respectively and no thinking/effort overrides.
+
+Legacy has no combined metadata prompt. The shared book-details helper keeps
+the existing `rules-plus-icl` metadata prompt and records that actual variant;
+this avoids rebuilding the earlier separate metadata flow. The frozen legacy
+prompts and `baseline.json` are unchanged. A future harness run also gains this
+metadata fallback; its source fingerprint changes, requiring a new run directory,
+while scored-stage requests stay unchanged. Whole-book story context stays off
+(the new arm failed it on 29 of 30 books). Stored settings and existing job
+snapshots still override defaults. Tuning may change the default later.

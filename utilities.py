@@ -2186,6 +2186,10 @@ def extract_joint_metadata(pages, client, *, previous=None):
               for position, (number, _) in enumerate(pages, 1)]
     ai_settings = get_ai_settings()
     variant = ai_settings.get('prompt_variant', PIPELINE_SETTINGS_DEFAULTS['prompt_variant'])
+    # Legacy has no joint metadata prompt. Keep the working book-details path
+    # and record its actual variant without changing the frozen scored prompts.
+    if variant == 'legacy-v1':
+        variant = 'rules-plus-icl'
     prompt = prompt_for('joint_metadata_extraction', variant) + "\n" + T.image_labels.format(
         pages=json.dumps(labels, ensure_ascii=False))
     if previous is not None:

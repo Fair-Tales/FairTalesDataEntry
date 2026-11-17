@@ -75,7 +75,7 @@ def test_legacy_does_not_invent_prompts_for_later_stages(stage):
 
 
 @pytest.mark.parametrize("variant,hashes", EXISTING_PROMPT_HASHES.items())
-def test_existing_prompt_variants_and_live_defaults_are_unchanged(variant, hashes):
+def test_existing_prompt_variants_and_compatibility_constants_are_unchanged(variant, hashes):
     from text_content.ai_prompts import AIPrompts
 
     for stage, expected in hashes.items():
