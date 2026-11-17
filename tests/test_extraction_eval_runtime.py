@@ -1277,3 +1277,46 @@ def test_retry_failed_command_recovers_cached_stages_but_never_unknown(
         assert len(provider.calls) == 4  # Metadata + 2 pages + one rejection.
     for row in paid:
         assert ledger.get(row['key']) == row
+
+
+def test_character_variant_reuses_exact_page_request_and_cache_key(config, ledger_factory):
+    import io
+    from PIL import Image
+    import extraction_core
+    from ai_runtime import extraction_runtime
+    from pipeline_config import validate_settings
+
+    buffer = io.BytesIO()
+    Image.new('RGB', (4, 4), 'white').save(buffer, format='PNG')
+    config['pricing']['models']['fake-model'].update(
+        max_input_tokens=100000, max_output_tokens=20000, max_request_bytes=1000000)
+    base = validate_settings({**{key: 'fake-model' for key in validate_settings({}) if key.endswith('_model')},
+                              'prompt_variant': 'legacy-v1'}, model_ids=['fake-model'])
+    page_reply = {'has_text': True, 'text': 'Mia waved.', 'is_story_page': True, 'page_type': 'story'}
+    provider = FakeProvider(*(response(content=[{'type': 'text', 'text': json.dumps(value)}])
+                              for value in (page_reply, {'characters': []}, {'characters': []})))
+    ledger = ledger_factory()
+    keys = []
+    for variant in (None, 'rules-only'):
+        settings = {**base, 'character_prompt_variant': variant}
+        gateway = Gateway(provider, ledger, {**config, 'settings': settings})
+        captured = []
+        original = gateway.create
+
+        def capture(**request):
+            result = original(**request)
+            captured.append((json.dumps(request, sort_keys=True).encode(), result._eval_key))
+            return result
+
+        gateway.create = capture
+        with extraction_runtime(client=gateway, settings=settings, usage_sink=gateway.record_usage):
+            assert extraction_core.attempt_page_extraction(
+                buffer.getvalue(), gateway, settings, label='page_extraction')[0] == 'ok'
+            extraction_core.extract_characters(
+                [{'page_number': 1, 'contains_story': True, 'text': 'Mia waved.'}],
+                gateway, settings, gateway.record_usage)
+        keys.append(captured)
+    assert keys[0][0] == keys[1][0]  # Complete serialized page request AND actual gateway cache key.
+    assert keys[0][1][0] != keys[1][1][0]
+    assert keys[0][1][1] != keys[1][1][1]
+    assert len(provider.calls) == 3  # Page once, each character prompt once.

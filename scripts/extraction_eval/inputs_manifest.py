@@ -130,7 +130,7 @@ def _manifest_reference(row, reference_root, published_path):
     if expected['source'] == 'word_export':
         reference = load_reference_file(row['id'], expected['reference_file'], reference_root)
         _verify_metadata(reference_metadata(reference), expected)
-        return '\n'.join(reference['pages'])
+        return reference['pages']
     if published_path is None or Path(published_path).name != expected['reference_file']:
         raise ValueError('Frozen published reference requires its recorded file')
 
@@ -142,15 +142,16 @@ def _manifest_reference(row, reference_root, published_path):
         if (not isinstance(text, str) or _text_hash(text) != expected['text_sha256']
                 or len(text) != expected['text_char_count']):
             raise ValueError(f"Published reference changed since manifest: {row['id']}")
-        return text
+        return [text]
     return _loader().load([row['id']], 'reference', read)
 
 
 def scoring_inputs(inputs, predictions, reference_root=DEFAULT_REFERENCE_ROOT, *,
-                   published_path=None, text_output='stored'):
+                   published_path=None, text_output='stored', reference_books=()):
     """A5a's input contract, NOT a metric. One row per book, even without output.
 
-    Join all ordered pages with newlines (no story/wordless filtering). Failed
+    Keep all-pages text and independently join reference/predicted story pages.
+    Reference flags address Word-export pages, never scan page numbers. Failed
     pages contribute empty text and their numbers; A5a measures the omissions.
     Unavailable books must use forced_score=0 and remain in the denominator.
     """
@@ -159,23 +160,38 @@ def scoring_inputs(inputs, predictions, reference_root=DEFAULT_REFERENCE_ROOT, *
     if text_output not in TEXT_OUTPUTS:
         raise ValueError(f'Unknown text output: {text_output}')
     rows = _rows(inputs)
+    references = {book['id']: book for book in reference_books}
     result = []
     for book_id, row in rows.items():
         item = {'id': book_id, 'status': row['status'], 'reason': row['reason'],
                 'reference_text': None, 'prediction_text': '', 'failed_pages': [],
+                'story_reference_text': None, 'story_prediction_text': '',
                 'page_failures': score_page_failures([]),
                 'unrun_pages': [],
                 'forced_score': 0 if row['status'] == 'unavailable' else None}
         if row['status'] == 'ready':
-            item['reference_text'] = _manifest_reference(row, reference_root, published_path)
+            reference_pages = _manifest_reference(row, reference_root, published_path)
+            item['reference_text'] = '\n'.join(reference_pages)
+            reference = sorted(references.get(book_id, {}).get('pages', []),
+                               key=lambda page: page['page_number'])
+            flags = [page.get('reference', {}).get('contains_story', {}) for page in reference]
+            if (row['reference']['source'] == 'word_export'
+                    and [page['page_number'] for page in reference] == list(range(1, len(reference_pages) + 1))
+                    and all(flag.get('status') in {'observed', 'verified'}
+                            and type(flag.get('value')) is bool for flag in flags)):
+                item['story_reference_text'] = '\n'.join(
+                    text for text, flag in zip(reference_pages, flags) if flag['value'])
             pages = predictions.get('books', {}).get(book_id, {}).get('pages', {})
             texts = []
+            story_texts = []
             outcomes = []
             for number in range(1, row['scan']['page_count'] + 1):
                 page = normalize_outcome(pages.get(f'scan-{number}', {}))
                 outcomes.append(page)
                 if page.get('status') == 'completed' and isinstance(page.get('text'), str):
                     texts.append(prediction_page_text(page, text_output))
+                    if page.get('contains_story') is True:
+                        story_texts.append(prediction_page_text(page, 'analysis_without_illustration_lettering'))
                 else:
                     texts.append('')
                     if page.get('status') == 'failed':
@@ -183,6 +199,7 @@ def scoring_inputs(inputs, predictions, reference_root=DEFAULT_REFERENCE_ROOT, *
                     else:
                         item['unrun_pages'].append(number)
             item['prediction_text'] = '\n'.join(texts)
+            item['story_prediction_text'] = '\n'.join(story_texts)
             item['page_failures'] = score_page_failures(outcomes)
         result.append(item)
     return result

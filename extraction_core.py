@@ -257,7 +257,8 @@ def extract_characters(pages, client, settings, usage_sink):
         return detect_book_characters(
             sorted(story_pages), client,
             model=settings.get('character_detection_model'),
-            prompt_variant=settings.get('prompt_variant', PIPELINE_SETTINGS_DEFAULTS['prompt_variant']),
+            prompt_variant=(settings.get('character_prompt_variant') or
+                            settings.get('prompt_variant', PIPELINE_SETTINGS_DEFAULTS['prompt_variant'])),
         )
 
 

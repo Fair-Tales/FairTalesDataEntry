@@ -12,7 +12,7 @@ from scripts.extraction_eval.tuning_loop import (
 )
 
 
-def run(run_id='baseline', *, configuration='unchanged', replicate='1', replicate_stages=None):
+def run(run_id='baseline', *, configuration='unchanged', replicate=None, replicate_stages=None):
     ids = ['iterate-a', 'iterate-b', 'check-a', 'check-b']
     selections = {'iterate55_ids': ids[:2], 'check20_ids': ids[2:]}
     scores = []
@@ -20,12 +20,15 @@ def run(run_id='baseline', *, configuration='unchanged', replicate='1', replicat
         ratio = {'numerator': 50, 'denominator': 100, 'recall': .5, 'coverage': .5, 'share': .5}
         scores.append({'id': book_id, 'accuracy': .5, 'reference_tokens': 100,
                        'insertions': 2, 'inserted_text_per_100_reference_tokens': 2,
-                       'characters': {'tolerant_recall': .5, 'tolerant_numerator': 50, 'denominator': 100},
-                       'attributes': {name: dict(ratio) for name in ('gender', 'human', 'protagonist')},
-                       'aliases': {name: dict(ratio) for name in ('explicit_alias_coverage', 'groundedness')},
+                       'story_text': {'accuracy': .5, 'reference_tokens': 100, 'insertions': 2,
+                                      'inserted_text_per_100_reference_tokens': 2},
+                       'characters': {'extra_characters': 1, 'tolerant_recall': .5, 'tolerant_numerator': 50, 'denominator': 100},
+                       'attributes': {name: {**ratio, 'matched_pair_agreement': {**ratio, 'agreement': .5}} for name in ('gender', 'human', 'protagonist')},
+                       'aliases': {**{name: dict(ratio) for name in ('explicit_alias_coverage', 'groundedness')},
+                                   'additional_aliases': {'duplicates': {'numerator': 1, 'denominator': 100, 'share': .01}}},
                        'page_failures': {'failed': 2, 'attempted': 100, 'failed_pages_per_100': 2}})
     return tuning_scores(scores, selections, run_id=run_id, configuration_id=configuration,
-                         replicate=replicate, replicate_stages=replicate_stages,
+                         replicate=run_id if replicate is None else replicate, replicate_stages=replicate_stages,
                          measurement_id='synthetic-fixed-references',
                          reference_hashes={book_id: f'synthetic-reference-{book_id}' for book_id in ids},
                          cost={'settled_usd': 2, 'per_book_usd': .5, 'outstanding_reservations_usd': 0})
@@ -122,7 +125,7 @@ def test_iterate_gain_check_unchanged_accepts(comparison):
 @pytest.mark.parametrize('group,metric,delta', [
     ('check', 'character_recall', -.021), ('check', 'gender', -.021),
     ('iterate', 'character_recall', -.029), ('iterate', 'gender', -.011),
-    ('iterate', 'groundedness', -.011), ('iterate', 'inserted_text_per_100', .011),
+    ('iterate', 'groundedness', -.011), ('iterate', 'story_inserted_text_per_100', .011),
     ('iterate', 'unsuccessful_pages_per_100', .011),
 ])
 def test_each_regression_or_insufficient_gain_rejects(comparison, group, metric, delta):
@@ -134,7 +137,7 @@ def test_each_regression_or_insufficient_gain_rejects(comparison, group, metric,
 
 
 @pytest.mark.parametrize('target,delta', [('alias_coverage', .03), ('groundedness', .03),
-                                        ('inserted_text_per_100', -.03), ('unsuccessful_pages_per_100', -.03)])
+                                        ('story_inserted_text_per_100', -.03), ('unsuccessful_pages_per_100', -.03)])
 def test_directions_and_all_targets(comparison, target, delta):
     baseline, candidate, floors = comparison
     shift(candidate, 'iterate', target, delta)
@@ -201,7 +204,7 @@ def test_paired_means_drop_only_shared_undefined_books(comparison):
 def test_replicates_require_same_configuration_panel_and_distinct_runs():
     baseline = run()
     for repeat, message in [(run('other', configuration='changed', replicate='2'), 'unchanged'),
-                            (run('other'), 'distinct'), (run(), 'distinct')]:
+                            (run('other', replicate='baseline'), 'distinct'), (run(), 'distinct')]:
         with pytest.raises(ValueError, match=message):
             noise_floors([baseline, repeat])
     repeat = run('other', replicate='2')
@@ -251,6 +254,7 @@ def test_both_attempt_limits(tmp_path, comparison, limit, accept):
     for index in range(limit):
         candidate = deepcopy(baseline)
         candidate['run_id'] = f'candidate-{index}'
+        candidate['replicate'] = f'candidate-{index}'
         if accept:
             shift(candidate, 'iterate', 'character_recall', .03)
         row = append_attempt(path, baseline, candidate, floors, 'character_recall', 'gain', 'change')
@@ -316,7 +320,7 @@ def arm(scored, prefix, iterate=4, check=8):
     runs = []
     for i in range(max(iterate, check)):
         fresh = deepcopy(scored)
-        fresh.update(run_id=f'{prefix}-{i}', replicate=str(i))
+        fresh.update(run_id=f'{prefix}-{i}', replicate=f'{prefix}-{i}')
         runs.append(fresh)
     return {'iterate': runs[:iterate], 'check': runs[:check]}
 
@@ -330,11 +334,11 @@ def test_difference_noise_and_t_thresholds(comparison, R, r):
             noise['replicates'] = R
     result = verdict(arm(baseline, 'b', **r), arm(candidate, 'c', **r), floors, 'character_recall')
     assert result['R'] == R and result['r'] == r
-    assert result['m'] == 12  # No cached measures; redundant Iterate target excluded.
+    assert result['m'] == 13  # No cached measures; redundant Iterate target excluded.
     for clause in result['clauses']:
         expected_d = clause['floor'] * math.sqrt(2 / r[clause['set']])
         gain = clause['rule'] == 'target_gain'
-        expected_t = t_quantile(.975 if gain else 1 - .05 / 12, R - 1)
+        expected_t = t_quantile(.975 if gain else 1 - .05 / 13, R - 1)
         assert clause['d'] == pytest.approx(expected_d)
         assert clause['quantile'] == pytest.approx(expected_t)
         assert clause['threshold'] == pytest.approx(expected_d * expected_t * (1 if gain else -1))
@@ -358,10 +362,10 @@ def test_averages_within_books_then_equal_book_means(comparison):
     assert verdict(before, after, floors, 'character_recall')['verdict'] is None
 
 
-@pytest.mark.parametrize('target,m', [('character_recall', 8), ('alias_coverage', 10)])
+@pytest.mark.parametrize('target,m', [('character_recall', 9), ('alias_coverage', 11)])
 def test_cached_measures_omitted_only_when_identical_in_all_runs(target, m):
     calibration = [run(f'cal-{i}', replicate=str(i)) for i in range(20)]
-    cached = ('text_accuracy', 'inserted_text_per_100', 'unsuccessful_pages_per_100')
+    cached = ('story_text_accuracy', 'story_inserted_text_per_100', 'unsuccessful_pages_per_100')
     for i, scored in enumerate(calibration):
         for name in SETS:
             for metric in MEASURES:
@@ -376,15 +380,15 @@ def test_cached_measures_omitted_only_when_identical_in_all_runs(target, m):
     assert result['m'] == m
     assert not any(c['measure'] in cached for c in result['clauses'])
     # Zero SD of means alone is insufficient: book values changed and cancel.
-    calibration[1]['sets']['iterate']['iterate-a']['text_accuracy']['value'] += .1
-    calibration[1]['sets']['iterate']['iterate-b']['text_accuracy']['value'] -= .1
+    calibration[1]['sets']['iterate']['iterate-a']['story_text_accuracy']['value'] += .1
+    calibration[1]['sets']['iterate']['iterate-b']['story_text_accuracy']['value'] -= .1
     changed_floors = noise_floors(calibration)
-    assert changed_floors['sets']['iterate']['text_accuracy']['floor'] == 0
-    assert 'text_accuracy' not in verdict(baseline, candidate, changed_floors, target)['omitted_measures']
+    assert changed_floors['sets']['iterate']['story_text_accuracy']['floor'] == 0
+    assert 'story_text_accuracy' not in verdict(baseline, candidate, changed_floors, target)['omitted_measures']
     # Nor can a calibration-only cache fingerprint hide a changed comparison.
-    shift(candidate, 'check', 'text_accuracy', -.001)
+    shift(candidate, 'check', 'story_text_accuracy', -.001)
     result = verdict(baseline, candidate, floors, target)
-    assert 'text_accuracy' not in result['omitted_measures']
+    assert 'story_text_accuracy' not in result['omitted_measures']
     assert result['m'] == m + 2 and result['verdict'] == 'reject'
 
 
@@ -452,6 +456,9 @@ def test_design_simulation_row(capsys):
     rng = np.random.default_rng(161126)
     calibration = [run(f'cal-{i}', replicate=str(i)) for i in range(20)]
     baseline, candidate = arm(run(), 'b'), arm(run(configuration='candidate'), 'c')
+    # Preserve the original random draws when report-only scores are added.
+    simulated = ('story_text_accuracy', 'character_recall', 'gender', 'human', 'protagonist',
+                 'alias_coverage', 'groundedness', 'story_inserted_text_per_100', 'unsuccessful_pages_per_100')
     moving = ('character_recall', 'gender', 'human', 'protagonist', 'alias_coverage', 'groundedness')
     scenarios = [(0, 0, 0, 0), (.01, .01, 0, 0), (.02, .02, 0, 0),
                  (.03, .03, 0, 0), (.03, .03, -.03, -.03), (.03, 0, 0, 0), (.03, .03, 0, -.03)]
@@ -460,17 +467,17 @@ def test_design_simulation_row(capsys):
 
     def assign(scored, errors, scenario=(0, 0, 0, 0)):
         for s, name in enumerate(SETS):
-            for j, metric in enumerate(MEASURES):
+            for metric in MEASURES:
                 delta = scenario[s] if metric == 'character_recall' else scenario[s + 2] if metric == 'gender' else 0
-                value = float(.5 + (errors[s, j] if metric in moving else 0) + delta)
+                value = float(.5 + (errors[s, simulated.index(metric)] if metric in moving else 0) + delta)
                 for book in scored['sets'][name].values():
                     book[metric]['value'] = value
 
     for _ in range(1500):
-        for scored, errors in zip(calibration, rng.normal(size=(20, 2, len(MEASURES))) * panel_sd):
+        for scored, errors in zip(calibration, rng.normal(size=(20, 2, len(simulated))) * panel_sd):
             assign(scored, errors)
         floors = noise_floors(calibration)
-        errors = rng.normal(size=(2, 8, 2, len(MEASURES))) * panel_sd
+        errors = rng.normal(size=(2, 8, 2, len(simulated))) * panel_sd
         for scored, error in zip(baseline['check'], errors[0]):
             assign(scored, error)
         for j, scenario in enumerate(scenarios):
@@ -486,3 +493,38 @@ def test_design_simulation_row(capsys):
     with capsys.disabled():
         print('\nSD .05, seed 161126, 1500 trials; keep rates (%): ' +
               ', '.join(f'{value:.2f}' for value in percentages))
+
+
+@pytest.mark.parametrize('collision', ['arms', 'baseline-calibration', 'candidate-calibration'])
+def test_attempt_refuses_reused_cache_tokens_in_new_directories(comparison, collision):
+    baseline, candidate, floors = comparison
+    if collision == 'arms':
+        candidate['replicate'] = baseline['replicate']
+    elif collision == 'baseline-calibration':
+        baseline['replicate'] = floors['replicate_tokens'][0]
+    else:
+        candidate['replicate'] = floors['replicate_tokens'][0]
+    with pytest.raises(ValueError, match='distinct replicate tokens'):
+        verdict(baseline, candidate, floors, 'character_recall')
+
+
+def test_noise_refuses_equivalent_string_and_numeric_tokens():
+    with pytest.raises(ValueError, match='distinct'):
+        noise_floors([run('a', replicate=1), run('b', replicate='1')])
+
+
+def test_old_noise_without_tokens_requires_offline_regeneration(comparison):
+    baseline, candidate, floors = comparison
+    del floors['replicate_tokens']
+    with pytest.raises(ValueError, match='regenerate'):
+        verdict(baseline, candidate, floors, 'character_recall')
+
+
+def test_duplicate_count_increase_blocks_even_when_share_falls(comparison):
+    baseline, candidate, floors = comparison
+    shift(candidate, 'iterate', 'duplicate_alias_count', 1)
+    shift(candidate, 'iterate', 'duplicate_aliases', -.005)
+    result = verdict(baseline, candidate, floors, 'character_recall')
+    assert result['verdict'] == 'reject'
+    clause, = [c for c in result['clauses'] if c['measure'] == 'duplicate_alias_count']
+    assert clause['passed'] is False

@@ -1615,10 +1615,9 @@ def detect_book_characters(pages, client, progress_callback=None, model=None,
     if model is None:
         settings = get_ai_settings()
         model = settings['character_detection_model']
-        if prompt_variant is None:
-            prompt_variant = settings['prompt_variant']
     if prompt_variant is None:
-        prompt_variant = PIPELINE_SETTINGS_DEFAULTS['prompt_variant']
+        prompt_variant = (settings.get('character_prompt_variant') or
+                          settings.get('prompt_variant', PIPELINE_SETTINGS_DEFAULTS['prompt_variant']))
     pages = list(pages)
     # Single call over the whole book — report a coarse 0 -> 1 so existing
     # progress UIs still update.

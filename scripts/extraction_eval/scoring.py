@@ -472,6 +472,7 @@ def score_character_recall(recorded, predicted):
             'tolerant_recall': _ratio(len(pairs), denominator),
             'unmatched_reference': [r for r in range(denominator) if r not in matched_refs],
             'unmatched_prediction': [p for p in range(len(predicted)) if p not in matched_preds],
+            'extra_characters': len(predicted) - len(matched_preds),
             'ambiguous_candidates': ambiguous}
 
 

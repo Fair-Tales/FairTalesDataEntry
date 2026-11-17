@@ -81,7 +81,8 @@ baseline figures remain reproducible.
 Supply `extract --reference-root` / `--published-text` when their later scoring
 paths differ from defaults or a published fallback was selected.
 
-The measure is `max(0, 1 - token_Levenshtein / reference_tokens)` on all pages
+The preserved all-pages measure (`text_accuracy`, per-book `accuracy`) is
+`max(0, 1 - token_Levenshtein / reference_tokens)` on all pages
 joined in order with newlines, using the unchanged `pilot-normalization-v1`
 NFKC/casefold/apostrophe and Unicode tokenizer. Empty/empty scores 1;
 empty/nonempty scores 0. Failed, absent and abstained pages contribute no predicted
@@ -90,11 +91,54 @@ deletions, insertions and total edit distance. Minimum-edit ties resolve from th
 start as match, substitution, deletion, insertion. The exact alignment uses
 Python integer bit vectors without a new dependency or approximation.
 
-The inserted-text guardrail uses that same alignment: insertions per 100 reference
-tokens, including predictions on reference-empty pages. With zero reference
+The preserved all-pages `inserted_text_per_100` uses that same alignment:
+insertions per 100 reference tokens, including predictions on reference-empty pages. With zero reference
 tokens the rate is `null` (undefined), while all inserted tokens are counted.
 Unavailable books have accuracy 0 and `forced_score=0`; their unknown components
 and rate are `null`, not invented counts.
+
+### Story-page headline (DECISIONS 025–026)
+
+`story_text_accuracy` uses the same token edit formula, with **independent
+story-page selection on each side**, then whole-book concatenation:
+
+- Reference: unaltered Word-export pages whose frozen snapshot reference
+  `contains_story.value` is true (observed/verified). These labels address the
+  Word pages, not the scans. Require a complete, unique numbered reference page
+  sequence and boolean labels; otherwise this measure is undefined. Published
+  whole-book fallback text has no page labels and is also undefined here.
+- Prediction: completed scan pages with `contains_story is True`, in scan order.
+  The parser copies this boolean from the legacy prompt's `is_story_page`;
+  legacy `page_type` strings vary and are not used. False/unknown classifications
+  exclude predicted text but never remove words from the reference denominator.
+- For valid region tags, keep narrative/informational text and exclude paratext
+  and illustration lettering; preserve legacy untagged text. Failed/unrun pages supply no text.
+  Unavailable books still score zero. No scan-to-reference page matching occurs.
+
+Per-book `story_text` retains the edit counts. The headline and its insertion
+guard, `story_inserted_text_per_100`, use this filtered comparison. The historical
+all-pages accuracy and insertion rate retain their names and definitions as
+companion figures; all-pages accuracy keeps its range. This prevents retained
+paratext and tagged picture lettering from penalizing the story comparison.
+The story flags are included in the reference fingerprint.
+
+**Measured Iterate audit, 17 November 2026:** 55 Word exports contain 2,042 pages,
+versus 2,044 scan pages (two books differ). All 55 have explicit valid recorded
+story ranges and complete reference-page flags: 1,526 story pages / 38,793 tokens
+and 516 non-story pages / 19,162 tokens. Contrary to the earlier review's premise,
+the Word files include front/back matter: 44 contain copyright/ISBN/publication
+markers, on 59 pages, all flagged non-story. Their pagination is available;
+scoring remains book-level because scan correspondence is not established.
+
+In the combined old-prompt Iterate runs, all 2,041 successful pages carry both
+raw `is_story_page` and parsed `contains_story`; three pages failed. The original
+all-pages minimum-edit alignment has 7,002 inserted tokens: 1,210 on predicted
+story pages (17.3%) and 5,792 on other pages (82.7%). By position, the latter are
+1,368 before the first predicted story page, 3,112 after the last, and 1,312 on
+non-story pages between them. These are alignment insertions, not adjudicated
+inventions; the positional categories do not prove page genre. No Check records
+were inspected. The audit used the cohort loader and printed aggregate counts.
+Reference story labels and untagged picture lettering remain measurement limits.
 
 ### Cohort means and ranges (A5e)
 
@@ -108,7 +152,7 @@ by `load_selections`'s membership validation. The count-only reader
 `freeze.alias_counts_from_manifest` can check the map without decoding titles,
 text, characters or alias surfaces; the real-evidence test uses this reader.
 
-The five primaries are text accuracy, tolerant character recall, gender, human
+The five primaries are story-page text accuracy, tolerant character recall, gender, human
 and protagonist. Each reports its equal-book mean, contributing book and item
 counts, undefined-book count and two-sided 95% range. Unknown item counts (for
 example unavailable text references) stay unknown and are counted separately;
@@ -123,6 +167,19 @@ the shared draw; draws with no defined value for that field have no estimate.
 These approximate sampling ranges assume comparable independent books. A
 perfect set reports `[1, 1]` and explicitly cannot quantify unseen errors.
 The bootstrap's existing callers retain their original results and defaults.
+
+Attribute agreement among found characters (`gender_found_agreement`,
+`human_found_agreement`, `protagonist_found_agreement`) uses the character
+recall's fixed identity matching. Only matched pairs with a coded reference
+attribute enter that field's denominator; missing/invalid predicted codes disagree.
+No eligible pairs means undefined. The existing best-case attribute recalls
+remain unchanged: each chooses its own favourable matching over all coded
+reference characters, including missed ones. `extra_characters` counts predictions
+left unmatched by the identity matching, including all predictions for an empty
+reference cast; it is descriptive, not a new guard. Count reports show means and
+totals. `duplicate_alias_count` guards the existing duplicate-form numerator,
+so extra distinct aliases cannot dilute a rise in duplicates; `duplicate_aliases`
+still reports their share. Zero emitted forms means zero duplicates.
 
 Strict character/attribute versions, alias coverage, additional forms and their
 groundedness, duplicate forms, combined groundedness, inserted tokens per
@@ -1204,7 +1261,13 @@ outstanding reservations; cache reuse can make a run cheaper than a fresh pass.
 
 Calibrate one unchanged configuration on all 75 books: **R=20** runs for
 cheap character stages, **R=5** for transcription, including the initial run.
-Use distinct `extract --replicate` values. The comparison uses separate fresh
+Use purpose-named `extract --replicate` tokens, e.g. `cal-char-01`,
+`screen-<idea>-1`, `gate-<idea>-base-1`, `gate-<idea>-cand-1`. Never reuse screen
+tokens at a gate: a new output directory does not make a cached response fresh.
+The numeric tools can check supplied arms and calibration, not an unprovided
+screen history. `tuning-noise` saves its replicate tokens; `tuning-attempt`
+refuses collisions across arms or with calibration, even with different run ids.
+Old noise files without tokens require offline regeneration. The comparison uses separate fresh
 runs of both configurations: **r=4 per arm on Iterate, r=8 on Check** for cheap
 stages; **r=1** on both sets for transcription.
 
@@ -1227,6 +1290,13 @@ transcription refreshes characters; identical character inputs replay their
 cached response. Include `character_detection` too if it must refresh even when
 transcription is identical.
 
+For a character-only candidate, set `settings.character_prompt_variant` while
+keeping `settings.prompt_variant` unchanged. Missing/null means follow
+`prompt_variant`; the override is shared by foreground app calls, background
+jobs and the harness. It changes no page-extraction request bytes/cache keys.
+Keep cached text and other settings fixed; a dry run should show no pending page
+calls. This setting adds no admin widget.
+
 For example, with `SNAPSHOT`, `FREEZE_DIR`, `TUNING_INPUTS` (the frozen 75-book
 scan manifest), `CONFIG` and `LEDGER` pointing to your existing local artifacts,
 preview the second run of each calibration:
@@ -1235,19 +1305,19 @@ preview the second run of each calibration:
 .venv/bin/python -m scripts.extraction_eval extract \
   --snapshot "$SNAPSHOT" --freeze-dir "$FREEZE_DIR" --cohort tune \
   --inputs scans --inputs-manifest "$TUNING_INPUTS" --config "$CONFIG" \
-  --ledger "$LEDGER" --replicate 2 --replicate-stages character_detection \
+  --ledger "$LEDGER" --replicate cal-char-02 --replicate-stages character_detection \
   --out runs/calibration-2 --dry-run
 
 .venv/bin/python -m scripts.extraction_eval extract \
   --snapshot "$SNAPSHOT" --freeze-dir "$FREEZE_DIR" --cohort tune \
   --inputs scans --inputs-manifest "$TUNING_INPUTS" --config "$CONFIG" \
-  --ledger "$LEDGER" --replicate 2 --replicate-stages page_extraction \
+  --ledger "$LEDGER" --replicate cal-page-02 --replicate-stages page_extraction \
   --out runs/transcription-calibration-2 --dry-run
 ```
 
 Replace `--dry-run` with `--execute` for metered execution under the existing
-caps and confirmation. Use replicate numbers 1–20 for characters or 1–5 for
-transcription, matching each output directory, then score every run. Keep the
+caps and confirmation. Use tokens `cal-char-01` through `cal-char-20`, or `cal-page-01` through
+`cal-page-05`, with distinct output directories, then score every run. Keep the
 configuration, selection and shared ledger fixed. The estimate printed **after
 cache replay** excludes completed upstream pages; character-only misses retain
 just the historical per-book allowance (`2 * $0.0103` per pending book, about
@@ -1258,6 +1328,13 @@ not a measured character price.
 `null` (or absent in old scores) means all stages. `tuning-noise` and
 `tuning-attempt` reject different sets, including mismatches with the noise
 floors or separate Check runs. Use the same set for calibration and both arms.
+
+Scoring identity includes a hash of the current source fingerprint (reusing
+`runner.code_fingerprint`, including all scorer modules and shared normalization /
+projection code). Any scorer edit changes `measurement_id`; this deliberately
+also invalidates it for other pipeline source edits. Rescore every compared run
+into a new report directory and regenerate noise floors together. Mixing scorer
+identities is refused; paid responses need not be regenerated.
 
 These offline commands do no extraction, source reading, network access or spending:
 
@@ -1291,7 +1368,9 @@ calibration run or a run from the other arm. The Python `verdict()` and
 Name the target in the experiment plan **before** running the candidate; the
 command records that declaration but cannot verify when it was made. Targets
 are the five primaries, `alias_coverage`, `groundedness`,
-`inserted_text_per_100` or `unsuccessful_pages_per_100`. Fractions use 0–1 units;
+`story_inserted_text_per_100`, `unsuccessful_pages_per_100` or
+`duplicate_alias_count`. The all-pages text figures and found-character agreement
+are descriptive, not targets. Fractions use 0–1 units;
 insertions and failed pages use counts per hundred, consistently with scoring.
 
 The floor `f` is the **sample SD of R replicate equal-book means**, separately
@@ -1314,12 +1393,14 @@ Here `m` counts downside clauses, excluding the redundant Iterate target
 clause. A measure is omitted only if its per-book values are identical in every
 calibration and comparison run on both sets; the floor file retains value
 fingerprints and the verdict names omitted measures. With cached text accuracy,
-insertions and failed pages, `m=8` for character recall and `m=10` for aliases.
+story insertions and failed pages, and a varying duplicate count, `m=9` for
+character recall and `m=11` for aliases. Identical duplicate counts are omitted
+by the same rule; report-only measures never add clauses.
 An unchanged cached target cannot establish improvement. The Student-t
 quantiles use a standard-library cosine-integral recurrence and bisection;
 tests independently integrate the density at df=4/19 and p=.975/.99375.
 
-Groundedness and primaries improve upwards; insertions and failed pages improve
+Groundedness and primaries improve upwards; insertions, duplicates and failed pages improve
 downwards. Check guardrails other than the target remain report-only. Counts
 alone cannot accept a change. Cost is reported, not gated: explain any
 increase's intended gain in the hypothesis/change. Arm spend sums distinct

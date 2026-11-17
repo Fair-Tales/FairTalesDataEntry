@@ -166,9 +166,17 @@ class ScanSummaryText:
         'heldout_alias_quoted_ids': 'quoted aliases',
     }
     labels = {
-        'text_accuracy': 'Text accuracy',
+        'story_text_accuracy': 'Story-page text accuracy',
+        'text_accuracy': 'Text accuracy (all pages)',
+        'story_inserted_text_per_100': 'Story-page inserted tokens per hundred reference story tokens',
+        'gender_found_agreement': 'Gender agreement among found characters',
+        'human_found_agreement': 'Human agreement among found characters',
+        'protagonist_found_agreement': 'Protagonist agreement among found characters',
+        'extra_characters': 'Extra characters (unmatched predictions)',
+        'duplicate_alias_count': 'Duplicate alias form count',
         'character_recall': 'Character recall (tolerant)',
-        'gender': 'Gender', 'human': 'Human', 'protagonist': 'Protagonist',
+        'gender': 'Gender (best-case recall)', 'human': 'Human (best-case recall)',
+        'protagonist': 'Protagonist (best-case recall)',
         'strict_character_recall': 'Character recall (strict)',
         'strict_gender': 'Gender (strict)', 'strict_human': 'Human (strict)',
         'strict_protagonist': 'Protagonist (strict)',
@@ -191,6 +199,7 @@ class ScanSummaryText:
     remaining = 'Sensitivities retain remaining stratum counts; no replacement books are selected.'
     line = '{label}: mean {mean}; 95% range {interval}; books {books}; items {items}; undefined books {undefined}; unknown item counts {unknown}.'
     descriptive_line = '{label}: mean {mean}; pooled {numerator}/{items}; books {books}; undefined books {undefined}; unknown item counts {unknown}.'
+    count_line = '{label}: mean {mean}; total {numerator}; books {books}; undefined books {undefined}.'
     range_clause = '95% range {interval}.'
     counts = 'Cohort books: {books}; unavailable books: {unavailable}; strata: {strata}.'
     unavailable = 'Unavailable'
@@ -213,6 +222,8 @@ class TuningLoopText:
     unequal_arms = 'Both arms must have the same number of runs per set'
     arm_configuration = 'Every run in an arm must use one configuration'
     fresh_runs = 'Comparison arms must be fresh: no shared runs or calibration runs'
+    fresh_replicates = 'Comparison arms and calibration must use distinct replicate tokens, even in different run directories'
+    missing_replicate_tokens = 'Noise floors lack replicate tokens; regenerate them with tuning-noise before comparing'
     invalid_quantile = 'Student-t requires probability in [0.5, 1) and positive integer degrees of freedom'
     repetitions = '; R={R}, r={r}, m={m}'
     omitted = 'Omitted cached, identical measures: {measures}'

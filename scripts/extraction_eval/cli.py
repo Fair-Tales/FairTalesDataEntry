@@ -95,7 +95,7 @@ def build_parser():
     inventory.add_argument("--scan-root", type=Path, default=DEFAULT_SCAN_ROOT)
     inventory.add_argument("--freeze-dir", type=Path, default=DEFAULT_FREEZE_DIR)
     inventory.add_argument("--cohort", choices=("tune", "rehearsal", "proof"), default="tune")
-    from .tuning_loop import MEASURES
+    from .tuning_loop import PRIMARIES, GUARDRAILS
     from text_content.evaluation import TuningLoopText as T
     noise = commands.add_parser('tuning-noise', help=T.noise_help)
     noise.add_argument('--runs', type=Path, nargs='+', required=True, help=T.scored_help)
@@ -106,7 +106,7 @@ def build_parser():
     attempt.add_argument('--candidate', type=Path, nargs='+', required=True, help=T.arm_help)
     attempt.add_argument('--candidate-check', type=Path, nargs='+', help=T.check_arm_help)
     attempt.add_argument('--floors', type=Path, required=True)
-    attempt.add_argument('--target', choices=MEASURES, required=True, help=T.target_help)
+    attempt.add_argument('--target', choices=(*PRIMARIES, 'alias_coverage', *GUARDRAILS), required=True, help=T.target_help)
     attempt.add_argument('--hypothesis', required=True)
     attempt.add_argument('--change', required=True)
     attempt.add_argument('--log', type=Path, required=True, help=T.log_help)
@@ -483,13 +483,24 @@ def _score_scans(args, contract, predictions, selection, manifest, *, run_record
     if {row['id'] for row in inputs['books']} != selected:
         raise ValueError(TuningErrors.scan_selection_missing)
     rows = scoring_inputs(inputs, predictions, config['reference_root'],
-                          published_path=config.get('published_path'), text_output=args.text_output)
+                          published_path=config.get('published_path'), text_output=args.text_output,
+                          reference_books=manifest['books'])
     scores = []
     references = {book['id']: book.get('reference', {}).get('characters', {})
                   for book in manifest['books']}
+    reference_story_flags = {
+        book['id']: [{'page_number': page['page_number'],
+                      'contains_story': page.get('reference', {}).get('contains_story')}
+                     for page in book.get('pages', [])]
+        for book in manifest['books']}
     for row in rows:
         score = score_book_text([row['reference_text'] or ''], [row['prediction_text']],
                                 text_output=args.text_output, forced_score=row['forced_score'])
+        story_score = score_book_text(
+            [row['story_reference_text'] or ''], [row['story_prediction_text']],
+            text_output='analysis_without_illustration_lettering', forced_score=row['forced_score']
+        ) if row['story_reference_text'] is not None or row['forced_score'] == 0 else {
+            'accuracy': None, 'reason': 'missing_or_unaligned_reference_story_flags'}
         reference = references.get(row['id'], {})
         book_prediction = predictions.get('books', {}).get(row['id'], {})
         prediction = normalize_outcome(book_prediction.get('characters') or {})
@@ -506,6 +517,7 @@ def _score_scans(args, contract, predictions, selection, manifest, *, run_record
                  for page_id, page in book_prediction.get('pages', {}).items()
                  if page.get('status') == 'completed']
         scores.append({**score, 'id': row['id'], 'status': row['status'],
+                       'story_text': story_score,
                        'reason': row['reason'], 'failed_pages': row['failed_pages'],
                        'page_failures': row['page_failures'],
                        'unrun_pages': row['unrun_pages'],
@@ -527,6 +539,7 @@ def _score_scans(args, contract, predictions, selection, manifest, *, run_record
     _atomic_text(out / 'summary.md', scan_summary_markdown(summary['cohort_summary']))
     if loader.cohort == 'tune' and run_record is not None:
         from .tuning_loop import tuning_scores
+        from .runner import code_fingerprint
         from .store import digest
         # Read only ledger totals, never request/response bodies for this report.
         cost = None
@@ -544,8 +557,10 @@ def _score_scans(args, contract, predictions, selection, manifest, *, run_record
             replicate=contract['replicate'], replicate_stages=contract.get('replicate_stages'),
             measurement_id=digest({
                 'snapshot_id': contract['snapshot_id'], 'text_output': args.text_output,
-                'normalization_version': NORMALIZATION_VERSION, 'scoring': 'scan-tuning-v1'}),
-            reference_hashes={row['id']: digest({'input': row, 'characters': references.get(row['id'])})
+                'normalization_version': NORMALIZATION_VERSION,
+                'scoring_sources_sha256': digest(code_fingerprint())}),
+            reference_hashes={row['id']: digest({'input': row, 'characters': references.get(row['id']),
+                                                'story_flags': reference_story_flags.get(row['id'])})
                               for row in inputs['books']}, cost=cost)
         atomic_json(out / 'tuning_scores.json', numeric)
     print(f"Offline report: {out / 'summary.json'}")

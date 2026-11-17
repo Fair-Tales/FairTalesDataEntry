@@ -29,7 +29,7 @@ def test_current_production_defaults_are_pinned(monkeypatch):
         'locate_max_edge': 784,
         'enable_rotation_correction': True, 'enable_crop_quality_gate': True,
     }
-    expected = {**admin_defaults, 'prompt_variant': 'legacy-v1',
+    expected = {**admin_defaults, 'prompt_variant': 'legacy-v1', 'character_prompt_variant': None,
                 'page_schema_version': 'legacy-compatible-page-v1',
                 'story_context_enabled': False, 'story_context_model': 'claude-sonnet-5',
                 'story_context_max_tokens': 20000, 'story_context_limits': None,
@@ -205,9 +205,10 @@ def test_foreground_character_detection_uses_application_settings(variant, monke
 
 @pytest.mark.parametrize('variant', PROMPT_VARIANTS)
 @pytest.mark.parametrize('schema', ['legacy-compatible-page-v1', 'page-regions-v1'])
+@pytest.mark.parametrize('character_variant', [None, 'rules-only'])
 def test_production_worker_and_harness_build_identical_request_bytes(
-        variant, schema, image_bytes, isolated, monkeypatch):  # noqa: F811 - pytest fixtures
-    overrides = {**isolated, 'prompt_variant': variant, 'page_schema_version': schema,
+        variant, schema, character_variant, image_bytes, isolated, monkeypatch):  # noqa: F811 - pytest fixtures
+    overrides = {**isolated, 'prompt_variant': variant, 'character_prompt_variant': character_variant, 'page_schema_version': schema,
                  'extraction_model': 'claude-sonnet-4-6', 'extraction_max_edge': 1024,
                  'extraction_max_tokens': 4096, 'character_detection_model': 'claude-opus-4-8',
                  'extraction_thinking': 'adaptive', 'extraction_effort': 'low',
@@ -242,3 +243,24 @@ def test_production_worker_and_harness_build_identical_request_bytes(
         # Compare complete serialized payloads, including images, models and caps.
         assert (json.dumps(production_request, ensure_ascii=False).encode('utf-8')
                 == json.dumps(harness_request, ensure_ascii=False).encode('utf-8'))
+
+
+@pytest.mark.parametrize('character_variant', [None, 'legacy-v1', 'rules-only', 'rules-plus-icl'])
+def test_foreground_character_override_matches_harness(character_variant, monkeypatch):
+    settings = validate_settings({'prompt_variant': 'rules-only', 'character_prompt_variant': character_variant})
+    monkeypatch.setattr(utilities, '_read_ai_settings_doc', lambda: settings)
+    live, evaluated = FakeClient({'characters': []}), FakeClient({'characters': []})
+    with extraction_runtime(client=live, settings=settings, usage_sink=lambda *args: None):
+        utilities.detect_book_characters([(1, 'Mia waved.')], live)
+    harness.extract_characters([{'page_number': 1, 'contains_story': True, 'text': 'Mia waved.'}],
+                               evaluated, settings, lambda *args: None)
+    assert live.requests == evaluated.requests
+    assert live.requests[0]['messages'][0]['content'] == prompt_for(
+        'character_detection', character_variant or 'rules-only').format(
+            pages_json=json.dumps([{'page': 1, 'text': 'Mia waved.'}], ensure_ascii=False))
+
+
+@pytest.mark.parametrize('value', ['', 'typo', False, 1])
+def test_invalid_character_variant_is_rejected(value):
+    with pytest.raises(ValueError, match='character_prompt_variant'):
+        validate_settings({'character_prompt_variant': value})
