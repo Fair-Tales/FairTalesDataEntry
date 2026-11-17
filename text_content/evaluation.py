@@ -228,6 +228,7 @@ class TuningLoopText:
     no_runs = 'Supply at least one scored run; fewer than two replicates cannot measure a floor'
     configuration_changed = 'Noise replicates must use the same unchanged configuration and code'
     duplicate_replicates = 'Runs require distinct run ids and replicate identities; do not count one run twice'
+    replicate_stages_changed = 'Runs and noise floors must use the same refreshed-stage set (--replicate-stages)'
     measured = 'Sample SD of replicate set means'
     no_floor = 'No floor: need at least two scored replicates on the same defined book panel'
     undefined_measure = 'No verdict: measure undefined or its contributing books changed between runs'

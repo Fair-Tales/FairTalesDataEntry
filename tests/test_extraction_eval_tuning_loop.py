@@ -12,7 +12,7 @@ from scripts.extraction_eval.tuning_loop import (
 )
 
 
-def run(run_id='baseline', *, configuration='unchanged', replicate='1'):
+def run(run_id='baseline', *, configuration='unchanged', replicate='1', replicate_stages=None):
     ids = ['iterate-a', 'iterate-b', 'check-a', 'check-b']
     selections = {'iterate55_ids': ids[:2], 'check20_ids': ids[2:]}
     scores = []
@@ -25,7 +25,8 @@ def run(run_id='baseline', *, configuration='unchanged', replicate='1'):
                        'aliases': {name: dict(ratio) for name in ('explicit_alias_coverage', 'groundedness')},
                        'page_failures': {'failed': 2, 'attempted': 100, 'failed_pages_per_100': 2}})
     return tuning_scores(scores, selections, run_id=run_id, configuration_id=configuration,
-                         replicate=replicate, measurement_id='synthetic-fixed-references',
+                         replicate=replicate, replicate_stages=replicate_stages,
+                         measurement_id='synthetic-fixed-references',
                          reference_hashes={book_id: f'synthetic-reference-{book_id}' for book_id in ids},
                          cost={'settled_usd': 2, 'per_book_usd': .5, 'outstanding_reservations_usd': 0})
 
@@ -61,6 +62,54 @@ def test_noise_is_sd_of_set_means_and_has_separate_floors(comparison):
     repeat['sets']['iterate']['iterate-a']['gender']['value'] += .4
     repeat['sets']['iterate']['iterate-b']['gender']['value'] -= .4
     assert noise_floors([baseline, repeat])['sets']['iterate']['gender']['floor'] == 0
+
+
+def test_refreshed_stages_are_sets_and_legacy_scores_mean_all_stages():
+    stages = ['page_extraction', 'character_detection', 'page_extraction']
+    first = run('one', replicate_stages=stages)
+    assert first['replicate_stages'] == ['character_detection', 'page_extraction']
+    second = run('two', replicate='2', replicate_stages=stages)
+    second['replicate_stages'] = stages  # Readers also compare sets, not list order.
+    assert noise_floors([first, second])['replicate_stages'] == first['replicate_stages']
+    legacy = run('old', replicate='2')
+    del legacy['replicate_stages']
+    assert noise_floors([run(), legacy])['replicate_stages'] is None
+
+
+@pytest.mark.parametrize('other', [None, [], ['page_extraction']])
+def test_noise_command_refuses_different_refreshed_stages(tmp_path, other, capsys):
+    paths = [tmp_path / 'one.json', tmp_path / 'two.json']
+    atomic_json(paths[0], run('one', replicate_stages=['character_detection']))
+    atomic_json(paths[1], run('two', replicate='2', replicate_stages=other))
+    out = tmp_path / 'noise.json'
+    with pytest.raises(SystemExit) as exc:
+        cli.main(['tuning-noise', '--runs', *map(str, paths), '--out', str(out)])
+    assert exc.value.code == 2
+    assert 'same refreshed-stage set' in capsys.readouterr().err
+    assert not out.exists()
+
+
+@pytest.mark.parametrize('different', ['baseline', 'candidate', 'floors', 'check'])
+def test_attempt_command_refuses_different_refreshed_stages(tmp_path, comparison, different, capsys):
+    baseline, candidate, floors = comparison
+    records = {'baseline': baseline, 'candidate': candidate, 'floors': floors,
+               'check': deepcopy(candidate)}
+    records[different]['replicate_stages'] = ['character_detection']
+    paths = {name: tmp_path / f'{name}.json' for name in records}
+    for name, record in records.items():
+        atomic_json(paths[name], record)
+    log = tmp_path / 'attempts.jsonl'
+    args = ['tuning-attempt', '--baseline', str(paths['baseline']),
+            '--candidate', str(paths['candidate']), '--floors', str(paths['floors']),
+            '--target', 'character_recall', '--hypothesis', 'Synthetic hypothesis',
+            '--change', 'Synthetic change', '--log', str(log)]
+    if different == 'check':
+        args.extend(['--candidate-check', str(paths['check'])])
+    with pytest.raises(SystemExit) as exc:
+        cli.main(args)
+    assert exc.value.code == 2
+    assert 'same refreshed-stage set' in capsys.readouterr().err
+    assert not log.exists()
 
 
 def test_iterate_gain_check_unchanged_accepts(comparison):

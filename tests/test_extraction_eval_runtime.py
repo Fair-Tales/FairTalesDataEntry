@@ -148,6 +148,61 @@ def test_changed_content_replicate_and_request_version_invalidate_requests(confi
     assert len(provider.calls) == 4
 
 
+@pytest.mark.parametrize('label', ['page_extraction', 'character_detection', 'joint_metadata',
+                                  'story_context', 'locate_key_pages', 'fake-model'])
+@pytest.mark.parametrize('stages', [None, ['character_detection'], ['page_extraction', 'fake-model']])
+def test_selective_replicates_preserve_legacy_keys(config, ledger_factory, label, stages):
+    from ai_runtime import create_message, current_request_label
+
+    ledger = ledger_factory()
+    provider = FakeProvider(response(), response())
+    baseline = Gateway(provider, ledger, config)
+    first = create_message(baseline, label=label, **request())
+    same = create_message(Gateway(provider, ledger, config, replicate_stages=stages),
+                          label=label, **request())
+    assert same._eval_key == first._eval_key
+    repeated = create_message(Gateway(provider, ledger, config, replicate='2', replicate_stages=stages),
+                              label=label, **request())
+    refresh = stages is None or label in stages
+    assert (repeated._eval_key != first._eval_key) == refresh
+    assert repeated._eval_cached is not refresh
+    assert repeated._eval_key == digest({'request_version': '1', 'provider': 'anthropic-messages',
+                                         'replicate': '2' if refresh else '1',
+                                         'request': request(), 'attempt': 0})
+    assert current_request_label() == ''
+    assert len(provider.calls) == (2 if refresh else 1)
+
+
+def test_shared_helpers_supply_labels_before_dispatch(config, ledger_factory, monkeypatch):
+    from ai_runtime import current_request_label, extraction_runtime
+    from utilities import _claude_json, vision_text
+
+    monkeypatch.setattr('utilities.build_vision_content', lambda *a, **kw: [])
+    provider = FakeProvider(*(response(content=[{'type': 'text', 'text': '[]'}]) for _ in range(5)))
+    ledger = ledger_factory()
+    for replicate in ('1', '2'):
+        gateway = Gateway(provider, ledger, config, replicate=replicate,
+                          replicate_stages=['character_detection'])
+        with extraction_runtime(client=gateway, settings=config['settings'], usage_sink=gateway.record_usage):
+            for label in ('page_extraction', ''):
+                vision_text(gateway, [], 'synthetic', model='fake-model', max_tokens=10, label=label)
+            _claude_json(gateway, 'synthetic', model='fake-model', max_tokens=10)
+    # Vision calls are identical regardless of label: legacy identity stays intact.
+    assert len(provider.calls) == 3
+    assert gateway.cache_hits == 2
+    assert {row['label'] for row in ledger.rows()} == {'fake-model', 'character_detection'}
+    assert current_request_label() == ''
+
+
+def test_request_label_resets_on_cache_miss(config, ledger_factory):
+    from ai_runtime import create_message, current_request_label
+
+    with pytest.raises(DryRunMiss):
+        create_message(Gateway(None, ledger_factory(), config, dry_run=True),
+                       label='character_detection', **request())
+    assert current_request_label() == ''
+
+
 def test_input_source_separates_identical_requests(config, ledger_factory, tmp_path):
     from scripts.extraction_eval.runner import configure_inputs
 
@@ -635,6 +690,59 @@ def test_runner_dry_run_no_provider_calls(snapshot_fixture, tmp_path, config, le
     assert not (out / 'predictions.json').exists()
 
 
+@pytest.mark.usefixtures('synthetic_cohort')
+@pytest.mark.parametrize('stages,changed_text', [(['character_detection'], False),
+                                              (['page_extraction'], False),
+                                              (['page_extraction'], True)])
+def test_selective_runner_replay_estimate_and_downstream_inputs(
+        snapshot_fixture, tmp_path, config, ledger_factory, stages, changed_text):
+    from ai_runtime import create_message
+
+    class LabeledCore(FakeCore):
+        def extract_metadata(self, pages, client, settings, sink, isbn):
+            create_message(client, label='joint_metadata', **request('metadata'))
+            return super().extract_metadata(pages, client, settings, sink, isbn)
+
+        def extract_page(self, data, client, settings, sink):
+            raw = create_message(client, label='page_extraction', **request(data.decode()))
+            return {'status': 'completed', 'text': raw.content[0].text, 'contains_story': True}
+
+        def extract_characters(self, pages, client, settings, sink):
+            create_message(client, label='character_detection', **request(json.dumps(pages)))
+            return super().extract_characters(pages, client, settings, sink)
+
+    snapshot, manifest, selection = snapshot_fixture
+    ledger = ledger_factory()
+    fresh = response(content=[{'type': 'text', 'text': 'changed story'}]) if changed_text else response()
+    provider = FakeProvider(response(), response(), response(), response(), fresh, fresh, response())
+
+    def run(name, gateway, dry_run=False):
+        out = tmp_path / name
+        out.mkdir()
+        return run_extract(snapshot, manifest, selection, out, gateway, config,
+                           dry_run=dry_run, loader=current_loader(), core=LabeledCore(),
+                           progress=lambda *args: None)
+
+    run('baseline', Gateway(provider, ledger, config))
+    assert len(provider.calls) == 4
+    dry = Gateway(None, ledger, config, replicate='2', replicate_stages=stages, dry_run=True)
+    result = run('dry', dry, dry_run=True)
+    assert len(provider.calls) == 4
+    if stages == ['character_detection']:
+        plan = estimate(manifest, selection, result)
+        assert plan['pending_pages'] == 0
+        assert plan['pending_books'] == 1
+        assert plan['estimated_usd'] == .0206  # Historical book allowance only.
+        assert dry.cache_hits == 3
+        assert result['books']['selected']['characters']['status'] == 'pending'
+    repeated = Gateway(provider, ledger, config, replicate='2', replicate_stages=stages)
+    result = run('replicate', repeated)
+    assert not result['incomplete']
+    expected_calls = 1 if stages == ['character_detection'] else 2 + changed_text
+    assert len(provider.calls) == 4 + expected_calls
+    assert repeated.cache_hits == 4 - expected_calls
+
+
 @pytest.mark.usefixtures("synthetic_cohort")
 def test_runner_budget_stop_preserves_incomplete_denominator(snapshot_fixture, tmp_path, config, ledger_factory):
     snapshot, manifest, selection = snapshot_fixture
@@ -810,8 +918,20 @@ def test_run_contract_rejects_changed_inputs(snapshot_fixture, tmp_path, config)
         freeze_run(out, manifest, selection, changed, '1', 16, 200, ledger)
 
 
+@pytest.mark.usefixtures('synthetic_cohort')
+def test_run_contract_records_and_freezes_replicate_stages(snapshot_fixture, tmp_path, config):
+    _, manifest, selection = snapshot_fixture
+    args = (tmp_path / 'frozen', manifest, selection, config, '2', 16, 200, tmp_path / 'ledger.sqlite')
+    first = freeze_run(*args, replicate_stages=['page_extraction', 'character_detection', 'page_extraction'])
+    assert first['contract']['replicate_stages'] == ['character_detection', 'page_extraction']
+    assert freeze_run(*args, replicate_stages=['character_detection', 'page_extraction']) == first
+    with pytest.raises(ValueError, match='changed'):
+        freeze_run(*args, replicate_stages=['character_detection'])
+
+
 @pytest.mark.usefixtures("synthetic_cohort")
-def test_cli_dry_run_does_not_construct_clients_or_read_secrets(snapshot_fixture, tmp_path, cli_config, monkeypatch):
+@pytest.mark.parametrize('stages', [None, ['character_detection'], ['page_extraction', 'fake-model']])
+def test_cli_dry_run_does_not_construct_clients_or_read_secrets(snapshot_fixture, tmp_path, cli_config, monkeypatch, stages):
     from scripts.extraction_eval import cli
     import extraction_core
     import utilities
@@ -833,9 +953,26 @@ def test_cli_dry_run_does_not_construct_clients_or_read_secrets(snapshot_fixture
     monkeypatch.setattr(utilities, 'get_s3_filesystem', forbidden)
     monkeypatch.setattr(utilities, 'FirestoreWrapper', forbidden)
     monkeypatch.setattr('builtins.input', forbidden)
+    options = ['--replicate', '2'] + (['--replicate-stages', *stages] if stages else [])
     assert cli.main(['extract', '--snapshot', str(snapshot), '--out', str(tmp_path / 'cli-run'),
-                     '--config', str(config_path), '--limit', '1', '--dry-run']) == 0
+                     '--config', str(config_path), '--limit', '1', '--dry-run', *options]) == 0
+    contract = read_json(tmp_path / 'cli-run' / 'run.json')['contract']
+    assert contract['replicate_stages'] == (sorted(stages) if stages else None)
     assert len(fake.calls) == 3  # metadata and two OCR requests; all cache misses
+
+
+@pytest.mark.usefixtures('synthetic_cohort')
+def test_cli_rejects_unknown_replicate_stage_before_reading_content(tmp_path, cli_config, monkeypatch, capsys):
+    from scripts.extraction_eval import cli
+
+    config_path = tmp_path / 'config.json'
+    atomic_json(config_path, cli_config)
+    monkeypatch.setattr(cli, '_load_snapshot', lambda *a, **kw: pytest.fail('Read before label validation'))
+    with pytest.raises(SystemExit) as exc:
+        cli.main(['extract', '--snapshot', str(tmp_path / 'snapshot'), '--out', str(tmp_path / 'run'),
+                  '--config', str(config_path), '--replicate-stages', 'characters', '--dry-run'])
+    assert exc.value.code == 2
+    assert 'Unknown --replicate-stages label' in capsys.readouterr().err
 
 
 @pytest.mark.usefixtures("synthetic_cohort")

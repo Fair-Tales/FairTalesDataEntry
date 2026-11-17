@@ -20,7 +20,7 @@ SETS = ('iterate', 'check')
 
 
 def tuning_scores(scores, selections, *, run_id, configuration_id, replicate,
-                  measurement_id, reference_hashes, cost=None):
+                  measurement_id, reference_hashes, cost=None, replicate_stages=None):
     """Project scored books to numbers and ids for machine pairing, never names/text."""
     groups = {name: selections[key] for name, key in
               (('iterate', 'iterate55_ids'), ('check', 'check20_ids'))}
@@ -29,6 +29,7 @@ def tuning_scores(scores, selections, *, run_id, configuration_id, replicate,
         raise ValueError(T.invalid_books)
     return {'version': 'tuning-scores-v1', 'run_id': run_id,
             'configuration_id': configuration_id, 'replicate': replicate,
+            'replicate_stages': sorted(set(replicate_stages)) if replicate_stages is not None else None,
             'measurement_id': measurement_id,
             'reference_hashes': reference_hashes,
             'cohorts': {name: {'books': len(group), 'ids_sha256': digest(sorted(group))}
@@ -55,7 +56,17 @@ def _validate(run):
                         raise ValueError(T.invalid_metrics)
 
 
+def _same_replicate_stages(left, right):
+    # Missing/null means the historical all-stages policy, not an empty set.
+    def stages(run):
+        value = run.get('replicate_stages')
+        return None if value is None else frozenset(value)
+    if stages(left) != stages(right):
+        raise ValueError(T.replicate_stages_changed)
+
+
 def _compatible(left, right):
+    _same_replicate_stages(left, right)
     for key in ('measurement_id', 'cohorts', 'reference_hashes'):
         if left[key] != right[key]:
             raise ValueError(T.incompatible)
@@ -122,6 +133,7 @@ def noise_floors(runs):
         raise ValueError(T.duplicate_replicates)
     result = {key: runs[0][key] for key in ('configuration_id', 'measurement_id', 'cohorts')}
     result.update(version='tuning-noise-v2', run_ids=[run['run_id'] for run in runs],
+                  replicate_stages=runs[0].get('replicate_stages'),
                   reference_sha256=digest(runs[0]['reference_hashes']),
                   R=len(runs), replicates=len(runs), sets={})
     for name in SETS:
@@ -196,6 +208,7 @@ def verdict(baseline, candidate, floors, target):
                 raise ValueError(T.duplicate_replicates)
             for run in runs:
                 _validate(run)
+                _same_replicate_stages(first, run)
                 if any(run[key] != first[key] for key in ('measurement_id', 'cohorts', 'reference_hashes')):
                     raise ValueError(T.incompatible)
                 if run['sets'][name].keys() != arm[name][0]['sets'][name].keys():
@@ -207,6 +220,8 @@ def verdict(baseline, candidate, floors, target):
     run_ids = [{run['run_id'] for runs in arm.values() for run in runs} for arm in (baseline, candidate)]
     if run_ids[0] & run_ids[1] or (run_ids[0] | run_ids[1]) & set((floors or {}).get('run_ids', [])):
         raise ValueError(T.fresh_runs)
+    if floors:
+        _same_replicate_stages(first, floors)
     if floors and (any(floors.get(key) != first[key] for key in ('measurement_id', 'cohorts')) or
                    floors.get('reference_sha256') != digest(first['reference_hashes'])):
         raise ValueError(T.incompatible)

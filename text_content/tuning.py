@@ -2,6 +2,7 @@
 
 
 class TuningErrors:
+    invalid_replicate_stages = "Unknown --replicate-stages label; use: {labels}"
     invalid_freeze = "Missing or malformed tuning freeze: {detail}"
     changed_exclusions = "Tuning exclusion file differs from its sealed SHA-256"
     inconsistent_freeze = "Tuning freeze ID lists or imported80 hash are inconsistent"
@@ -29,6 +30,7 @@ class TuningErrors:
 
 
 class TuningHelp:
+    replicate_stages = "Refresh only these calls.json labels for replicates other than 1; other requests reuse replicate 1 (default: refresh all stages)"
     freeze_dir = "Sealed tuning exclusion directory (default: %(default)s)"
     cohort = "Permitted book cohort: tune (default), rehearsal or proof"
     lock = "JSON lock linking a completed rehearsal run record and its results/configuration hashes"

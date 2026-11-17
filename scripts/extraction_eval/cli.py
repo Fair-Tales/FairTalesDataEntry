@@ -54,6 +54,7 @@ def build_parser():
     extract.add_argument("--challenge-books", nargs="+", help="Reviewed challenge IDs; sampled results are reported separately")
     extract.add_argument("--seed", type=int, default=20261104)
     extract.add_argument("--replicate", default="1", help="Independent response cache identity; never select the best replicate")
+    extract.add_argument("--replicate-stages", nargs="+", help=TuningHelp.replicate_stages)
     extract.add_argument("--max-spend-usd", type=float, default=16)
     extract.add_argument("--cycle-cap-usd", type=float, help=CYCLE_CAP_HELP)
     extract.add_argument("--ledger", type=Path, help="Shared evaluator ledger; defaults to snapshot parent's spend.sqlite")
@@ -269,6 +270,12 @@ def _extract_loaded(args, loader):
     config = read_json(args.config)
     config['settings'] = validate_settings(
         config.get('settings', {}), model_ids=config.get('pricing', {}).get('models', {}))
+    if args.replicate_stages is not None:
+        labels = {'page_extraction', 'character_detection', 'joint_metadata',
+                  'story_context', 'locate_key_pages',
+                  config['settings']['rotation_model'], config['settings']['crop_quality_model']}
+        if set(args.replicate_stages) - labels:
+            raise ValueError(TuningErrors.invalid_replicate_stages.format(labels=', '.join(sorted(labels))))
     budgets = cycle_budgets(config, args.cycle_cap_usd, required=args.execute)
     paired_inputs = None
     if args.inputs == 'scans':
@@ -335,7 +342,8 @@ def _extract_loaded(args, loader):
         from .billing import validate_billing
         from scripts.data_cleanup import load_secrets
         credentials = validate_billing(config, load_secrets(args.secrets))
-    frozen = freeze_run(args.out, manifest, selection, config, args.replicate, args.max_spend_usd, args.cycle_cap_usd, ledger_path)
+    frozen = freeze_run(args.out, manifest, selection, config, args.replicate, args.max_spend_usd, args.cycle_cap_usd, ledger_path,
+                        replicate_stages=args.replicate_stages)
     if args.execute:
         frozen["secret_name"] = credentials[1]
         atomic_json(args.out / "run.json", frozen)
@@ -345,7 +353,8 @@ def _extract_loaded(args, loader):
         ledger.recover()
         if args.execute:
             client = _live_provider(args.secrets, config, credentials)
-        gateway = Gateway(client, ledger, config, replicate=args.replicate, dry_run=not args.execute)
+        gateway = Gateway(client, ledger, config, replicate=args.replicate,
+                          replicate_stages=args.replicate_stages, dry_run=not args.execute)
         result = run_extract(args.snapshot, input_manifest, selection, args.out, gateway, config, loader=loader, dry_run=not args.execute)
         from .reporting import report_calls
         atomic_json(args.out / "calls.json", report_calls(ledger.rows(), loader))
@@ -532,7 +541,8 @@ def _score_scans(args, contract, predictions, selection, manifest, *, run_record
         numeric = tuning_scores(
             scores, selections, run_id=run_record['run_id'],
             configuration_id=digest({'config': config, 'sources': contract.get('sources')}),
-            replicate=contract['replicate'], measurement_id=digest({
+            replicate=contract['replicate'], replicate_stages=contract.get('replicate_stages'),
+            measurement_id=digest({
                 'snapshot_id': contract['snapshot_id'], 'text_output': args.text_output,
                 'normalization_version': NORMALIZATION_VERSION, 'scoring': 'scan-tuning-v1'}),
             reference_hashes={row['id']: digest({'input': row, 'characters': references.get(row['id'])})

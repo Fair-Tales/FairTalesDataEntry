@@ -1206,8 +1206,60 @@ Calibrate one unchanged configuration on all 75 books: **R=20** runs for
 cheap character stages, **R=5** for transcription, including the initial run.
 Use distinct `extract --replicate` values. The comparison uses separate fresh
 runs of both configurations: **r=4 per arm on Iterate, r=8 on Check** for cheap
-stages; **r=1** on both sets for transcription. These offline commands do no
-extraction, source reading, network access or spending:
+stages; **r=1** on both sets for transcription.
+
+Use `--replicate-stages character_detection` for character calibration, or
+`--replicate-stages page_extraction` for transcription. Supply the same option
+on **every run, including replicate 1**, and use a new `--out` for each replicate.
+For replicates other than `1`, only listed request labels get that replicate's
+cache identity; everything else uses replicate `1` in the shared `--ledger`.
+An uncached upstream request still needs to run: populate the initial run first.
+Omitting the option retains the original behaviour and cache keys (all requests
+use the given replicate).
+
+The option accepts space-separated `calls.json` labels: `page_extraction`,
+`character_detection`, `joint_metadata`, `story_context`, `locate_key_pages`,
+or the configured `rotation_model` / `crop_quality_model` IDs. The default small
+image-check labels are `claude-sonnet-4-6` and `claude-haiku-4-5`; if both checks
+use the same model, that label refreshes both. Changed inputs naturally change
+downstream request keys. In particular, changed predicted story text after
+transcription refreshes characters; identical character inputs replay their
+cached response. Include `character_detection` too if it must refresh even when
+transcription is identical.
+
+For example, with `SNAPSHOT`, `FREEZE_DIR`, `TUNING_INPUTS` (the frozen 75-book
+scan manifest), `CONFIG` and `LEDGER` pointing to your existing local artifacts,
+preview the second run of each calibration:
+
+```bash
+.venv/bin/python -m scripts.extraction_eval extract \
+  --snapshot "$SNAPSHOT" --freeze-dir "$FREEZE_DIR" --cohort tune \
+  --inputs scans --inputs-manifest "$TUNING_INPUTS" --config "$CONFIG" \
+  --ledger "$LEDGER" --replicate 2 --replicate-stages character_detection \
+  --out runs/calibration-2 --dry-run
+
+.venv/bin/python -m scripts.extraction_eval extract \
+  --snapshot "$SNAPSHOT" --freeze-dir "$FREEZE_DIR" --cohort tune \
+  --inputs scans --inputs-manifest "$TUNING_INPUTS" --config "$CONFIG" \
+  --ledger "$LEDGER" --replicate 2 --replicate-stages page_extraction \
+  --out runs/transcription-calibration-2 --dry-run
+```
+
+Replace `--dry-run` with `--execute` for metered execution under the existing
+caps and confirmation. Use replicate numbers 1–20 for characters or 1–5 for
+transcription, matching each output directory, then score every run. Keep the
+configuration, selection and shared ledger fixed. The estimate printed **after
+cache replay** excludes completed upstream pages; character-only misses retain
+just the historical per-book allowance (`2 * $0.0103` per pending book, about
+$1.55 for 75), not the initial full-run estimate. This is a planning allowance,
+not a measured character price.
+
+`run.json` and `tuning_scores.json` record the sorted `replicate_stages` set;
+`null` (or absent in old scores) means all stages. `tuning-noise` and
+`tuning-attempt` reject different sets, including mismatches with the noise
+floors or separate Check runs. Use the same set for calibration and both arms.
+
+These offline commands do no extraction, source reading, network access or spending:
 
 ```bash
 .venv/bin/python -m scripts.extraction_eval tuning-noise \
