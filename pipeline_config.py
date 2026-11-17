@@ -152,7 +152,7 @@ def validate_generation_request(request):
 PIPELINE_SETTINGS_DEFAULTS = {
     **AI_SETTINGS_DEFAULTS,
     **GENERATION_DEFAULTS,
-    'prompt_variant': 'rules-plus-icl',
+    'prompt_variant': 'legacy-v1',
     'page_schema_version': 'legacy-compatible-page-v1',
     'story_context_enabled': False,
     'story_context_model': EXTRACTION_MODEL,

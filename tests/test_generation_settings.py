@@ -91,6 +91,9 @@ def test_default_stage_call_carries_thinking_headroom(monkeypatch, stage, tokens
         'max_images': 100, 'max_request_bytes': 32000000,
         'max_input_tokens': 200000, 'max_output_tokens': 20000,
     }})
+    if stage == 'story_context':
+        # Context is opt-in and has no legacy prompt.
+        settings['prompt_variant'] = 'rules-plus-icl'
     with extraction_runtime(client=client, settings=settings, usage_sink=lambda *a: None):
         if stage == 'metadata':
             utilities.extract_joint_metadata([(1, b'image')], client)
@@ -273,6 +276,7 @@ def test_context_stage_forwards_generation_settings(monkeypatch):
             content=[SimpleNamespace(type='text', text='{}')], stop_reason='end_turn'))))
     monkeypatch.setattr(utilities, 'build_vision_content', lambda *a, **k: 'synthetic image')
     settings = validate_settings({
+        'prompt_variant': 'rules-plus-icl',
         'story_context_thinking': 'disabled', 'story_context_effort': 'low',
         'story_context_max_tokens': 1024,
         'story_context_limits': {'max_images': 100, 'max_request_bytes': 32000000,

@@ -37,6 +37,7 @@ def photo():
 @pytest.fixture
 def settings():
     return {**utilities.AI_SETTINGS_DEFAULTS,
+            'prompt_variant': 'rules-plus-icl',
             'story_context_model': 'fixture',
             'story_context_limits': {'max_images': 100, 'max_request_bytes': 32000000,
                                      'max_input_tokens': 200000, 'max_output_tokens': 20000}}
