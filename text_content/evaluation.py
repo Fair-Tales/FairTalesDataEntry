@@ -212,6 +212,24 @@ class ScanSummaryText:
     )
 
 
+class BatchText:
+    help = 'Submit dry-run requests to Anthropic at batch rates, or resume collection'
+    resume = 'Collect the saved batch; never submit again'
+    wait = 'Poll every 60 seconds until results are ready'
+    confirm = 'Type AFFIRMATIVE to allow metered paid calls up to this run cap: '
+    declined = 'No paid calls authorized.'
+    anthropic_only = 'Batch submission currently supports Anthropic only'
+    pending = 'A batch is pending; use batch --resume instead of submitting again'
+    no_id = 'No saved batch id; if submission was interrupted, reconcile with the provider before retrying'
+    empty = 'No uncached requests; run extract --dry-run to discover the next round'
+    too_large = 'Batch exceeds 100,000 requests or 256 MB; use smaller book selections'
+    missing_reservation = 'Batch result has no reservation; reconcile the ledger'
+    unknown_result = 'Unknown batch result status: {status}'
+    incomplete = 'Missing batch results; reservations retained; resume collection'
+    status = 'Batch {id}: {status}; {count} results collected'
+    failed = '{key}: {status}; not cached, may be retried'
+
+
 class TuningLoopText:
     noise_help = 'Measure per-set sample SD from unchanged scored replicates; no source reads'
     attempt_help = 'Judge a scored candidate and append an aggregate attempt row; no source reads'

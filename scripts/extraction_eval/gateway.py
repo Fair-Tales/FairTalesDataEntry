@@ -134,7 +134,7 @@ def request_ceiling(request, prices):
     return (Decimal(str(rate.get("max_input_tokens"))) * max(Decimal(str(rate[key])) for key in ("input", "cache_read", "cache_write") if rate.get(key) is not None) + output * Decimal(str(rate.get("output")))) / 1_000_000
 
 
-def usage_charge(response, rate, provider="anthropic-messages"):
+def usage_charge(response, rate, provider="anthropic-messages", *, batch=False):
     """Settle normalized tokens using the evaluation's pinned per-model rates."""
     usage = response.get("usage")
     if not isinstance(usage, dict):
@@ -159,7 +159,9 @@ def usage_charge(response, rate, provider="anthropic-messages"):
     # Any unexpected server-side billable tool use must be reconciled manually.
     if usage.get("server_tool_use"):
         raise OutcomeUnknown("Unexpected billable server tools; reconcile usage")
-    return cost
+    if batch and provider not in {"anthropic", "anthropic-messages"}:
+        raise ValueError("Batch pricing is implemented only for Anthropic")
+    return cost / 2 if batch else cost
 
 
 class Gateway:
@@ -170,7 +172,7 @@ class Gateway:
     rate/server rejections may retry; each gets its own reservation and record.
     """
     def __init__(self, client, ledger, config, *, replicate="1", replicate_stages=None,
-                 dry_run=False, wait=None):
+                 dry_run=False, wait=None, requests_path=None):
         self.provider = config.get("provider", "anthropic-messages")
         if self.provider not in ("anthropic", "anthropic-messages", *OPENAI_PROVIDERS):
             raise ValueError(f"Unsupported evaluation provider: {self.provider}")
@@ -192,6 +194,8 @@ class Gateway:
         self.context = {}
         self.billing_stopped = False
         self.wait = wait or time.sleep
+        self.requests_path = requests_path
+        self.exported_keys = set()
 
     def create(self, **request):
         if self.billing_stopped:
@@ -258,6 +262,12 @@ class Gateway:
                     raise CachedFailure(RETRY_EXHAUSTED.format(key=key))
                 raise CachedFailure(f"Request {key} permanently failed: {cached.get('error')}")
             if self.dry_run:
+                if self.requests_path is not None and key not in self.exported_keys:
+                    with self.requests_path.open('a', encoding='utf-8') as handle:
+                        handle.write(canonical({**identity, 'key': key, 'context': {
+                            **self.context, 'requested_settings': requested_generation(request),
+                        }}) + '\n')
+                    self.exported_keys.add(key)
                 raise DryRunMiss(f"Uncached request for {request.get('model')}; no paid call dispatched")
             if endpoint:
                 self.ledger.guard_unknown_usage(self.provider)

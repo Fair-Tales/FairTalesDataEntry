@@ -13,6 +13,7 @@ from .evidence import evidence_dir
 from .store import atomic_json, read_json, run_lock
 from .tuning import DEFAULT_FREEZE_DIR, TuningLoader, TuningRefused, TuningExposure
 from text_content.tuning import TuningErrors, TuningHelp
+from text_content.evaluation import BatchText
 from text_content.pipeline_runtime import (
     CYCLE_CAP_HELP, HEADROOM_HELP, HEADROOM_LINE, HEADROOM_UNCONFIGURED, RUN_BUDGET, CYCLE_UNCONFIGURED,
     RETRY_FAILED_HELP, RETRY_RUN_HELP, RETRY_RESULT, RETRY_UNKNOWN, RETRY_LEDGER_MISSING,
@@ -65,6 +66,12 @@ def build_parser():
     group = extract.add_mutually_exclusive_group()
     group.add_argument("--execute", action="store_true")
     group.add_argument("--dry-run", action="store_true", help="Default: local preprocessing/cache replay, zero network calls")
+
+    batch = commands.add_parser('batch', help=BatchText.help)
+    batch.add_argument('--run', type=Path, required=True)
+    batch.add_argument('--secrets', default='.streamlit/secrets.toml')
+    batch.add_argument('--resume', action='store_true', help=BatchText.resume)
+    batch.add_argument('--wait', action='store_true', help=BatchText.wait)
 
     headroom = commands.add_parser("headroom", help=HEADROOM_HELP)
     headroom.add_argument("--ledger", type=Path, default=evidence_dir() / 'spend.sqlite')
@@ -248,6 +255,17 @@ def _live_provider(secrets_path, config, credentials=None):
     return create_openai_client(key)
 
 
+def _durable_run(out, ledger_path):
+    temporary_dir = Path(tempfile.gettempdir()).resolve()
+    for label, path in (("ledger", ledger_path), ("output directory", out)):
+        resolved = path.resolve()
+        if resolved.is_relative_to(temporary_dir):
+            raise ValueError(
+                f"Paid run refused: {label} {path} resolves to {resolved} inside "
+                f"temporary directory {temporary_dir}. Keep paid-run evidence in "
+                f"durable storage, such as {evidence_dir()}.")
+
+
 def _extract(args):
     with run_lock(args.out):
         lock = read_json(args.rehearsal_lock) if args.rehearsal_lock else None
@@ -327,18 +345,11 @@ def _extract_loaded(args, loader):
     print(RUN_BUDGET.format(cap=args.max_spend_usd, provider=provider, cycle_cap=cycle_cap, ledger=ledger_path))
     # No credentials, SDK client, lookups or paid requests before this point.
     if args.execute:
-        answer = input("Type AFFIRMATIVE to allow metered paid calls up to this run cap: ")
+        answer = input(BatchText.confirm)
         if answer != "AFFIRMATIVE":
-            print("No paid calls authorized.")
+            print(BatchText.declined)
             return 1
-        temporary_dir = Path(tempfile.gettempdir()).resolve()
-        for label, path in (("ledger", ledger_path), ("output directory", args.out)):
-            resolved = path.resolve()
-            if resolved.is_relative_to(temporary_dir):
-                raise ValueError(
-                    f"Paid run refused: {label} {path} resolves to {resolved} inside "
-                    f"temporary directory {temporary_dir}. Keep paid-run evidence in "
-                    f"durable storage, such as {evidence_dir()}.")
+        _durable_run(args.out, ledger_path)
         from .billing import validate_billing
         from scripts.data_cleanup import load_secrets
         credentials = validate_billing(config, load_secrets(args.secrets))
@@ -354,7 +365,8 @@ def _extract_loaded(args, loader):
         if args.execute:
             client = _live_provider(args.secrets, config, credentials)
         gateway = Gateway(client, ledger, config, replicate=args.replicate,
-                          replicate_stages=args.replicate_stages, dry_run=not args.execute)
+                          replicate_stages=args.replicate_stages, dry_run=not args.execute,
+                          requests_path=args.out / 'batch-requests.jsonl')
         result = run_extract(args.snapshot, input_manifest, selection, args.out, gateway, config, loader=loader, dry_run=not args.execute)
         from .reporting import report_calls
         atomic_json(args.out / "calls.json", report_calls(ledger.rows(), loader))
@@ -574,9 +586,58 @@ def main(argv=None):
         return {"snapshot": _snapshot, "extract": _extract, "score": _score, "inventory": _inventory,
                 "audit-tuning": _audit_tuning, 'tuning-noise': _tuning_noise,
                 'tuning-attempt': _tuning_attempt, 'headroom': _headroom,
-                'retry-failed': _retry_failed}.get(args.command)(args)
+                'retry-failed': _retry_failed, 'batch': _batch}.get(args.command)(args)
     except (OSError, ValueError, TypeError, sqlite3.Error, EOFError, TuningRefused, TuningExposure) as exc:
         parser.exit(2, f"{type(exc).__name__}: {exc}\n")
+
+
+def _batch(args):
+    from .batches import run_batch
+    from .billing import cycle_budgets, validate_billing
+    from .gateway import validate_prices
+    from .reporting import report_calls
+    from .store import Ledger
+    from scripts.data_cleanup import load_secrets
+    with run_lock(args.run):
+        saved = TuningLoader.run_state(args.run / 'run.json')
+        loader = TuningLoader(args.run, saved['freeze_dir'], cohort=saved['cohort'],
+                              selections_path=saved['selections_path'])
+        with loader.activate():
+            ledger = client = None
+            try:
+                frozen = loader.run_record(args.run / 'run.json')
+                contract = frozen['contract']
+                config = contract['config']
+                if config.get('provider', 'anthropic-messages') not in {'anthropic', 'anthropic-messages'}:
+                    raise ValueError(BatchText.anthropic_only)
+                validate_prices(config, executing=True)
+                budgets = cycle_budgets(config, contract['cycle_cap_usd'], required=True)
+                ledger_path = Path(contract['ledger'])
+                _durable_run(args.run, ledger_path)
+                print(RUN_BUDGET.format(cap=contract['max_spend_usd'], provider='anthropic',
+                      cycle_cap=f"${budgets['anthropic']['effective_cap_usd']:.2f}", ledger=ledger_path))
+                if input(BatchText.confirm) != 'AFFIRMATIVE':
+                    print(BatchText.declined)
+                    return 1
+                credentials = validate_billing(config, load_secrets(args.secrets))
+                frozen['secret_name'] = credentials[1]
+                atomic_json(args.run / 'run.json', frozen)
+                ledger = Ledger(ledger_path, frozen['run_id'], contract['max_spend_usd'], budgets=budgets)
+                client = _live_provider(args.secrets, config, credentials)
+                state = run_batch(args.run, ledger, config, client, resume=args.resume, wait=args.wait)
+                atomic_json(args.run / 'calls.json', report_calls(ledger.rows(), loader))
+                print(BatchText.status.format(**state, count=len(state['results'])))
+                for key, status in state['results'].items():
+                    if status != 'succeeded':
+                        print(BatchText.failed.format(key=key, status=status))
+                return 0 if state['status'] == 'ended' and all(
+                    value == 'succeeded' for value in state['results'].values()) else 2
+            finally:
+                if client is not None:
+                    client.close()
+                if ledger is not None:
+                    ledger.close()
+                loader.audit()
 
 
 def _headroom(args):
