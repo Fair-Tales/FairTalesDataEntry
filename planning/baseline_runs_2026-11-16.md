@@ -116,3 +116,42 @@ move the live app to the losing prompts (DECISIONS 022 holds the merge).
 Text accuracy from colour scans, about 0.79 under the old prompts, is the real
 starting point; the 0.99 measured on stored page images was void, because those
 images are renders of the reference text.
+
+### Part 2: old prompts on the other 25 Iterate books and the 20 Check books (code `e01cd1a`)
+
+All 45 books completed (3,484 paid calls), cost $30.91, inside the $38 cap. The
+baseline as a whole cost $79.59 (probes $2.09, part 1 $46.59, part 2 $30.91);
+the ledger's $1.16 outstanding is the reservation on two refused calls, which
+are not billed. Anthropic cycle headroom afterwards: $53.25 of $134.
+
+Two pages of `how_the_grinch_stole_christmas` failed: the API refused two
+calls with "Output blocked by content filtering policy". A well-known
+copyrighted text can be refused for verbatim transcription; the app will meet
+the same refusal. One other Iterate page and one Check page also failed; three
+failed pages in 2,723.
+
+The old-prompt baseline: equal-book means with 95% book-bootstrap ranges
+(20,000 draws, seed 20261110). Iterate combines part 1's old-prompt run (30
+books) with part 2 (25). Check figures are aggregates only, read once.
+
+| Measure | Iterate books | Iterate (55) | Check books | Check (20) |
+|---|---:|---|---:|---|
+| Text accuracy | 55 | 0.774 [0.728, 0.815] | 20 | 0.806 [0.744, 0.860] |
+| Unsuccessful pages per 100 | 55 | 0.11 [0.00, 0.27] | 20 | 0.16 [0.00, 0.47] |
+| Inserted text per 100 reference tokens | 55 | 16.7 [12.7, 21.2] | 20 | 14.2 [9.8, 19.6] |
+| Character recall | 51 | 0.904 [0.859, 0.943] | 20 | 0.919 [0.853, 0.972] |
+| Gender | 51 | 0.837 [0.784, 0.886] | 20 | 0.884 [0.814, 0.942] |
+| Human | 51 | 0.769 [0.681, 0.849] | 20 | 0.911 [0.840, 0.967] |
+| Protagonist | 51 | 0.860 [0.805, 0.909] | 20 | 0.890 [0.810, 0.958] |
+| Groundedness | 54 | 0.936 [0.906, 0.961] | 20 | 0.928 [0.889, 0.961] |
+| Alias coverage | 35 | 0.705 [0.576, 0.826] | 10 | 0.305 [0.125, 0.505] |
+
+Check sits inside or near Iterate's ranges on every measure but two: human
+(0.911 against 0.769) and alias coverage (0.305 against 0.705, on only 10 Check
+books with reference aliases). Neither is examined further, under the Check
+rule. These are the figures each tuning change must beat on Iterate without
+losing on Check.
+
+Next, per the design: noise calibration (§4), then the model screen and the
+one-change-at-a-time loop. Inserted text (about 17 tokens per 100) and
+character attributes (human, gender) are the largest gaps on Iterate.
