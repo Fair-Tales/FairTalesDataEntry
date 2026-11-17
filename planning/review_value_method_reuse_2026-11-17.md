@@ -89,3 +89,4 @@ Ranked recommendations:
 - **Picture lettering:** keep it, tagged as its own kind of text (DECISIONS 025).
 - **Screening and the plan:** not yet decided. Fable reviews this review and the plan first. Chris's steer: keen on small screens, on iterative prompt development on small numbers of books to test new ideas before scaling up, and on batch mode wherever possible to save money.
 - **Backing up paid run evidence:** later; to be raised again.
+- **After Fable's review (same day):** screens may drop only clearly failing ideas; the text headline counts story pages only, with book details tested separately; a rise in duplicate aliases blocks a change; free work starts, paid steps await `AFFIRMATIVE` (DECISIONS 026).
