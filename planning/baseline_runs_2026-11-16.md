@@ -93,9 +93,10 @@ no reference characters.
 | Protagonist | 27 | 0.873 | 0.500 | −0.372 [−0.541, −0.208] |
 
 Why the new prompts lose. Their character call ran out of output on 14 of 30
-books even at 20,000 tokens: the model was still thinking (median 19,996
-thinking tokens on those books, 7,056 where it finished, against 194 under the
-old prompts), so those books scored zero on every character measure. The SDK
+books even at 20,000 tokens: eight while still thinking, six partway through
+the answer (median 19,996 thinking tokens on those books, 7,056 where it
+finished, against 194 under the old prompts), so those books scored zero on
+every character measure. The SDK
 refuses longer non-streaming requests, so the ceiling cannot simply rise again.
 On the 16 books where the new call finished, it is still no better: character
 recall −0.044 [−0.106, 0.000], gender −0.052 [−0.119, +0.013], human +0.001,
@@ -155,3 +156,45 @@ losing on Check.
 Next, per the design: noise calibration (§4), then the model screen and the
 one-change-at-a-time loop. Inserted text (about 17 tokens per 100) and
 character attributes (human, gender) are the largest gaps on Iterate.
+
+## Why the new prompts lost (diagnosis, 17 November)
+
+Offline, no API spend, from part 1's outputs (30 Iterate books only). Astra
+diagnosed; the counts marked † were rechecked independently.
+
+**Character call.** The new prompt asks for much more than the old one did:
+a quote for each mention, identity evidence, unresolved candidates, group
+membership, embedded short forms and a second pass over every page, with
+13 worked examples (an 11,595-character prefix on every call†). Thinking
+tracks book length only moderately (Spearman 0.49); one short book still hit
+the limit. Sonnet 5 returns empty thinking blocks, so which instruction drives
+the thinking cannot be read off the outputs.
+
+**Rejected pages.** 33 of the 36 come from the new page format's extra
+requirements: invented region kinds (`dedication`, `title`) 14, invented page
+types (`illustration`, `paratext`) 7, the text and its regions disagreeing on
+whitespace 6 or on content 6. The other 3 are malformed JSON or a misspelt key.
+Rescoring those 33 under the existing legacy-compatible page format would
+recover about 0.034 of the 0.059 accuracy loss (a replay, not a measured run).
+
+**Extra text.** On the 8 books with no rejected page, about two thirds of the
+extra words are on front and back matter (advertised covers, credits, prices,
+ISBNs) and a third on story pages (signs, sound effects, lettering in
+pictures). The old prompt excluded lettering in pictures; the new one does
+not. Some of that lettering may belong in the reference.
+
+**Two defects found on the way.**
+- The old prompt set has no prompt for the combined book-details stage, so
+  book details failed on all 30 books in the old arm† ("Prompt stage
+  'joint_metadata_extraction' did not exist in legacy-v1"). Book details are not
+  among the scored measures, so the comparison stands, but the old arm's cost
+  omits that stage and the app cannot simply switch to the old prompts.
+- The new story-context stage failed on 29 of 30 books† (unsupported page-type
+  labels) and fell back, so its intended improvement never operated.
+
+**Candidate changes, one at a time against the old-prompt baseline**, smallest
+first: (1) character call at medium effort, the documented response to
+thinking that exhausts the output limit; (2) the legacy-compatible page format;
+(3) restore the old exclusion of lettering in pictures; (4) drop the
+second-pass instruction from the character rules; (5) rules without the
+examples.
