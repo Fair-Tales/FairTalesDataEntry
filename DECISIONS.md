@@ -956,3 +956,17 @@ Chris decided, after Astra's and Fable's reviews
   duplicates.
 - **Plan.** The free work in Fable's plan starts now; paid steps need Chris's
   typed `AFFIRMATIVE`, and full tests come back to him first.
+
+## 027 — Book details: agreement now, verified references before any accuracy claim (2026-11-17)
+
+Book-details transcription (title, credits, publisher, ISBN, year) is scored
+separately from story text (decision 026), as designed in
+`planning/metadata_test_design_2026-11-17.md`. Chris decided:
+
+- **References.** Existing records come from the pilot spreadsheet and an
+  automated web lookup, with no ISBNs, so tuning reports *agreement with
+  existing records*, labelled as such. A person checks the 75 books' covers,
+  title and copyright pages before any published book-details accuracy claim.
+- **Variability.** Run-to-run variation for book details is estimated from the
+  repeat runs each full test already makes (4 on Iterate, 8 on Check, both
+  versions), with no separate calibration.
