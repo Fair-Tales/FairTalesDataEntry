@@ -16,6 +16,62 @@ Keep the output directory outside this repository: images, text, responses and
 reports contain research data. No command invokes git. Do not use production
 credentials while testing; all harness tests use fakes and synthetic fixtures.
 
+## Half-price Anthropic batches
+
+Each dry run appends uncached requests and their unchanged cache keys to
+`RUN/batch-requests.jsonl`. `batch` submits them, reserves their combined
+worst-case cost against the existing run/cycle caps, and settles successes into
+the same ledger at half the pinned standard rates. Responses carry `batch_id`
+in call reports. Errors, cancellations and expirations are reported in
+`batch.json` and the terminal, release their reservations and remain uncached.
+The next extract can retry them synchronously, or `batch` can submit them again.
+
+Worked character-only example: assume this book's upstream requests already
+exist in the shared ledger at replicate `1`. Replace the three uppercase paths
+and `BOOK_ID` with your local verified configuration, snapshot, ledger and an
+admitted book id. Keep the new run directory outside the repository and `/tmp`.
+
+```bash
+args=(--snapshot SNAPSHOT --config VERIFIED_CONFIG.json --ledger SHARED_LEDGER.sqlite
+      --out ../autonomy-evidence/character-batch --books BOOK_ID
+      --replicate character-batch-1 --replicate-stages character_detection)
+.venv/bin/python -m scripts.extraction_eval extract "${args[@]}" --dry-run
+.venv/bin/python -m scripts.extraction_eval batch --run ../autonomy-evidence/character-batch --wait
+# Type AFFIRMATIVE when prompted; after every result succeeds:
+.venv/bin/python -m scripts.extraction_eval extract "${args[@]}" --execute
+# Type AFFIRMATIVE; identical requests now replay from the response cache.
+```
+
+Omit `--wait` to leave a batch running; collect it later with
+`batch --run RUN --resume --wait`. The saved id prevents resubmission while
+pending. Wait for collection before running `extract --execute`. Submission and
+resume use the same typed confirmation, billing key selection and durable-storage
+check as paid extraction; secrets are read only after confirmation. If creation
+loses its response before saving an id, reservations remain: reconcile the
+provider outcome manually rather than resubmitting blindly.
+
+One round normally suffices for character-only changes; changed transcription
+needs a subsequent dry-run/batch round for dependent characters. Never-run books
+need several rounds. Oversized batches are refused; use smaller book selections.
+There is no automatic splitting or new dependency.
+
+Offline API references used (not live-verified): bundled
+[`batches.md`](/tmp/claude-1000/bundled-skills/2.1.322/98c07a88497fde2ff3d554084d8bd7d5/claude-api/python/claude-api/batches.md:3)
+lines 3–11 specify 50% pricing, 100,000 requests/256 MB, up to 24 hours and
+29-day result availability; lines 24–43, 57–61 and 75–89 document creation,
+polling until `ended`, and success/error/canceled/expired results. This file
+has no `shared/` references. Installed `anthropic` is 0.116.0
+(`.venv/lib/python3.12/site-packages/anthropic/_version.py:4`); its
+`resources/messages/batches.py:47,96,285` exposes `create`, `retrieve`, `results`.
+`types/messages/batch_create_params.py:33–39` specifies unique `custom_id`s and
+out-of-order results. Neither source states formal id length/character limits;
+those remain unverified offline. We map 64-hex keys to `request-0`, etc., following
+the bundled example's short id format (line 27), and save the mapping locally.
+
+OpenAI support is deferred. It would need an adapter for its batch upload,
+submission and result format, verified batch prices/limits, and the same ledger
+reservation/replay tests. Whether ChatGPT-linked credits cover it is unconfirmed.
+
 ## Original colour scans
 
 Use `extract --inputs scans --inputs-manifest INPUTS --snapshot SNAPSHOT --out RUN` to read the original

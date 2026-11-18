@@ -200,26 +200,40 @@ class Ledger:
                    for row in self._last_calls())
 
     def reserve(self, key, request, ceiling):
+        self.reserve_many([(key, request, ceiling)])
+
+    def reserve_many(self, requests):
+        """Admit all requests atomically, using the same run and cycle caps."""
+        with self.transaction():
+            for key, request, ceiling in requests:
+                self._reserve(key, request, ceiling)
+
+    def _reserve(self, key, request, ceiling):
         from .billing import billing_provider
         reservation = money(ceiling)
         provider = billing_provider(request.get('provider', 'anthropic-messages'))
+        now = self.clock().astimezone(timezone.utc)
+        if self.get(key):
+            raise OutcomeUnknown("Request already exists; reload its persisted state")
+        start, end, cycle_cap = self._cycle_cap(provider, now)
+        settled, outstanding = cycle_spend(self.db, provider, start, end)
+        run_cap = self.db.execute('SELECT cap FROM runs WHERE id=?', (self.run_id,)).fetchone()['cap']
+        run_used = self.db.execute('SELECT COALESCE(SUM(cost+reservation),0) FROM calls WHERE run_id=?',
+                                   (self.run_id,)).fetchone()[0]
+        for scope, cap, used in ((provider, cycle_cap, settled + outstanding), ('run', run_cap, run_used)):
+            if used + reservation > cap:
+                raise BudgetStopped(BUDGET_REFUSED.format(scope=scope, cap=cap/1e9,
+                    reservation=reservation/1e9, headroom=(cap-used)/1e9, used=used/1e9))
+        self.db.execute("""INSERT INTO calls(key,run_id,month,provider,state,reservation,request,created)
+          VALUES (?,?,?,?,'dispatched',?,?,?)""",
+                        (key, self.run_id, now.strftime('%Y-%m'), provider,
+                         reservation, canonical(request), now.isoformat()))
+
+    def release_batch(self, key):
+        """A confirmed non-success has no response to cache or cost to retain."""
         with self.transaction():
-            now = self.clock().astimezone(timezone.utc)
-            if self.get(key):
-                raise OutcomeUnknown("Request already exists; reload its persisted state")
-            start, end, cycle_cap = self._cycle_cap(provider, now)
-            settled, outstanding = cycle_spend(self.db, provider, start, end)
-            run_cap = self.db.execute('SELECT cap FROM runs WHERE id=?', (self.run_id,)).fetchone()['cap']
-            run_used = self.db.execute('SELECT COALESCE(SUM(cost+reservation),0) FROM calls WHERE run_id=?',
-                                       (self.run_id,)).fetchone()[0]
-            for scope, cap, used in ((provider, cycle_cap, settled + outstanding), ('run', run_cap, run_used)):
-                if used + reservation > cap:
-                    raise BudgetStopped(BUDGET_REFUSED.format(scope=scope, cap=cap/1e9,
-                        reservation=reservation/1e9, headroom=(cap-used)/1e9, used=used/1e9))
-            self.db.execute("""INSERT INTO calls(key,run_id,month,provider,state,reservation,request,created)
-              VALUES (?,?,?,?,'dispatched',?,?,?)""",
-                            (key, self.run_id, now.strftime('%Y-%m'), provider,
-                             reservation, canonical(request), now.isoformat()))
+            self.db.execute("DELETE FROM calls WHERE key=? AND run_id=? AND cost=0 AND response IS NULL",
+                            (key, self.run_id))
 
     def capture_response(self, key, response):
         """Keep the reservation until usage is settled; crashes stay unknown."""
@@ -347,6 +361,8 @@ def call_rows(db, run_id):
                       stop_reason=stop_reason)
         result.update(request.get("context", {}))
         result['served_model'] = response.get('model')
+        if response.get('_batch_id'):
+            result['batch_id'] = response['_batch_id']
         # Old rows have no settings sidecar. Preserve that absence: interpreting
         # historical provider defaults using today's table would invent evidence.
         result.setdefault('requested_settings', None)
