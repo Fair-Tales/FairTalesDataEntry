@@ -59,8 +59,10 @@ other cue exists ([DECISIONS 028–029](DECISIONS.md)), never illustrations,
 activities or stereotypes. `Non-specific` means the text gives no gender cue; `Transgender`
 requires an explicit statement. Pictures may inform the AI's human/non-human
 decision, not its other character codes. Protagonist means the character(s)
-around whom the action revolves ([DECISIONS 029](DECISIONS.md));
-plural means a group or collection of characters. The original study coded
+around whom the action revolves, including true ensembles ([DECISIONS 029–030](DECISIONS.md));
+plural means a group or collection of characters. Fantasy beings are non-human, and
+subjects of stories told within the book count as characters while hypothetical
+figures do not ([DECISIONS 030](DECISIONS.md)). The original study coded
 gender, human/non-human and protagonist, but **never coded ethnicity,
 disability or plural** in the sources used by the importer.
 
@@ -277,8 +279,8 @@ Sources: [Character](data_structures/character.py),
 |---|---|---|---|
 | `name` | Primary recorded character name or display label; string. | Original human coding imported; person entry/correction; AI detection. | Blank: unnamed/unrecorded. Human names can be shortened or editorial labels, not exact textual mentions; names alone do not establish identity. |
 | `gender` | `Female`, `Male`, `Non-specific`, `Transgender`; textual rule above. | Person, imported original codes, or AI. Import maps F/M/NGS to Female/Male/Non-specific. | Null/blank: absent/invalid/unrecorded; distinct from coded Non-specific. Import also mapped unexpected codes to Non-specific. Original source has no Transgender observations, so agreement cannot validate that category. |
-| `human` | Boolean: human versus animal, monster or other non-human. Pictures may inform this decision. | Original human H/NH codes, person or AI. | Null/blank: missing/invalid current model code or unrecorded. Import mapped two anomalous source-code values to true; export does not repair them. Historical/manual default true may be unassessed. |
-| `protagonist` | Boolean: main character. | Original study's per-book protagonist code, person or AI. | Null/blank: missing/invalid/unrecorded. False is a negative code when supported; old/manual default false alone does not prove assessment. Definition: [DECISIONS 029](DECISIONS.md). |
+| `human` | Boolean: human versus animal, monster or other non-human; fantasy beings are non-human ([DECISIONS 030](DECISIONS.md)). Pictures may inform this decision. | Original human H/NH codes, person or AI. | Null/blank: missing/invalid current model code or unrecorded. Import mapped two anomalous source-code values to true; export does not repair them. Historical/manual default true may be unassessed. |
+| `protagonist` | Boolean: main character. | Original study's per-book protagonist code, person or AI. | Null/blank: missing/invalid/unrecorded. False is a negative code when supported; old/manual default false alone does not prove assessment. Definition: [DECISIONS 029–030](DECISIONS.md). |
 | `plural` | Boolean: group/collection rather than individual. | Person or AI; original study never coded it. | Imported default false becomes null unless current human evidence exists. Elsewhere null/blank is unknown and old default false can survive. Do not equate missing with singular. |
 | `ethnicity` | `Not specified`, `Asian`, `Black / African`, `Hispanic / Latino`, `Middle Eastern`, `Native / Indigenous`, `White / European`, `Mixed / Other`. Apparent representation in text or illustrations according to manual form. | Person; original study never coded it. Current character AI assignment does not establish this code. | Imported defaults become null without current human evidence. Explicit human Not specified is a code, not never-coded missingness. Vocabulary is explicitly a placeholder pending team confirmation; app defaults may otherwise survive. |
 | `disability` | `Not specified`, `Physical disability`, `Sensory disability`, `Cognitive / Learning disability`, `Mental health condition`, `Chronic illness`, `No disability`. Representation in text according to form. | Person; original study never coded it. Current character AI assignment does not establish this code. | Imported defaults become null without current human evidence. No disability, Not specified and missing are different. Vocabulary is explicitly provisional; non-import defaults may survive. |

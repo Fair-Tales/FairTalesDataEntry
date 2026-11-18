@@ -1002,3 +1002,22 @@ two coding questions the error analysis raised. Chris decided to follow it:
   is clearly gendered; unisex, ambiguous or invented names stay `Non-specific`.
   This is the coders' own rule ("names only when pronouns were not available").
   Illustrations remain excluded; pictures inform human/non-human only.
+
+## 030 — Fantasy beings, protagonist ensembles and who counts as a character (2026-11-18)
+
+The step C diagnosis of the character prompt found three conventions the
+codebook left open, each bearing on a second prompt wording. Chris decided:
+
+- **Fantasy beings are not human.** `human` is true only for humans; animals,
+  toys, objects, robots and fantasy beings (elves, ogres and the like) are false
+  even when they talk or act like people. Pictures may still inform the
+  decision, though the AI character step currently receives text only.
+- **Protagonist ensembles** (amends 029). When a story is equally about three
+  or more characters, all of them are protagonists; minor helpers and framing
+  characters are not. Otherwise 029 stands.
+- **Who counts as a character.** Subjects of a story told or read within the
+  book count; hypothetical or imagined figures, such as choices offered to the
+  reader, do not.
+
+Existing references that differ are listed for Chris to check against the
+books; frozen references are not changed by this entry.
