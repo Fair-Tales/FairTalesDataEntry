@@ -970,3 +970,18 @@ separately from story text (decision 026), as designed in
 - **Variability.** Run-to-run variation for book details is estimated from the
   repeat runs each full test already makes (4 on Iterate, 8 on Check, both
   versions), with no separate calibration.
+
+## 028 — Approved gender cues beyond pronouns (2026-11-18)
+
+Following decision 018 ("keep a lookout" for textual cues beyond pronouns), the
+error analysis (`planning/error_analysis_2026-11-17.md`) brought Chris the cue
+kinds found in the Iterate disagreements. He approved all three for use in
+prompts and examples:
+
+- **Kinship words** (mother, father, sister, brother, aunt, uncle and similar);
+- **Titles and forms of address** (Mr, Mrs, Miss, King, Queen, sir, madam and
+  similar);
+- **Sex-specific animal nouns** (hen, ewe, stallion, lioness and similar).
+
+Names alone and illustrations remain excluded as gender evidence; pictures
+inform human/non-human only.
