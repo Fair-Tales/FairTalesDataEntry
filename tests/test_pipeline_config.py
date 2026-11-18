@@ -11,7 +11,7 @@ import utilities
 from ai_runtime import extraction_runtime
 from pipeline_config import AI_SETTINGS_DEFAULTS, GENERATION_DEFAULTS, generation_request, validate_settings
 from scripts.extraction_eval import cli, runner
-from text_content.pipeline_prompts import (CHARACTER_RULE_BLOCKS, PROMPT_VARIANTS,
+from text_content.pipeline_prompts import (CHARACTER_RULE_BLOCKS, CHARACTER_RULE_REPLACEMENTS, PROMPT_VARIANTS,
                                           evaluation_prompt_context, prompt_for)
 from test_background_pipeline import FakeClient as FakeDB, FakeFs, _make_job
 from test_extraction_eval_core import FakeClient, image_bytes, isolated  # noqa: F401,F811 - pytest fixtures
@@ -246,7 +246,7 @@ def test_production_worker_and_harness_build_identical_request_bytes(
                 == json.dumps(harness_request, ensure_ascii=False).encode('utf-8'))
 
 
-@pytest.mark.parametrize('character_variant', [None, *PROMPT_VARIANTS, *CHARACTER_RULE_BLOCKS])
+@pytest.mark.parametrize('character_variant', [None, *PROMPT_VARIANTS, *CHARACTER_RULE_BLOCKS, *CHARACTER_RULE_REPLACEMENTS])
 def test_foreground_character_override_matches_harness(character_variant, monkeypatch):
     settings = validate_settings({'prompt_variant': 'rules-only', 'character_prompt_variant': character_variant})
     monkeypatch.setattr(utilities, '_read_ai_settings_doc', lambda: settings)
@@ -267,7 +267,7 @@ def test_invalid_character_variant_is_rejected(value):
         validate_settings({'character_prompt_variant': value})
 
 
-@pytest.mark.parametrize('variant', CHARACTER_RULE_BLOCKS)
+@pytest.mark.parametrize('variant', [*CHARACTER_RULE_BLOCKS, *CHARACTER_RULE_REPLACEMENTS])
 def test_character_only_variant_does_not_expand_page_choices(variant):
     with pytest.raises(ValueError, match='prompt_variant'):
         validate_settings({'prompt_variant': variant})

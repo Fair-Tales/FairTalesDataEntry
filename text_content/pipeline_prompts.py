@@ -35,6 +35,49 @@ CHARACTER_RULE_BLOCKS = {
         "even when their mention is incidental."
     ),
 }
+# Second-wording drafts for Chris: each pair is (legacy text, replacement).
+# Edit the replacement here; each variant changes only its own idea.
+CHARACTER_RULE_REPLACEMENTS = {
+    "gender-cues-w2": (
+        'Infer ONLY from gendered pronouns or words in the references; use "Non-specific" '
+        'when unclear.',
+        'Use evidence from the whole story, not just the chosen references: '
+        'gendered pronouns first; then kinship words, titles and forms of address; '
+        'then sex-specific animal nouns. Only when none of those cues exists for '
+        'the character may a clearly gendered name count. Unisex, ambiguous or '
+        'invented names, or no clear cue, mean "Non-specific". Never use pictures.',
+    ),
+    "protagonist-w2": (
+        '- "protagonist": true only for the clear main character of the story.',
+        '- "protagonist": true for the character or characters around whom the '
+        'action revolves. First judge whose problem or journey drives the whole '
+        'story: usually one character; add a second only when the story is equally '
+        'about both.',
+    ),
+    "aliases-w2": (
+        '- "aliases": the OTHER references used for this character (exclude the chosen '
+        'name; may be an empty list).',
+        '- "aliases": check each page for every printed reference to this character, '
+        'including short forms, descriptions and titles. Exclude the chosen name, '
+        'pronouns, utterances, number labels, place or shop names and sounds; '
+        'may be an empty list.',
+    ),
+    "incidental-w2": (
+        'Identify every distinct character referred to ANYWHERE in the book, grouping all '
+        'the references to the SAME character into one entry.',
+        'Identify every distinct individual and group mentioned anywhere in the book, '
+        'even incidentally, including subjects of stories told or read within the story. '
+        'Group references to the same character into one entry, but keep two named '
+        'characters acting together separate from each other and from the group they form.',
+    ),
+    "human-w2": (
+        '- "human": true if the character is a person, false if an animal, object or '
+        'other creature.',
+        '- "human": true only for humans; false for animals, toys, objects, robots '
+        'and fantasy creatures (including elves and ogres), even when they talk '
+        'or act like people.',
+    ),
+}
 _evaluation_book = ContextVar("evaluation_prompt_book", default=None)
 _loader_hook = ContextVar("prompt_example_loader_hook", default=None)
 
@@ -515,7 +558,7 @@ def load_example_pack(*, held_out_book_ids=(), held_out_groups=()):
 
 
 def _stage_examples(stage, variant):
-    if stage == "character_detection" and variant in CHARACTER_RULE_BLOCKS:
+    if stage == "character_detection" and variant in (*CHARACTER_RULE_BLOCKS, *CHARACTER_RULE_REPLACEMENTS):
         return []
     if variant not in PROMPT_VARIANTS:
         raise ValueError("Unknown prompt variant")
@@ -553,6 +596,9 @@ def example_pack_text(stage, variant="rules-plus-icl"):
 
 
 def prompt_for(stage, variant="rules-plus-icl"):
+    if stage == "character_detection" and variant in CHARACTER_RULE_REPLACEMENTS:
+        old, new = CHARACTER_RULE_REPLACEMENTS[variant]
+        return LEGACY_PROMPTS[stage].replace(old, new)
     if stage == "character_detection" and variant in CHARACTER_RULE_BLOCKS:
         return LEGACY_PROMPTS[stage] + "\n\n" + CHARACTER_RULE_BLOCKS[variant]
     if variant not in PROMPT_VARIANTS:
