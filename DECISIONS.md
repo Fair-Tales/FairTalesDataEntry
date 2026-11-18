@@ -985,3 +985,20 @@ prompts and examples:
 
 Names alone and illustrations remain excluded as gender evidence; pictures
 inform human/non-human only.
+
+## 029 — Protagonist and name cues follow the published chapter (2026-11-18)
+
+The study's published method (Kitby, McWilliams et al., *Handbook of Mixed
+Methods Research in Education*, Edward Elgar, ch. 23, p. 409; local copy
+`../chapter/9781035326785-chapter23-1.pdf`, not in this public repo) settles
+two coding questions the error analysis raised. Chris decided to follow it:
+
+- **Protagonist.** The character or characters around whom the action
+  revolves: usually one, a second only when the story is equally about both.
+  The chapter counts 207 protagonists in 200 books. Disputed protagonist
+  references are judged against this wording before they become tuning targets.
+- **Names as gender evidence** (amends 028). A name counts only when the text
+  gives no pronoun, kinship word, title or sex-specific animal noun, and the name
+  is clearly gendered; unisex, ambiguous or invented names stay `Non-specific`.
+  This is the coders' own rule ("names only when pronouns were not available").
+  Illustrations remain excluded; pictures inform human/non-human only.
