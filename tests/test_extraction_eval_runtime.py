@@ -10,6 +10,7 @@ import pytest
 
 from scripts.extraction_eval.tuning import current_loader
 from scripts.extraction_eval.billing import BillingStopped, cycle_budgets
+from text_content.pipeline_prompts import CHARACTER_RULE_BLOCKS
 
 
 from scripts.extraction_eval.gateway import (
@@ -19,7 +20,7 @@ from scripts.extraction_eval.runner import (
     cached_isbn_lookup, estimate, freeze_run, run_extract, validate_inputs,
 )
 from scripts.extraction_eval.store import (
-    BudgetStopped, CachedFailure, Ledger, OutcomeUnknown, atomic_json, digest, read_json,
+    BudgetStopped, CachedFailure, Ledger, OutcomeUnknown, atomic_json, canonical, digest, read_json,
 )
 
 
@@ -1320,3 +1321,69 @@ def test_character_variant_reuses_exact_page_request_and_cache_key(config, ledge
     assert keys[0][1][0] != keys[1][1][0]
     assert keys[0][1][1] != keys[1][1][1]
     assert len(provider.calls) == 3  # Page once, each character prompt once.
+
+
+@pytest.mark.parametrize('variant', CHARACTER_RULE_BLOCKS)
+def test_small_book_configs_preserve_upstream_requests(
+        variant, ledger_factory, example_pack, synthetic_cohort):
+    import io
+    from pathlib import Path
+    from PIL import Image
+    import extraction_core
+    import utilities
+    from ai_runtime import extraction_runtime
+    from pipeline_config import validate_settings
+    from text_content.pipeline_prompts import prompt_for
+
+    directory = Path(__file__).resolve().parents[1] / 'scripts/extraction_eval'
+    baseline = read_json(directory / 'baseline.json')
+    candidate = read_json(directory / f'character_{variant}.json')
+    assert candidate == {**baseline, 'settings': {
+        **baseline['settings'], 'character_prompt_variant': variant}}
+    # Pin the whole historical character template, independently of the new blocks.
+    assert hashlib.sha256(prompt_for('character_detection', 'legacy-v1').encode()).hexdigest() == (
+        '61c356bb44df9484872e87943bf0a76e0649aaf848b974bfd8f6b322dee83b3a')
+    buffer = io.BytesIO()
+    Image.new('RGB', (4, 4), 'white').save(buffer, format='PNG')
+    page = {'has_text': True, 'text': 'A traveller waved.', 'is_story_page': True,
+            'page_type': 'story'}
+    details = {'title': {'value': 'Fixture', 'evidence': []}, 'credits': [],
+               'publisher_statements': [], 'isbns': [], 'conflicts': []}
+    located = {'title_page': 1, 'copyright_page': 1}
+    provider = FakeProvider(*(response(content=[{'type': 'text', 'text': json.dumps(value)}])
+                              for value in (page, located, details, {'characters': []}, {'characters': []})))
+    ledger = ledger_factory()
+    requests = []
+    for config in (baseline, candidate):
+        settings = validate_settings(config['settings'])
+        gateway = Gateway(provider, ledger, config)
+        gateway.context = {'book_id': 'fixture'}
+        captured = []
+        original = gateway.create
+
+        def capture(**request):
+            result = original(**request)
+            captured.append((request, result._eval_key))
+            return result
+
+        gateway.create = capture
+        with extraction_runtime(client=gateway, settings=settings, usage_sink=gateway.record_usage):
+            assert extraction_core.attempt_page_extraction(
+                buffer.getvalue(), gateway, settings, label='page_extraction')[0] == 'ok'
+            assert utilities.extract_photo_first_metadata(
+                [(1, buffer.getvalue())], gateway)['metadata_extraction_status'] == 'completed'
+            characters = extraction_core.extract_characters(
+                [{'page_number': 1, 'contains_story': True, 'text': page['text']}],
+                gateway, settings, gateway.record_usage)
+            assert characters.raw_response['prompt_manifest']['examples'] == []
+        requests.append(captured)
+    assert len(requests[0]) == len(requests[1]) == 4
+    # Complete upstream request bytes AND actual gateway keys remain identical.
+    assert canonical(requests[0][:3]) == canonical(requests[1][:3])
+    old, old_key = requests[0][3]
+    new, new_key = requests[1][3]
+    expected = deepcopy(old)
+    expected['messages'][0]['content'] += '\n\n' + CHARACTER_RULE_BLOCKS[variant]
+    assert canonical(new) == canonical(expected)
+    assert new_key != old_key
+    assert len(provider.calls) == 5  # Page, locator and details once; characters twice.

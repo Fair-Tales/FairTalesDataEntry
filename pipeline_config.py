@@ -11,7 +11,7 @@ the harness's existing default of False; production scheduling is unchanged.
 from collections.abc import Mapping
 from copy import deepcopy
 
-from text_content.pipeline_prompts import PROMPT_VARIANTS
+from text_content.pipeline_prompts import CHARACTER_RULE_BLOCKS, PROMPT_VARIANTS
 from text_content.pipeline_runtime import (
     PIPELINE_SETTINGS_OBJECT, PIPELINE_SETTING_UNKNOWN, PIPELINE_SETTING_INVALID,
 )
@@ -190,8 +190,9 @@ def validate_settings(values, *, model_ids=()):
             valid = isinstance(value, str) and value in models
             expected = ', '.join(models)
         elif key == 'character_prompt_variant':
-            valid = value is None or isinstance(value, str) and value in PROMPT_VARIANTS
-            expected = 'null or ' + ', '.join(PROMPT_VARIANTS)
+            choices = (*PROMPT_VARIANTS, *CHARACTER_RULE_BLOCKS)
+            valid = value is None or isinstance(value, str) and value in choices
+            expected = 'null or ' + ', '.join(choices)
         elif key in _CHOICES:
             valid = isinstance(value, str) and value in _CHOICES[key]
             expected = ', '.join(_CHOICES[key])

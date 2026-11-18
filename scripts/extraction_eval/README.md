@@ -16,6 +16,72 @@ Keep the output directory outside this repository: images, text, responses and
 reports contain research data. No command invokes git. Do not use production
 credentials while testing; all harness tests use fakes and synthetic fixtures.
 
+## Small-book screens
+
+The first-wording configs `character_gender-cues.json`, `character_protagonist.json`,
+`character_aliases.json` and `character_incidental.json` differ from `baseline.json`
+only in `settings.character_prompt_variant`. Their short names select the rule
+blocks in `text_content/pipeline_prompts.py`; page `prompt_variant` choices stay
+unchanged. Each adds one block to the frozen legacy character prompt, without
+new examples, and preserves page and book-details request bytes/cache keys.
+
+Control panel (12 Iterate books, fixed 2026-11-18). Kept here rather than in
+`selections.json`, whose bytes feed run identity and the freeze check. Rule: per
+alias stratum (any reference alias vs none, via the cohort loader), five non-long
+and one long book by ascending SHA-256 of `small-book-controls|20261118|<stratum>|<id>`,
+ties by UTF-8 id bytes; "long" = the 11 Iterate books with most reference
+story-page characters (cutoff 4,680).
+
+- With aliases: `cave_baby`, `elmer_and_rose`, `is_it_betime_wibbly_pig`,
+  `sharing_a_shell`, `the_pirates_next_door` (long), `the_rescue_party`.
+- Without: `a_letter_to_santa`, `it's_christmas`, `snow_white,_star_striker`,
+  `the_little_bully`, `who_will_save_us` (long), `you_choose`.
+
+Worked synchronous screen, after step B has cached every upstream request at
+replicate `1` in `LEDGER`: set `SNAPSHOT`, `FREEZE_DIR`, `TUNING_INPUTS` and
+`LEDGER` to those existing artifacts, and `RUNS` to durable storage outside the
+repository and `/tmp`. Run from the repository root with the project Python.
+
+```bash
+PY=/home/expert/Documents/uob/fair_tales/FairTalesDataEntry/.venv/bin/python
+books=(cave_baby elmer_and_rose is_it_betime_wibbly_pig sharing_a_shell
+       the_pirates_next_door the_rescue_party a_letter_to_santa "it's_christmas"
+       snow_white,_star_striker the_little_bully who_will_save_us you_choose)
+idea=gender-cues
+pass=1
+token="screen-${idea}-w1-${pass}"
+run="$RUNS/$token"
+args=(--snapshot "$SNAPSHOT" --freeze-dir "$FREEZE_DIR" --cohort tune
+      --inputs scans --inputs-manifest "$TUNING_INPUTS"
+      --config "scripts/extraction_eval/character_${idea}.json"
+      --ledger "$LEDGER" --books "${books[@]}" --out "$run"
+      --replicate "$token" --replicate-stages character_detection)
+"$PY" -m scripts.extraction_eval extract "${args[@]}" --dry-run
+# Expected: only 12 character_detection requests pending.
+# Inspect "$run/batch-requests.jsonl": no page or book-details requests.
+"$PY" -m scripts.extraction_eval extract "${args[@]}" --execute
+# Paid execution requires the existing typed AFFIRMATIVE confirmation.
+"$PY" -m scripts.extraction_eval score --snapshot "$SNAPSHOT" \
+  --freeze-dir "$FREEZE_DIR" --cohort tune --run "$run" --out "$run/reports"
+```
+
+Repeat from `pass=2` through scoring for `screen-gender-cues-w1-2` (the first
+token is `screen-gender-cues-w1-1`). If any upstream request is pending, resolve
+its cache/configuration mismatch before paid screening; the example's pending
+counts are expectations, not a measured real dry run. Use fresh purpose tokens
+at the gate. Screens drop or promote under decision 026; they do not establish
+an average gain. Add up to six Iterate case books only after the target miss
+recurs across every step-B pass, as specified in Fable's plan.
+
+Existing scan `score` outputs do **not** assemble cross-pass flips. Each
+`book_scores.json` retains character reference ids/matches/misses, alias
+`entries[].recovered`, and attribute `matched_pair_agreement.disagreements`,
+so manual comparison is possible; `--compare-run` is unavailable for scans.
+The smallest useful addition would join these reports by book/reference id and
+alias surface, listing each baseline pass and both candidate passes, with
+missing/ambiguous ownership kept explicit. Estimated addition: 60–80 code lines
+plus 30–40 fixture-test lines (90–120 total), no dependency; not built here.
+
 ## Half-price Anthropic batches
 
 Each dry run appends uncached requests and their unchanged cache keys to

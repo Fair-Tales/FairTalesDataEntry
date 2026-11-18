@@ -13,6 +13,28 @@ CHARACTER_TRUNCATED = "Character response reached the output limit; partial evid
 CHARACTER_PARTIAL = "Character response was incomplete; partial evidence retained."
 CHARACTER_STRUCTURE_INVALID = "Character response has an invalid structure; raw evidence retained."
 PROMPT_VARIANTS = ("legacy-v1", "rules-only", "rules-plus-icl")
+# First wordings: character-only additions to the frozen legacy template.
+CHARACTER_RULE_BLOCKS = {
+    "gender-cues": (
+        "Gender evidence: use pronouns first, then kinship words, titles and forms of "
+        "address, then sex-specific animal nouns. Only when the text gives none of "
+        "those cues for the character may a clearly gendered name count. Unisex, "
+        "ambiguous or invented names stay Non-specific. Illustrations never decide gender."
+    ),
+    "protagonist": (
+        "Protagonist means the character or characters around whom the action revolves: "
+        "usually one, a second only when the story is equally about both."
+    ),
+    "aliases": (
+        "Aliases: include every printed short form or description the text uses to "
+        "refer to the character, except the chosen main name. Exclude utterances, "
+        "number labels, place or shop names and sounds."
+    ),
+    "incidental": (
+        "Include individuals and groups the text mentions, not only active speakers, "
+        "even when their mention is incidental."
+    ),
+}
 _evaluation_book = ContextVar("evaluation_prompt_book", default=None)
 _loader_hook = ContextVar("prompt_example_loader_hook", default=None)
 
@@ -493,6 +515,8 @@ def load_example_pack(*, held_out_book_ids=(), held_out_groups=()):
 
 
 def _stage_examples(stage, variant):
+    if stage == "character_detection" and variant in CHARACTER_RULE_BLOCKS:
+        return []
     if variant not in PROMPT_VARIANTS:
         raise ValueError("Unknown prompt variant")
     if variant != "rules-plus-icl":
@@ -529,6 +553,8 @@ def example_pack_text(stage, variant="rules-plus-icl"):
 
 
 def prompt_for(stage, variant="rules-plus-icl"):
+    if stage == "character_detection" and variant in CHARACTER_RULE_BLOCKS:
+        return LEGACY_PROMPTS[stage] + "\n\n" + CHARACTER_RULE_BLOCKS[variant]
     if variant not in PROMPT_VARIANTS:
         raise ValueError("Unknown prompt variant")
     if variant == "legacy-v1":
