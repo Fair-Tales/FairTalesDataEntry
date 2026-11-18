@@ -51,8 +51,9 @@ CHARACTER_RULE_REPLACEMENTS = {
         '- "protagonist": true only for the clear main character of the story.',
         '- "protagonist": true for the character or characters around whom the '
         'action revolves. First judge whose problem or journey drives the whole '
-        'story: usually one character; add a second only when the story is equally '
-        'about both.',
+        'story: usually one character; add others only when the story is equally '
+        'about each of them. Minor helpers and framing characters are not '
+        'protagonists.',
     ),
     "aliases-w2": (
         '- "aliases": the OTHER references used for this character (exclude the chosen '
@@ -66,7 +67,8 @@ CHARACTER_RULE_REPLACEMENTS = {
         'Identify every distinct character referred to ANYWHERE in the book, grouping all '
         'the references to the SAME character into one entry.',
         'Identify every distinct individual and group mentioned anywhere in the book, '
-        'even incidentally, including subjects of stories told or read within the story. '
+        'even incidentally, including subjects of stories told or read within the story, '
+        'but not hypothetical or imagined figures such as choices offered to the reader. '
         'Group references to the same character into one entry, but keep two named '
         'characters acting together separate from each other and from the group they form.',
     ),
