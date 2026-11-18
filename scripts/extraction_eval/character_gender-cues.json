@@ -1,0 +1,70 @@
+{
+  "variant": "production-baseline-with-strict-evaluation-parser-v1",
+  "request_version": "1",
+  "parser_version": "eval-v1",
+  "provider": "anthropic-messages",
+  "max_attempts": 1,
+  "settings": {
+    "extraction_model": "claude-sonnet-5",
+    "metadata_model": "claude-sonnet-5",
+    "character_detection_model": "claude-sonnet-5",
+    "locate_model": "claude-haiku-4-5",
+    "rotation_model": "claude-sonnet-4-6",
+    "crop_quality_model": "claude-haiku-4-5",
+    "theme_model": "claude-sonnet-4-6",
+    "extraction_max_edge": 2000,
+    "extraction_max_tokens": 8192,
+    "locate_max_edge": 784,
+    "enable_rotation_correction": true,
+    "enable_crop_quality_gate": true,
+    "prompt_variant": "legacy-v1",
+    "character_prompt_variant": "gender-cues"
+  },
+  "pricing": {
+    "verified": true,
+    "verified_at": "2026-11-04T23:03:19.304138+00:00",
+    "source": "Verified 2026-11-04 against docs.anthropic.com pricing (Sonnet 5 = $2/$10 per MTok, cache read $0.20, 5-min cache write $2.50) and the repository's ai_pricing.py, which is the same table record_api_usage bills against. Sonnet 5 max_output_tokens raised from a stale 8192 pin to the documented 128000 on 2026-11-16 (bundled claude-api reference 2.1.322, models.md); request ceilings stay at most 20000 (pipeline_config.AI_TOKENS_MAX). Sonnet 4.6 and Haiku 4.5 base rates were already correct; their cache rates now use ai_pricing.py's 0.1x/1.25x multipliers.",
+    "models": {
+      "claude-sonnet-5": {
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.2,
+        "cache_write": 2.5,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 128000,
+        "max_images": 100,
+        "max_request_bytes": 32000000
+      },
+      "claude-sonnet-4-6": {
+        "input": 3,
+        "output": 15,
+        "cache_read": 0.3,
+        "cache_write": 3.75,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 8192,
+        "max_images": 100,
+        "max_request_bytes": 32000000
+      },
+      "claude-haiku-4-5": {
+        "input": 1,
+        "output": 5,
+        "cache_read": 0.1,
+        "cache_write": 1.25,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 8192,
+        "max_images": 100,
+        "max_request_bytes": 32000000
+      }
+    }
+  },
+  "billing_cycles": {
+    "anthropic": {
+      "start_day": 1,
+      "comment": "Placeholder until Chris confirms this subscription's renewal day; caps use calendar-month bookkeeping meanwhile."
+    },
+    "openai": {
+      "start_day": 1,
+      "comment": "Placeholder until Chris confirms this subscription's renewal day; caps use calendar-month bookkeeping meanwhile."
+    }
+  }
+}
