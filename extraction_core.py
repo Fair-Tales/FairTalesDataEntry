@@ -303,23 +303,23 @@ def classify_character_human(characters, input_pages, read_image, client, settin
                                 label='human_vision', reject_partial=True)
     result.update(raw_response=raw, raw_output=data)
     decisions = data.get('characters') if isinstance(data, dict) else None
-    valid = isinstance(decisions, list)
-    seen = set()
-    for row in decisions if valid else []:
+    if not isinstance(decisions, list):
+        return {**result, 'status': 'failed', 'error': HUMAN_VISION_INVALID,
+                'failure_kind': getattr(raw, 'failure_kind', None) or 'invalid_response'}
+    # A malformed row is dropped (its character keeps the text value); valid
+    # rows for the book's other characters still count.
+    kept, seen = [], set()
+    for row in decisions:
         number = row.get('index') if isinstance(row, dict) else None
         if type(number) is not int or not 1 <= number <= len(cast) or number in seen:
-            valid = False
-            break
-        seen.add(number)
+            continue
         human, image = row.get('human'), row.get('image_number')
         if (human is not None and (type(human) is not bool or type(image) is not int
                                   or image not in cast[number - 1]['image_numbers'])):
-            valid = False
-            break
-    if not valid:
-        return {**result, 'status': 'failed', 'error': HUMAN_VISION_INVALID,
-                'failure_kind': getattr(raw, 'failure_kind', None) or 'invalid_response'}
-    return {**result, 'value': decisions}
+            continue
+        seen.add(number)
+        kept.append(row)
+    return {**result, 'value': kept, 'dropped_rows': len(decisions) - len(kept)}
 
 
 def classify_book_context(pages, images, client, settings, usage_sink):
