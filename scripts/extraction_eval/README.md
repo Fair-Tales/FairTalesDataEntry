@@ -24,6 +24,8 @@ only in `settings.character_prompt_variant`. Their short names select the rule
 blocks in `text_content/pipeline_prompts.py`; page `prompt_variant` choices stay
 unchanged. Each adds one block to the frozen legacy character prompt, without
 new examples, and preserves page and book-details request bytes/cache keys.
+Second-wording drafts: `character_gender-cues-w2.json`, `character_protagonist-w2.json`, `character_aliases-w2.json`, `character_incidental-w2.json`, `character_human-w2.json`.
+These replace the relevant legacy lines; Chris can edit all five in `CHARACTER_RULE_REPLACEMENTS` beside `CHARACTER_RULE_BLOCKS` in `text_content/pipeline_prompts.py`.
 
 Control panel (12 Iterate books, fixed 2026-11-18). Kept here rather than in
 `selections.json`, whose bytes feed run identity and the freeze check. Rule: per
