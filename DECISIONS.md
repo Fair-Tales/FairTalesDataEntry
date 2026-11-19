@@ -1002,3 +1002,58 @@ two coding questions the error analysis raised. Chris decided to follow it:
   is clearly gendered; unisex, ambiguous or invented names stay `Non-specific`.
   This is the coders' own rule ("names only when pronouns were not available").
   Illustrations remain excluded; pictures inform human/non-human only.
+
+## 030 — Fantasy beings, protagonist ensembles and who counts as a character (2026-11-18)
+
+The step C diagnosis of the character prompt found three conventions the
+codebook left open, each bearing on a second prompt wording. Chris decided:
+
+- **Fantasy beings are not human.** `human` is true only for humans; animals,
+  toys, objects, robots and fantasy beings (elves, ogres and the like) are false
+  even when they talk or act like people. Pictures may still inform the
+  decision, though the AI character step currently receives text only.
+- **Protagonist ensembles** (amends 029). When a story is equally about three
+  or more characters, all of them are protagonists; minor helpers and framing
+  characters are not. Otherwise 029 stands.
+- **Who counts as a character.** Subjects of a story told or read within the
+  book count; hypothetical or imagined figures, such as choices offered to the
+  reader, do not.
+
+Existing references that differ are listed for Chris to check against the
+books; frozen references are not changed by this entry.
+
+## 031 — One protagonist by default, magical beings, devices, comparisons, short-form aliases and fixing reference errors (2026-11-19)
+
+Chris walked through the character check list and the second-wording screens
+and decided:
+
+- **One protagonist by default** (amends 029–030). Usually exactly one
+  character is the protagonist; more only when there is a strong case.
+  Important characters (guides, friends, helpers, antagonists) are not
+  protagonists for being important. A true ensemble still counts (the three
+  little pigs), but needs that strong case.
+- **Magical beings are non-human** (amends 030). Anyone magical, including
+  Santa or Father Christmas and witches, is non-human. A figure the text does
+  not present as magical stays human (Rumpelstiltskin as a neighbour and coach).
+- **Talking devices** take gender from the same cues as any character:
+  pronouns; kinship words, titles and forms of address; sex-specific nouns;
+  then clearly gendered names.
+- **Comparisons are not characters.** Kinds of animal or person named only in
+  a comparison or a question to the reader are not characters (with 030's
+  hypothetical figures).
+- **Short-form aliases.** A short form inside a longer printed phrase counts as
+  an alias (convention C7 in `conventions.py`), so one short alias covers both
+  the shorter and the fuller printed references to a character. Revisit if this causes
+  problems in scoring or entry.
+- **Pictures** may decide human/non-human; they never add a character the text
+  does not mention.
+- **Fixing reference errors.** Errors in the references are fixed in the
+  database through the Validation page, where each change is logged in
+  `edit_log` with its old and new value. Every approved fix is also listed in
+  a fix changelog (`evaluation_runs/fix-changelog/`, kept out of the public
+  repository because it quotes book phrases). The changelog is the list the
+  database edits follow and the record for rewinding them. It is also applied
+  as an `adjudication-v2` overlay, so tune tests report scores against both the
+  original and the corrected references. The frozen snapshot is not changed.
+  Disputed items (the protagonists of *Who Will Save Us*) stay as recorded
+  until Chris has asked the original coders.
