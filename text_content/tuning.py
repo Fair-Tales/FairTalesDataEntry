@@ -24,7 +24,7 @@ class TuningErrors:
     expected_object = "Expected a JSON object"
     expected_array = "Expected a JSON array"
     inputs_manifest_required = "Scan extraction requires --inputs-manifest from the frozen file mappings"
-    scan_text_only = "Scan scoring currently supports per-book text and character recall; overlays, equivalences and run comparisons are not implemented"
+    scan_text_only = "Scan scoring supports per-book text and character recall; only adjudication-v2 character/alias overlays are allowed, without equivalences or run comparisons"
     text_output_scans_only = "--text-output applies only to scan scoring; render scoring retains its existing conventions"
     scan_selection_missing = "Inputs manifest is missing a selected book"
 

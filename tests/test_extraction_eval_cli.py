@@ -401,6 +401,65 @@ def test_scan_character_failure_retains_recorded_denominator(tmp_path, monkeypat
         assert result['recall'] == result['strict_recall'] == expected
 
 
+def test_scan_character_overlay_keeps_original_reports(tmp_path, monkeypatch, cohort_loader_factory):
+    from conventions import CONVENTION_VERSION
+    from scripts.extraction_eval import inputs_manifest
+    from scripts.extraction_eval.store import digest
+    from text_content.tuning import TuningErrors
+
+    cohort = cohort_loader_factory(iterate=('book',), check=('check',))
+    reference = {'status': 'observed', 'value': [{'name': 'cat'}]}
+    manifest = {'snapshot_id': 'fixture', 'books': [
+        {'id': book_id, 'reference': {'characters': reference}} for book_id in ('book', 'check')]}
+    selection = {'book_ids': ['book', 'check']}
+    contract = {'snapshot_id': 'fixture', 'snapshot_hash': digest(manifest), 'selection': selection,
+                'replicate': '1', 'config': {'inputs': 'scans', 'reference_root': str(tmp_path),
+                'inputs_manifest': {'books': [{'id': book_id} for book_id in selection['book_ids']]}}}
+    predictions = {'snapshot_id': 'fixture', 'books': {
+        book_id: {'characters': {'status': 'completed', 'value': [{'name': 'dog'}]}}
+        for book_id in selection['book_ids']}}
+    loader = SimpleNamespace(state={}, source_json=cohort.source_json,
+        run_record=lambda path: {'run_id': 'fixture-run', 'contract': contract},
+        predictions=lambda path: predictions, selection=lambda path: selection)
+    monkeypatch.setattr(cli, '_load_snapshot', lambda *args, **kwargs: manifest)
+    monkeypatch.setattr(inputs_manifest, 'scoring_inputs', lambda *args, **kwargs: [{
+        'id': book_id, 'reference_text': '', 'prediction_text': '', 'forced_score': None,
+        'story_reference_text': '', 'story_prediction_text': '', 'status': 'ready',
+        'reason': None, 'failed_pages': [], 'page_failures': {}, 'unrun_pages': [],
+    } for book_id in selection['book_ids']])
+    args = cli.build_parser().parse_args(['score', '--snapshot', str(tmp_path), '--run', str(tmp_path)])
+    out = tmp_path / 'reports'
+    with cohort.activate():
+        assert cli._score_loaded(args, loader) == 0
+        original = {path.name: path.read_bytes() for path in out.iterdir()}
+        args.adjudications = tmp_path / 'overlay.json'
+        overlay = {'schema_version': 'adjudication-v2', 'snapshot_id': 'fixture',
+                   'convention_version': CONVENTION_VERSION, 'records': [{
+            'book_id': 'book', 'field': 'characters', 'original_value_hash': digest(reference),
+            'verdict': 'reference_wrong', 'status': 'verified', 'corrected_value': [{'name': 'dog'}],
+            'reviewer': 'Synthetic reviewer', 'reason': 'Synthetic name correction',
+            'evidence': {'adjudication_source': 'fixture', 'method': 'synthetic review'}}]}
+        atomic_json(args.adjudications, overlay)
+        assert cli._score_loaded(args, loader) == 0
+        assert {path.name: path.read_bytes() for path in out.iterdir() if path.is_file()} == original
+        corrected = out / 'adjudicated'
+        assert set(original) == {path.name for path in corrected.iterdir()} == {
+            'summary.json', 'book_scores.json', 'summary.md', 'tuning_scores.json'}
+        assert read_json(out / 'book_scores.json')[0]['characters']['tolerant_recall'] == 0
+        assert read_json(corrected / 'book_scores.json')[0]['characters']['tolerant_recall'] == 1
+        raw, reviewed = (read_json(path / 'tuning_scores.json') for path in (out, corrected))
+        assert reviewed['sets']['iterate']['book']['character_recall']['value'] == 1
+        assert reviewed['sets']['check'] == raw['sets']['check']
+        assert reviewed['cohorts'] == raw['cohorts']
+        assert reviewed['reference_hashes']['book'] != raw['reference_hashes']['book']
+        assert digest(manifest) == contract['snapshot_hash']
+        overlay['records'][0]['field'] = 'text'
+        atomic_json(args.adjudications, overlay)
+        loader.predictions = forbidden
+        with pytest.raises(ValueError, match=TuningErrors.scan_text_only):
+            cli._score_loaded(args, loader)
+
+
 def test_inventory_cli_reports_counts_only(tmp_path, cohort_loader_factory, capsys):
     from PIL import Image
 
