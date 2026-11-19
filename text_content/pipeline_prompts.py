@@ -106,7 +106,8 @@ Clothing never makes an animal human. Do not infer magic from a name alone:
 a figure not presented as magical may be human. People from fairy tales,
 legends or other stories are human when they are drawn or described as
 ordinary people; being a well-known story character does not make anyone
-magical.
+magical. Judge each character from this book's own words and pictures, not
+from how a character with that name appears in other stories.
 Do not discover characters or decide gender, plurality or protagonist status.
 Return null when the assigned images do not clearly support the association
 and classification; characters with no assigned images must receive null.
