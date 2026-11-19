@@ -539,10 +539,30 @@ def run_extract(snapshot_dir, manifest, selection, out, gateway, config, *, load
                                                    'unresolved_pages': sum(row.get('contains_story') is None for row in predicted_pages)}}
                     book_result["characters"] = perform(f"{stage_prefix}:characters", characters,
                                                         inputs=book_result['pages'])
+                    if settings['human_vision_enabled'] and book_result['characters']['status'] == 'completed':
+                        initial = book_result['characters']
+                        book_result['characters_initial'] = initial
+                        pages_by_id = {page['id']: page for page in pages}
+
+                        def human_vision():
+                            return core.classify_character_human(
+                                initial['value'], initial['input_pages'],
+                                lambda page: read_image(pages_by_id[page['page_id']]),
+                                gateway, settings, record_usage)
+
+                        vision = perform(f'{stage_prefix}:human_vision', human_vision,
+                                         inputs={'characters': initial, 'images': pages})
+                        book_result['human_vision'] = vision
+                        if vision['status'] == 'completed':
+                            amended = [dict(row) for row in initial['value']]
+                            for row in vision['value']:
+                                if type(row.get('human')) is bool:
+                                    amended[row['index'] - 1]['human'] = row['human']
+                            book_result['characters'] = {**initial, 'value': amended}
                     atomic_json(out / ("dry_run_predictions.json" if dry_run else "predictions.json"), results)
                 results["unavailable_books"] = sum(book.get('status') == 'unavailable'
                                                    for book in results['books'].values())
-                results["incomplete"] = bool(stop_reason) or any(stage.get("status") not in {"completed", "failed"} for book in results["books"].values() if book.get('status') != 'unavailable' for stage in [book.get("metadata", {}), book.get("characters", {}), *book.get("pages", {}).values()])
+                results["incomplete"] = bool(stop_reason) or any(stage.get("status") not in {"completed", "failed"} for book in results["books"].values() if book.get('status') != 'unavailable' for stage in [book.get("metadata", {}), book.get("characters", {}), *book.get("pages", {}).values(), *([book['human_vision']] if 'human_vision' in book else [])])
                 results["stop_reason"] = stop_reason
                 atomic_json(out / ("dry_run_predictions.json" if dry_run else "predictions.json"), results)
                 if (loader.cohort == "rehearsal" and not dry_run and not results["incomplete"]

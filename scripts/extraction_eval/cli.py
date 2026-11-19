@@ -290,7 +290,7 @@ def _extract_loaded(args, loader):
         config.get('settings', {}), model_ids=config.get('pricing', {}).get('models', {}))
     if args.replicate_stages is not None:
         labels = {'page_extraction', 'character_detection', 'joint_metadata',
-                  'story_context', 'locate_key_pages',
+                  'story_context', 'locate_key_pages', 'human_vision',
                   config['settings']['rotation_model'], config['settings']['crop_quality_model']}
         if set(args.replicate_stages) - labels:
             raise ValueError(TuningErrors.invalid_replicate_stages.format(labels=', '.join(sorted(labels))))

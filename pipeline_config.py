@@ -46,7 +46,7 @@ AI_SETTINGS_DEFAULTS = {
 STAGE_MAX_TOKENS = {
     'extraction': EXTRACTION_OCR_MAX_TOKENS, 'metadata': 20000, 'character_detection': 20000,
     'locate': 128, 'rotation': 16, 'crop_quality': 16, 'theme': 512,
-    'story_context': 20000,
+    'story_context': 20000, 'human_vision': 2048,
 }
 OPENAI_OUTPUT_FLOOR = 25000
 GENERATION_DEFAULTS = {
@@ -155,6 +155,9 @@ PIPELINE_SETTINGS_DEFAULTS = {
     **GENERATION_DEFAULTS,
     'prompt_variant': 'legacy-v1',
     'character_prompt_variant': None,
+    'human_vision_enabled': False,
+    'human_vision_model': 'claude-haiku-4-5',
+    'human_vision_max_edge': 784,
     'page_schema_version': 'legacy-compatible-page-v1',
     'story_context_enabled': False,
     'story_context_model': EXTRACTION_MODEL,

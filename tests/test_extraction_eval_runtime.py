@@ -1406,3 +1406,125 @@ def test_small_book_configs_preserve_upstream_requests(
     assert canonical(new) == canonical(expected)
     assert new_key != old_key
     assert len(provider.calls) == 5  # Page, locator and details once; characters twice.
+
+
+def test_human_vision_leaves_character_request_and_cache_unchanged(ledger_factory):
+    from pathlib import Path
+    from extraction_core import extract_characters
+    from pipeline_config import validate_settings
+
+    config = read_json(Path(__file__).resolve().parents[1] /
+                       'scripts/extraction_eval/character_human-w2.json')
+    provider = FakeProvider(response(content=[{'type': 'text', 'text': '{"characters": []}'}]))
+    ledger = ledger_factory()
+    for enabled in (None, False, True):
+        settings = dict(config['settings'])
+        if enabled is not None:
+            settings['human_vision_enabled'] = enabled
+        gateway = Gateway(provider, ledger, {**config, 'settings': settings})
+        extract_characters([{'page_number': 1, 'contains_story': True, 'text': 'A sailor waved.'}],
+                           gateway, validate_settings(settings), gateway.record_usage)
+    assert len(provider.calls) == len(ledger.rows()) == 1  # Same full request and gateway identity.
+
+
+def test_human_vision_selection_and_image_cache_identity(ledger_factory, synthetic_cohort):
+    import io
+    from pathlib import Path
+    from PIL import Image
+    from extraction_core import classify_character_human
+    from pipeline_config import validate_settings
+
+    directory = Path(__file__).resolve().parents[1] / 'scripts/extraction_eval'
+    base = read_json(directory / 'character_human-w2.json')
+    config = read_json(directory / 'character_human-vision.json')
+    assert config == {**base, 'settings': {**base['settings'], 'human_vision_enabled': True}}
+    characters = [{'name': 'Mira', 'aliases': ['the sailor'], 'human': True,
+                   'gender': 'secret-code', 'protagonist': True},
+                  {'name': 'Bo', 'aliases': []}, {'name': 'Unmentioned', 'aliases': []}]
+    pages = [{'page_id': str(i), 'page_number': i, 'text': text} for i, text in enumerate(
+        ['Miras and boats.', 'The sailor saw Bo.', 'Mira met Bo.', 'Mira and Bo left.'], 1)]
+    replies = {'characters': [{'index': 1, 'human': False, 'image_number': 1}]}
+    provider = FakeProvider(*(response(content=[{'type': 'text', 'text': json.dumps(replies)}])
+                              for _ in range(2)))
+    gateway = Gateway(provider, ledger_factory(), config)
+    gateway.context = {'book_id': 'selected'}
+    keys = []
+    for color in ('white', 'white', 'black'):
+        buffer = io.BytesIO()
+        Image.new('RGB', (1000, 800), color).save(buffer, format='PNG')
+        reads = []
+
+        def read(page):
+            reads.append(page['page_number'])
+            return buffer.getvalue()
+
+        result = classify_character_human(characters, list(reversed(pages)), read, gateway,
+                                          validate_settings(config['settings']), gateway.record_usage)
+        assert reads == [2, 3]  # First two matches; shared pages sent once.
+        assert [row['image_numbers'] for row in result['cast']] == [[1, 2], [1, 2], []]
+        assert result['value'] == replies['characters']
+        keys.append([row['key'] for row in gateway.ledger.rows()])
+    assert keys[0] == keys[1] and len(keys[2]) == 2
+    assert len(provider.calls) == 2  # Changing only image bytes makes a new request.
+    prompt = provider.calls[0]['messages'][0]['content'][-1]['text']
+    assert 'secret-code' not in prompt and '"protagonist"' not in prompt
+    assert '"human": true' not in prompt.split('Numbered cast')[1]
+    unmatched = classify_character_human(characters[2:], pages, read, gateway,
+                                         validate_settings(config['settings']), gateway.record_usage)
+    assert unmatched['value'] == [] and unmatched['image_pages'] == []
+    assert len(provider.calls) == 2
+
+
+@pytest.mark.usefixtures('synthetic_cohort')
+@pytest.mark.parametrize('outcome', ['off', 'merge', 'null', 'missing', 'failed', 'pending', 'bad_image'])
+def test_human_vision_runner_fallback_and_only_human_merge(
+        snapshot_fixture, tmp_path, config, monkeypatch, outcome):
+    from extraction_core import classify_character_human
+
+    snapshot, manifest, selection = snapshot_fixture
+    out = tmp_path / 'human-run'
+    out.mkdir()
+    config['settings']['human_vision_enabled'] = outcome != 'off'
+    original = [{'name': 'Predicted', 'aliases': [], 'human': True,
+                 'gender': 'female', 'protagonist': True, 'plural': False}]
+    core = FakeCore()
+    core.extract_characters = lambda *args: deepcopy(original)
+    core.classify_character_human = classify_character_human
+    calls = []
+
+    def vision(client, images, prompt, **kwargs):
+        calls.append((images, prompt, kwargs))
+        if outcome == 'failed':
+            raise CachedFailure('Request rejected: provider error')
+        if outcome == 'pending':
+            raise DryRunMiss('Awaiting batch result')
+        decision = {'index': 1, 'human': None if outcome == 'null' else False,
+                    'image_number': 99 if outcome == 'bad_image' else 1,
+                    'gender': 'male', 'protagonist': False, 'name': 'Wrong'}
+        return {'characters': [] if outcome == 'missing' else [decision]}, 'synthetic reply'
+
+    monkeypatch.setattr('utilities.vision_json', vision)
+    gateway = SimpleNamespace(record_usage=lambda *args: None)
+    def run():
+        return run_extract(snapshot, manifest, selection, out, gateway, config,
+                           loader=current_loader(), core=core, progress=lambda _: None)
+
+    result = run()
+    book = result['books']['selected']
+    expected = deepcopy(original)
+    if outcome == 'merge':
+        expected[0]['human'] = False
+    assert book['characters']['value'] == expected
+    assert original[0]['human'] is True
+    assert result['incomplete'] is (outcome == 'pending')
+    if outcome == 'off':
+        assert not calls and 'human_vision' not in book and 'characters_initial' not in book
+    else:
+        assert book['characters_initial']['value'] == original
+        assert calls[0][0] == [b'selected:3', b'selected:7']
+        assert calls[0][2]['max_edge'] == 784 and calls[0][2]['max_tokens'] == 2048
+        assert 'GOLD MUST NOT LEAK' not in calls[0][1]
+        if outcome not in {'failed', 'pending'}:
+            assert book['human_vision']['raw_response'] == 'synthetic reply'
+        if outcome != 'pending':
+            assert run() == result and len(calls) == 1  # Replay never reapplies to the original.

@@ -31,6 +31,8 @@ def test_current_production_defaults_are_pinned(monkeypatch):
         'enable_rotation_correction': True, 'enable_crop_quality_gate': True,
     }
     expected = {**admin_defaults, 'prompt_variant': 'legacy-v1', 'character_prompt_variant': None,
+                'human_vision_enabled': False, 'human_vision_model': 'claude-haiku-4-5',
+                'human_vision_max_edge': 784,
                 'page_schema_version': 'legacy-compatible-page-v1',
                 'story_context_enabled': False, 'story_context_model': 'claude-sonnet-5',
                 'story_context_max_tokens': 20000, 'story_context_limits': None,

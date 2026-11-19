@@ -262,6 +262,66 @@ def extract_characters(pages, client, settings, usage_sink):
         )
 
 
+def classify_character_human(characters, input_pages, read_image, client, settings, usage_sink):
+    """Evaluation only: first two text-matched pages per character, one call.
+
+    The reader is the runner's cohort-gated image reader. Selection is lexical,
+    not proof of a pictured identity; unsupported decisions retain text codes.
+    """
+    import json
+    from alias_pipeline import build_alias_index, match_page
+    from text_content.pipeline_prompts import HUMAN_VISION_PROMPT, HUMAN_VISION_INVALID
+    from utilities import vision_json
+
+    cast = [{'index': i, 'name': row.get('name', ''),
+             'aliases': row.get('aliases', []), 'image_numbers': []}
+            for i, row in enumerate(characters, 1)]
+    index = build_alias_index([{'entity_id': str(row['index']),
+                               'name': row['name'], 'aliases': row['aliases']} for row in cast])
+    selected = []
+    for page in sorted(input_pages, key=lambda row: row['page_number']):
+        matches = {entity for hit in match_page(index, page['text'])
+                   for entity in hit['candidate_entity_ids']}
+        targets = [row for row in cast if str(row['index']) in matches
+                   and len(row['image_numbers']) < 2]
+        if targets:
+            selected.append(page)
+            for row in targets:
+                row['image_numbers'].append(len(selected))
+    result = {'status': 'completed', 'value': [], 'cast': cast,
+              'image_pages': [{'page_id': row['page_id'], 'page_number': row['page_number']}
+                              for row in selected]}
+    if not selected:
+        return result
+    prompt = HUMAN_VISION_PROMPT.format(
+        cast_json=json.dumps(cast, ensure_ascii=False),
+        pages_json=json.dumps(input_pages, ensure_ascii=False))
+    with extraction_runtime(client=client, settings=settings, usage_sink=usage_sink):
+        data, raw = vision_json(client, [read_image(page) for page in selected], prompt,
+                                **generation_request(settings, 'human_vision'),
+                                max_edge=settings['human_vision_max_edge'],
+                                label='human_vision', reject_partial=True)
+    result.update(raw_response=raw, raw_output=data)
+    decisions = data.get('characters') if isinstance(data, dict) else None
+    if not isinstance(decisions, list):
+        return {**result, 'status': 'failed', 'error': HUMAN_VISION_INVALID,
+                'failure_kind': getattr(raw, 'failure_kind', None) or 'invalid_response'}
+    # A malformed row is dropped (its character keeps the text value); valid
+    # rows for the book's other characters still count.
+    kept, seen = [], set()
+    for row in decisions:
+        number = row.get('index') if isinstance(row, dict) else None
+        if type(number) is not int or not 1 <= number <= len(cast) or number in seen:
+            continue
+        human, image = row.get('human'), row.get('image_number')
+        if (human is not None and (type(human) is not bool or type(image) is not int
+                                  or image not in cast[number - 1]['image_numbers'])):
+            continue
+        seen.add(number)
+        kept.append(row)
+    return {**result, 'value': kept, 'dropped_rows': len(decisions) - len(kept)}
+
+
 def classify_book_context(pages, images, client, settings, usage_sink):
     """One bounded classification pass; OCR and provisional labels are immutable.
 

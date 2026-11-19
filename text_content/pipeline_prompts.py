@@ -97,6 +97,27 @@ CHARACTER_RULE_REPLACEMENTS = {
         'separate from each other and from any group they form together.',
     ),
 }
+HUMAN_VISION_PROMPT = """Decide only whether each already detected character is human.
+Use the supplied predicted story text to associate each character with figures
+in its assigned images. Image numbers are one-based positions in this request.
+Humans only are human. Animals, toys, objects, robots and all magical or fantasy
+beings are not human, even when they look, dress, talk or act like people.
+Clothing never makes an animal human. Do not infer magic from a name alone:
+a figure not presented as magical may be human. People from fairy tales,
+legends or other stories are human when they are drawn or described as
+ordinary people; being a well-known story character does not make anyone
+magical.
+Do not discover characters or decide gender, plurality or protagonist status.
+Return null when the assigned images do not clearly support the association
+and classification; characters with no assigned images must receive null.
+Return JSON only: {{"characters": [{{"index": 1, "human": true,
+"image_number": 1}}]}}. Use true, false or null for human; give one supporting
+assigned image number for a boolean decision, otherwise null.
+Numbered cast and assigned images: {cast_json}
+Predicted story pages: {pages_json}
+"""
+HUMAN_VISION_INVALID = "Human vision must return character indices, human booleans/null and assigned supporting image numbers."
+
 _evaluation_book = ContextVar("evaluation_prompt_book", default=None)
 _loader_hook = ContextVar("prompt_example_loader_hook", default=None)
 

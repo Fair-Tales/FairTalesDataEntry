@@ -90,7 +90,8 @@ def validate_prices(config, *, executing=False):
     if executing and (pricing.get("verified") is not True or not pricing.get("verified_at") or not pricing.get("source")):
         raise ValueError("Verify current account rates and request limits, then pin pricing.verified=true, verified_at and source in your local config")
     models = {value for key, value in config.get("settings", {}).items() if key.endswith("_model") and key != "theme_model"
-              and (key != "story_context_model" or config["settings"].get("story_context_enabled", False))}
+              and (key != "story_context_model" or config["settings"].get("story_context_enabled", False))
+              and (key != "human_vision_model" or config["settings"].get("human_vision_enabled", False))}
     rates = pricing.get("models", {})
     for model in models:
         row = rates.get(model)
