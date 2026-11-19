@@ -26,6 +26,9 @@ unchanged. Each adds one block to the frozen legacy character prompt, without
 new examples, and preserves page and book-details request bytes/cache keys.
 Second-wording drafts: `character_gender-cues-w2.json`, `character_protagonist-w2.json`, `character_aliases-w2.json`, `character_incidental-w2.json`, `character_human-w2.json`; third wording: `character_incidental-w3.json`.
 These replace the relevant legacy lines; Chris can edit all five in `CHARACTER_RULE_REPLACEMENTS` beside `CHARACTER_RULE_BLOCKS` in `text_content/pipeline_prompts.py`.
+`character_human-vision.json` adds evaluation-only `settings.human_vision_enabled` to `human-w2`: first two text-matched pages per character, deduplicated, no extra-image retry (DECISIONS 031).
+Defaults: `human_vision_model=claude-haiku-4-5`, `human_vision_max_edge=784`, `human_vision_max_tokens=2048`; pinned $1/$5 per million input/output tokens (batch half). Only `human` changes; `characters_initial` and `human_vision` retain the evidence.
+For two fixed-text screens, add `all_for_one` and `too_shy_for_show_and_tell` to the controls below, use this config and `--replicate-stages human_vision`, with fresh replicate tokens/output directories; null, unmatched or failed decisions retain text values.
 
 Control panel (12 Iterate books, fixed 2026-11-18). Kept here rather than in
 `selections.json`, whose bytes feed run identity and the freeze check. Rule: per

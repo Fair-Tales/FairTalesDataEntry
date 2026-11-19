@@ -1047,6 +1047,7 @@ and decided:
   problems in scoring or entry.
 - **Pictures** may decide human/non-human; they never add a character the text
   does not mention.
+  Approved evaluation-only implementation: one call over at most the first two text-matched scan pages per detected character; merge only `human`, retain text on null/failure, preserve both outputs, and do not retry with more images (see extraction_eval README).
 - **Fixing reference errors.** Errors in the references are fixed in the
   database through the Validation page, where each change is logged in
   `edit_log` with its old and new value. Every approved fix is also listed in
