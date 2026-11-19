@@ -1280,6 +1280,9 @@ frozen from the reviewed overlay **before** predictions are opened. Name/imprint
 equivalences require a document such as
 `{"version":"names-1","reviewed":true,"equivalences":{"publisher":{"old imprint":"reviewed canonical name"}}}`
 and `--equivalences /path/names.json`. Strict matching remains separately visible.
+Scan runs accept only `adjudication-v2` overlays containing `characters` or `aliases` records.
+They retain the original reports and write all four corrected reports under `adjudicated/`,
+including `tuning_scores.json` for tune runs; equivalences and run comparisons remain unsupported.
 
 For a paired experiment use a new extract output/config, then add
 `--compare-run "$EVIDENCE_DIR/candidate"` to the baseline `score` command.

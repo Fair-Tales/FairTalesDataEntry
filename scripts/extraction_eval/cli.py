@@ -403,7 +403,7 @@ def _score_loaded(args, loader):
     from .reporting import snapshot_audit_description, write_reports
     run_config = loader.run_record(args.run / "run.json")
     scans = run_config.get('contract', {}).get('config', {}).get('inputs') == 'scans'
-    if scans and (args.adjudications or args.equivalences or args.compare_run):
+    if scans and (args.equivalences or args.compare_run):
         raise ValueError(TuningErrors.scan_text_only)
     if not scans and getattr(args, 'text_output', 'stored') != 'stored':
         raise ValueError(TuningErrors.text_output_scans_only)
@@ -412,6 +412,10 @@ def _score_loaded(args, loader):
     protocol = read_json(args.protocol)
     # Read/freeze overlays before even opening predictions.
     overlay = loader.source_json(args.adjudications, 'historical_labels') if args.adjudications else None
+    if scans and overlay is not None and (
+            overlay.get('schema_version') != 'adjudication-v2' or
+            any(record.get('field') not in {'characters', 'aliases'} for record in overlay.get('records', []))):
+        raise ValueError(TuningErrors.scan_text_only)
     if args.compare_run and overlay and overlay.get("schema_version") != "adjudication-v2":
         from text_content.evaluation import EvaluationErrors
         raise ValueError(EvaluationErrors.comparison_overlay_required)
@@ -435,7 +439,11 @@ def _score_loaded(args, loader):
     if selection != contract.get("selection"):
         raise ValueError("Selection differs from the frozen run contract")
     if scans:
-        return _score_scans(args, contract, predictions, selection, manifest, run_record=run_config)
+        _score_scans(args, contract, predictions, selection, manifest, run_record=run_config)
+        if adjudicated is not None:
+            corrected_args = argparse.Namespace(**{**vars(args), 'out': (args.out or args.run / 'reports') / 'adjudicated'})
+            _score_scans(corrected_args, contract, predictions, selection, adjudicated, run_record=run_config)
+        return 0
     ledger_path = contract.get("ledger")
     if ledger_path and Path(ledger_path).is_file():
         from .store import read_calls
