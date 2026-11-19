@@ -83,6 +83,19 @@ CHARACTER_RULE_REPLACEMENTS = {
         'robots and magical or fantasy beings, even when they talk, dress or act '
         'like people.',
     ),
+    # Third wording (DECISIONS 031): w2 plus the exclusion of kinds named only in
+    # comparisons or questions to the reader.
+    "incidental-w3": (
+        'Identify every distinct character referred to ANYWHERE in the book, grouping all '
+        'the references to the SAME character into one entry.',
+        'Identify every distinct individual and group mentioned anywhere in the book, '
+        'even in passing, including the subjects of stories told or read within it, '
+        'but not hypothetical or imagined figures such as choices offered to the reader, '
+        'nor kinds of animal or person named only in a comparison or a question to the '
+        'reader. Make one entry per individual or group: merge only references to the '
+        'same one, and keep individuals or groups that the text names side by side '
+        'separate from each other and from any group they form together.',
+    ),
 }
 _evaluation_book = ContextVar("evaluation_prompt_book", default=None)
 _loader_hook = ContextVar("prompt_example_loader_hook", default=None)
