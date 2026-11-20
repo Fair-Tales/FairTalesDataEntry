@@ -26,6 +26,7 @@ captured here as ``entity_type='page', field='text'`` records.
 """
 
 from datetime import date, datetime, timezone
+import json
 import logging
 from uuid import uuid4
 
@@ -35,6 +36,7 @@ from google.api_core.exceptions import GoogleAPIError, AlreadyExists, FailedPrec
 from utilities import (
     page_layout, check_authentication_status, is_team_or_above, entered_by_username,
     validation_heartbeat_due, get_s3_filesystem, character_boolean_input,
+    load_character_dict, clear_entity_form_state,
 )
 from image_processing import load_page_image
 from data_structures import Book, Page, Character, Alias, EditLog
@@ -305,6 +307,8 @@ def render_list():
             return
         book = Book(db_object=snap.to_dict())
         _clear_review_pages()
+        clear_entity_form_state('character_form_')
+        clear_entity_form_state('validation_add_alias_')
         st.session_state['_validation_book_id'] = book.document_id
         st.session_state['_validation_review_session'] = {
             'token': uuid4().hex,
@@ -550,10 +554,60 @@ def page_text_editor(book):
 # ---------------------------------------------------------------------------
 # Characters & aliases editor
 # ---------------------------------------------------------------------------
+def _add_character(book):
+    character = Character(book=book.get_ref())
+    with st.expander(Validation.add_character_button):
+        with st.form(f"validation_add_character_{book.document_id}", clear_on_submit=True):
+            name = character._render_fields(f"validation_new_{book.document_id}")
+            submitted = st.form_submit_button(
+                Validation.add_character_button,
+                key=f"validation_add_character_submit_{book.document_id}",
+            )
+    if not submitted:
+        return
+    character.name = name.strip()
+    if not character.name:
+        st.warning(Validation.character_name_required)
+        return
+    try:
+        character.register()
+    except AlreadyExists:
+        st.warning(Validation.rename_exists)
+        return
+    # Include stable identity and provenance as well as the submitted fields.
+    _log(book, EditLog.ENTITY_CHARACTER, character.document_id, 'document', None,
+         json.dumps(character.to_dict(), default=EditLog._coerce))
+    character_ref = character.get_ref()
+    book.add_character(character_ref)
+    st.session_state.setdefault('character_dict', {})[character.name] = character_ref
+    st.session_state['book_character_dict'][character.name] = character_ref
+    load_character_dict.clear()
+    st.rerun()
+
+
 def _edit_aliases(book, character_ref):
     """Render an editable alias list for the selected character."""
     st.markdown(f"**{Validation.aliases_label}**")
     firestore = st.session_state['firestore']
+    with st.form(f"validation_add_alias_{character_ref.id}", clear_on_submit=True):
+        name = st.text_input(
+            Validation.alias_name_label, key=f"validation_add_alias_name_{character_ref.id}",
+        )
+        added = st.form_submit_button(
+            Validation.add_alias_button, key=f"validation_add_alias_submit_{character_ref.id}",
+        )
+    if added and name.strip():
+        alias = Alias(book=book.get_ref())
+        alias.character = character_ref
+        alias.name = name
+        try:
+            alias.register()
+        except AlreadyExists:
+            st.warning(Validation.alias_exists)
+        else:
+            _log(book, EditLog.ENTITY_ALIAS, alias.document_id, 'document', None,
+                 json.dumps(alias.to_dict(), default=EditLog._coerce))
+            st.rerun()
     alias_docs = list(
         firestore.query_stream(
             collection='aliases', field='character', op='==', value=character_ref
@@ -565,14 +619,14 @@ def _edit_aliases(book, character_ref):
 
     for alias_doc in alias_docs:
         alias = Alias.from_snapshot(alias_doc)
-        if alias.entry_status in ('rejected', 'superseded'):
+        if alias.entry_status in ('rejected', 'superseded', 'withdrawn'):
             continue
         key_suffix = alias.document_id
         canonical = alias.effective_canonical()
         st.caption(AliasForm.canonical_detail.format(
             canonical=canonical['canonical_form'], source=canonical['canonical_source'],
             status=alias.entry_status))
-        with st.form(f"validation_alias_form_{key_suffix}"):
+        with st.form(f"validation_alias_form_{key_suffix}", clear_on_submit=True):
             new_name = st.text_input(
                 Validation.alias_name_label, value=alias.name,
                 key=f"validation_alias_name_{key_suffix}",
@@ -587,6 +641,27 @@ def _edit_aliases(book, character_ref):
                 Validation.save_alias_button,
                 key=f"validation_alias_submit_{key_suffix}",
             )
+            confirmed = st.checkbox(
+                Validation.remove_alias_confirm.format(name=alias.name),
+                key=f"validation_remove_alias_confirm_{key_suffix}",
+            )
+            removed = st.form_submit_button(
+                Validation.remove_alias_button,
+                key=f"validation_remove_alias_submit_{key_suffix}",
+            )
+        if removed:
+            if not confirmed:
+                st.warning(Validation.remove_alias_confirmation_required)
+                continue
+            old_status = alias.entry_status
+            try:
+                alias.delete()
+            except FailedPrecondition:
+                st.warning(AliasForm.save_conflict)
+                continue
+            _log(book, EditLog.ENTITY_ALIAS, alias.document_id, 'entry_status',
+                 old_status, alias.entry_status)
+            st.rerun()
         if not submitted or not new_name.strip():
             continue
         original_override = alias.canonical_form if alias.canonical_override else ''
@@ -621,6 +696,7 @@ def characters_editor(book):
     st.session_state['current_book'] = book
     character_dict = book.get_character_dict()
     st.session_state['book_character_dict'] = character_dict
+    _add_character(book)
 
     if not character_dict:
         st.info(Validation.no_characters)

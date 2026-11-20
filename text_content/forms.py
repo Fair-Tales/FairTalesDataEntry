@@ -1690,7 +1690,12 @@ class Validation:
     alias_name_label = "Alias name:"
     save_alias_button = "Save alias"
     alias_saved = "Alias correction saved."
-    alias_exists = "Another alias with that name already exists in this book."
+    alias_exists = "This alias is already recorded for this character."
+    add_character_button = "Add character"
+    add_alias_button = "Add alias"
+    remove_alias_button = "Remove alias"
+    remove_alias_confirm = "Confirm removal of alias ‘{name}’"
+    remove_alias_confirmation_required = "Confirm removal before removing this alias."
 
     # --- Approval ---
     approve_header = "Approve this entry"

@@ -15,9 +15,29 @@ Streamlit, no network, no writes): ``entered_by_username`` (moved from
 pages/validation.py for reuse, #129), ``validation_recently_active``,
 ``validation_marker_active``, ``validation_heartbeat_due`` and
 ``submitted_book_reopen_block``.
+
+Also exercises Validation’s audited character/alias actions with real entities
+and the existing in-memory database fake; no live services are used.
 """
 
 from datetime import datetime, timedelta, timezone
+import json
+import runpy
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
+import streamlit as st
+from streamlit.runtime.scriptrunner import RerunData, RerunException
+
+from google.api_core.exceptions import AlreadyExists
+from google.cloud.firestore_v1 import ArrayUnion
+
+from alias_schema import alias_storage_id, canonical_bundle
+from data_structures import Book
+from test_character_autodetect import _AttrDict
+from test_firestore_batch_helpers import FakeDb, FakeQuery, FakeRef as DocumentRef, FakeSnap
+
 
 from utilities import (
     entered_by_username,
@@ -248,3 +268,153 @@ def test_other_validator_no_heartbeat_owner_returns_none():
     assert other_active_validator(
         'martha@example.com', -1, 'chris@example.com', now=NOW
     ) is None
+
+
+@pytest.fixture
+def validation_editor(monkeypatch):
+    """Real entities and audit writer against the existing in-memory DB fake."""
+    import utilities
+
+    db = FakeDb({'books': {'test_book': {
+        'title': 'Test Book', 'is_registered': True, 'validated': True,
+        'entered_by': 'pilot_import', 'characters': [],
+    }}, 'characters': {}, 'aliases': {}, 'edit_log': {}})
+    def rows(ref):
+        return db.store[ref.path.split('/')[0]]
+    monkeypatch.setattr(DocumentRef, 'get', lambda ref: FakeSnap(ref, rows(ref).get(ref.id)), raising=False)
+    monkeypatch.setattr(DocumentRef, 'set', lambda ref, data, **kw: rows(ref).__setitem__(ref.id, dict(data)), raising=False)
+    def create(ref, data):
+        if ref.id in rows(ref):
+            raise AlreadyExists('record exists')
+        ref.set(data)
+        return SimpleNamespace(update_time=NOW)
+    def update(ref, data, **kwargs):
+        target = rows(ref)[ref.id]
+        for field, value in data.items():
+            if isinstance(value, ArrayUnion):
+                target[field] = target.get(field, []) + [
+                    ref for ref in value.values if ref not in target.get(field, [])]
+            else:
+                target[field] = value
+        return SimpleNamespace(update_time=NOW)
+    monkeypatch.setattr(DocumentRef, 'create', create, raising=False)
+    monkeypatch.setattr(DocumentRef, 'update', update, raising=False)
+    monkeypatch.setattr(FakeSnap, 'update_time', NOW, raising=False)
+    monkeypatch.setattr(DocumentRef, '__eq__', lambda ref, other: ref.path == getattr(other, 'path', None))
+    def add(query, data):
+        ref = DocumentRef(query._collection, str(len(db.store[query._collection])))
+        ref.set(data)
+        return None, ref
+    monkeypatch.setattr(FakeQuery, 'add', add, raising=False)
+    wrapper = object.__new__(utilities.FirestoreWrapper)
+    monkeypatch.setattr(wrapper, 'connect_book', lambda: db)
+    monkeypatch.setattr(wrapper, 'connect_user', lambda: db)
+    monkeypatch.setattr(wrapper, 'get_all_documents_stream', lambda **kw: [])
+    state = _AttrDict(firestore=wrapper, username='validator', character_dict={})
+    monkeypatch.setattr(st, 'session_state', state)
+    monkeypatch.setattr(utilities, 'check_authentication_status', lambda: None)
+    monkeypatch.setattr(utilities, 'is_team_or_above', lambda: True)
+    monkeypatch.setattr(utilities, 'page_layout', lambda **kw: None)
+    values = {}
+    monkeypatch.setattr(st, 'text_input', lambda label, key, value='', **kw: values.get(key, value))
+    monkeypatch.setattr(st, 'selectbox', lambda label, options, key, index=0, **kw: values.get(key, (options[index] if index is not None else None)))
+    monkeypatch.setattr(st, 'checkbox', lambda label, key, value=False, **kw: values.get(key, value))
+    monkeypatch.setattr(st, 'form_submit_button', lambda label, key, **kw: values.get(key, False))
+    monkeypatch.setattr(st, 'rerun', Mock(side_effect=RerunException(RerunData())))
+    monkeypatch.setattr(st, 'warning', Mock())
+    page = SimpleNamespace(**runpy.run_path('pages/validation.py'))
+    book = Book(db_object=db.store['books']['test_book'])
+    return page, book, db.store, values
+
+
+def test_validation_add_character_fields_link_and_one_log(validation_editor):
+    page, book, store, values = validation_editor
+    values.update({
+        'character_form_name_validation_new_test_book': ' New cast ',
+        'character_form_gender_validation_new_test_book': 'Non-specific',
+        'character_form_human_validation_new_test_book': False,
+        'character_form_plural_validation_new_test_book': True,
+        'character_form_protagonist_validation_new_test_book': True,
+        'validation_add_character_submit_test_book': True,
+    })
+    with pytest.raises(RerunException):
+        page.characters_editor(book)
+    character = store['characters']['test_book_new_cast']
+    assert {key: character[key] for key in ('name', 'gender', 'human', 'plural', 'protagonist')} == {
+        'name': 'New cast', 'gender': 'Non-specific', 'human': False,
+        'plural': True, 'protagonist': True,
+    }
+    assert character['is_registered'] is True
+    assert character['book'].path == 'books/test_book'
+    assert store['books']['test_book']['characters'] == [DocumentRef('characters', 'test_book_new_cast')]
+    assert book.get_character_dict() == st.session_state['book_character_dict']
+    log, = store['edit_log'].values()
+    assert (log['entity_type'], log['entity_id'], log['field'], log['old_value']) == (
+        'character', 'test_book_new_cast', 'document', None,
+    )
+    assert json.loads(log['new_value']) == json.loads(
+        json.dumps(character, default=page.EditLog._coerce))
+    assert log['entered_by'] == 'pilot_import'
+    assert log['edited_by'].path == 'users/validator'
+    values['character_form_gender_validation_new_test_book'] = 'Male'
+    page._add_character(book)  # Same document id must not overwrite or log again.
+    assert len(store['edit_log']) == len(store['characters']) == 1
+    assert character['gender'] == 'Non-specific'
+    st.warning.assert_called_with(page.Validation.rename_exists)
+
+
+def test_validation_add_alias_stored_logged_and_collision_refused(validation_editor):
+    page, book, store, values = validation_editor
+    selected = DocumentRef('characters', 'test_book_selected')
+    values.update({'validation_add_alias_name_test_book_selected': ' New alias ',
+                   'validation_add_alias_submit_test_book_selected': True})
+    with pytest.raises(RerunException):
+        page._edit_aliases(book, selected)
+    alias_id = alias_storage_id(book.get_ref(), selected, ' New alias ')
+    alias = store['aliases'][alias_id]
+    assert alias['name'] == ' New alias ' and alias['is_registered'] is True
+    assert alias['character'] == selected and alias['book'].path == 'books/test_book'
+    assert all(alias[field] == value for field, value in canonical_bundle(' New alias ').items())
+    log, = store['edit_log'].values()
+    assert (log['entity_type'], log['entity_id'], log['field'], log['old_value']) == (
+        'alias', alias_id, 'document', None,
+    )
+    assert json.loads(log['new_value']) == json.loads(
+        json.dumps(alias, default=page.EditLog._coerce))
+    page._edit_aliases(book, selected)  # Exact tuple must not overwrite or log again.
+    assert len(store['edit_log']) == len(store['aliases']) == 1
+    st.warning.assert_called_with(page.Validation.alias_exists)
+    other = DocumentRef('characters', 'test_book_other')
+    values.update({'validation_add_alias_name_test_book_other': ' New alias ',
+                   'validation_add_alias_submit_test_book_other': True})
+    with pytest.raises(RerunException):
+        page._edit_aliases(book, other)
+    assert len(store['edit_log']) == len(store['aliases']) == 2
+    assert store['aliases'][alias_storage_id(book.get_ref(), other, ' New alias ')]['character'] == other
+
+
+def test_validation_remove_alias_confirmation_scope_and_rewind_log(validation_editor):
+    page, book, store, values = validation_editor
+    selected = DocumentRef('characters', 'test_book_selected')
+    original = {'name': 'Old alias', 'book': book.get_ref(), 'character': selected,
+                'is_registered': True, 'entered_by': 'pilot_import', 'datetime_created': NOW,
+                'entry_status': 'accepted', 'raw_history': ['Earlier alias']}
+    store['aliases']['legacy_stored_id'] = dict(original)
+    store['aliases']['test_book_other_alias'] = dict(original, character=DocumentRef('characters', 'other'))
+    values['validation_remove_alias_submit_legacy_stored_id'] = True
+    page._edit_aliases(book, selected)
+    assert len(store['aliases']) == 2 and not store['edit_log']
+    st.warning.assert_called_with(page.Validation.remove_alias_confirmation_required)
+    values['validation_remove_alias_confirm_legacy_stored_id'] = True
+    with pytest.raises(RerunException):
+        page._edit_aliases(book, selected)
+    assert store['aliases']['legacy_stored_id'] == dict(original, entry_status='rejected')
+    assert store['aliases']['test_book_other_alias']['entry_status'] == 'accepted'
+    log, = store['edit_log'].values()
+    assert (log['entity_type'], log['entity_id'], log['field'],
+            log['old_value'], log['new_value']) == (
+        'alias', 'legacy_stored_id', 'entry_status', 'accepted', 'rejected',
+    )
+    # Rewinding restores the status; all archival fields were retained.
+    store['aliases'][log['entity_id']][log['field']] = log['old_value']
+    assert store['aliases']['legacy_stored_id'] == original
