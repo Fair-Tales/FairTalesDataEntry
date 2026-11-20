@@ -208,6 +208,7 @@ def test_validation_editor_leaves_unknown_widgets_unselected(session, monkeypatc
     monkeypatch.setattr(st, 'form', lambda *a, **k: nullcontext())
     monkeypatch.setattr(st, 'form_submit_button', lambda *a, **k: False)
     namespace['_edit_aliases'] = lambda *a: None
+    namespace['_add_character'] = lambda *a: None
     session.firestore.writes.clear()
     namespace['characters_editor'](book)
     assert all(indices[f'validation_char_{field}_book_fox'] is None for field in FIELDS)
