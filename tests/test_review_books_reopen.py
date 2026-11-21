@@ -422,37 +422,72 @@ def test_validation_remove_alias_confirmation_scope_and_rewind_log(validation_ed
     assert store['aliases']['legacy_stored_id'] == original
 
 
-def test_validation_remove_character_confirmation_and_log(validation_editor, monkeypatch):
+def test_validation_remove_and_readd_character_with_rewind_log(validation_editor):
     page, book, store, values = validation_editor
-    selected = DocumentRef('characters', 'test_book_duplicate')
+    selected = DocumentRef('characters', 'test_book_before_rename')
+    other = DocumentRef('characters', 'test_book_other')
     original = {'name': 'Duplicate', 'book': book.get_ref(), 'is_registered': True,
                 'entry_status': 'accepted'}
     store['characters'][selected.id] = dict(original)
+    store['characters'][other.id] = dict(original, name='Other')
     store['aliases']['duplicate_alias'] = dict(original, name='Old alias', character=selected)
+    store['aliases']['legacy_alias'] = {'name': 'Nickname', 'character': selected}
+    store['aliases']['archived_alias'] = dict(original, character=selected, entry_status='superseded')
     book.add_character(selected)
-    delete = Mock(side_effect=page.Character.delete)
-    monkeypatch.setattr(page.Character, 'delete', lambda character: delete(character))
+    book.add_character(other)
     st.session_state['validation_character_select'] = 'Duplicate'
     st.session_state[f'validation_char_name_{selected.id}'] = 'Duplicate'
     values[f'validation_remove_character_submit_{selected.id}'] = True
     page.characters_editor(book)
-    delete.assert_not_called()
+    assert store['characters'][selected.id] == original
     assert not store['edit_log']
     st.warning.assert_called_with(page.Validation.remove_character_confirmation_required)
     values[f'validation_remove_character_confirm_{selected.id}'] = True
     with pytest.raises(RerunException):
         page.characters_editor(book)
-    delete.assert_called_once()
     assert store['characters'][selected.id] == dict(original, entry_status='rejected')
     assert store['aliases']['duplicate_alias']['entry_status'] == 'rejected'
-    assert store['books']['test_book']['characters'] == []
-    assert 'validation_character_select' not in st.session_state
+    assert store['aliases']['legacy_alias']['entry_status'] == 'rejected'
+    assert store['aliases']['archived_alias']['entry_status'] == 'superseded'
+    assert store['books']['test_book']['characters'] == [other]
     assert f'validation_char_name_{selected.id}' not in st.session_state
-    log, = store['edit_log'].values()
-    assert (log['entity_type'], log['entity_id'], log['field'],
-            log['old_value'], log['new_value']) == (
-        'character', selected.id, 'entry_status', 'accepted', 'rejected',
-    )
+    assert sorted((row['entity_type'], row['entity_id'], row['field'], row['old_value'], row['new_value'])
+                  for row in store['edit_log'].values()) == [
+        ('alias', 'duplicate_alias', 'entry_status', 'accepted', 'rejected'),
+        ('alias', 'legacy_alias', 'entry_status', 'unverified', 'rejected'),
+        ('book', book.document_id, 'characters', json.dumps([selected.path, other.path]), json.dumps([other.path])),
+        ('character', selected.id, 'entry_status', 'accepted', 'rejected'),
+    ]
     page.characters_editor(book)
-    assert book.get_character_dict() == {}
-    assert len(store['edit_log']) == 1
+    assert book.get_character_dict() == {'Other': other}
+    other_book_cast = dict(original, book=DocumentRef('books', 'another'), entry_status='rejected')
+    store['characters']['another_duplicate'] = dict(other_book_cast)
+    values.update({'character_form_name_validation_new_test_book': 'Duplicate',
+                   'character_form_plural_validation_new_test_book': True,
+                   'validation_add_character_submit_test_book': True})
+    with pytest.raises(RerunException):
+        page.characters_editor(book)
+    assert book.get_character_dict() == {'Other': other, 'Duplicate': selected}
+    assert store['characters']['another_duplicate'] == other_book_cast
+    assert store['aliases']['duplicate_alias']['entry_status'] == 'rejected'
+    document, membership = list(store['edit_log'].values())[4:]
+    assert (document['entity_id'], document['field']) == (selected.id, 'document')
+    assert json.loads(document['old_value']) == dict(original, book='books/test_book', entry_status='rejected')
+    restored = store['characters'][selected.id]
+    assert restored['entry_status'] == 'unverified' and restored['plural'] is True
+    assert json.loads(document['new_value']) == json.loads(json.dumps(restored, default=page.EditLog._coerce))
+    assert json.loads(membership['old_value']) == [other.path]
+    assert json.loads(membership['new_value']) == [other.path, selected.path]
+
+
+@pytest.mark.parametrize('status, successor', [('superseded', None), ('rejected', 'replacement')])
+def test_validation_add_preserves_superseded_character(validation_editor, status, successor):
+    page, book, store, values = validation_editor
+    original = {'name': 'Old', 'book': book.get_ref(), 'entry_status': status, 'superseded_by': successor}
+    store['characters']['test_book_old'] = dict(original)
+    values.update({'character_form_name_validation_new_test_book': 'Old',
+                   'validation_add_character_submit_test_book': True})
+    page.characters_editor(book)
+    st.warning.assert_called_with(page.Validation.rename_exists)
+    assert store['characters']['test_book_old'] == original
+    assert not book.characters and not store['edit_log']

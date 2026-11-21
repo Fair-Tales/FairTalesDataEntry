@@ -554,6 +554,13 @@ def page_text_editor(book):
 # ---------------------------------------------------------------------------
 # Characters & aliases editor
 # ---------------------------------------------------------------------------
+def _log_character_membership(book, previous):
+    if previous != book.characters:
+        _log(book, EditLog.ENTITY_BOOK, book.document_id, 'characters',
+             json.dumps([ref.path for ref in previous]),
+             json.dumps([ref.path for ref in book.characters]))
+
+
 def _add_character(book):
     character = Character(book=book.get_ref())
     with st.expander(Validation.add_character_button):
@@ -569,16 +576,40 @@ def _add_character(book):
     if not character.name:
         st.warning(Validation.character_name_required)
         return
+    # A rename keeps its storage ID. Match the current name within this book.
+    matches = {doc.id: doc for doc in st.session_state.firestore.query_stream(
+        collection='characters', field='book', op='==', value=character.book
+    ) if (doc.to_dict().get('name') or '').lower() == character.name.lower()}
+    snapshot = (next(iter(matches.values())) if len(matches) == 1
+                else matches.get(character.document_id))
+    old_document = None
     try:
-        character.register()
+        if snapshot is not None:
+            data = snapshot.to_dict()
+            if data.get('entry_status') != 'rejected' or data.get('superseded_by'):
+                st.warning(Validation.rename_exists)
+                return
+            # Reactivation replaces fields beyond status, including codes and provenance.
+            old_document = json.dumps(data, default=EditLog._coerce)
+            character.storage_id = snapshot.id
+            character.reactivate(snapshot)
+            new_document = snapshot.reference.get().to_dict()
+        else:
+            character.register()
+            new_document = character.to_dict()
     except AlreadyExists:
         st.warning(Validation.rename_exists)
         return
-    # Include stable identity and provenance as well as the submitted fields.
-    _log(book, EditLog.ENTITY_CHARACTER, character.document_id, 'document', None,
-         json.dumps(character.to_dict(), default=EditLog._coerce))
+    except FailedPrecondition:
+        st.warning(Validation.character_conflict)
+        return
+    _log(book, EditLog.ENTITY_CHARACTER, character.document_id, 'document', old_document,
+         json.dumps(new_document, default=EditLog._coerce))
     character_ref = character.get_ref()
+    previous_members = book.characters
     book.add_character(character_ref)
+    if old_document is not None:
+        _log_character_membership(book, previous_members)
     st.session_state.setdefault('character_dict', {})[character.name] = character_ref
     st.session_state['book_character_dict'][character.name] = character_ref
     load_character_dict.clear()
@@ -771,14 +802,23 @@ def characters_editor(book):
             st.warning(Validation.remove_character_confirmation_required)
             return
         old_status = character.entry_status
+        previous_members = book.characters
+        aliases = [Alias.from_snapshot(doc) for doc in st.session_state.firestore.query_stream(
+            collection='aliases', field='character', op='==', value=character_ref)]
         try:
             character.delete()
         except FailedPrecondition:
-            st.warning(Validation.remove_character_conflict)
+            st.warning(Validation.character_conflict)
             return
+        for alias in aliases:
+            if alias.entry_status not in ('rejected', 'superseded', 'withdrawn'):
+                _log(book, EditLog.ENTITY_ALIAS, alias.document_id, 'entry_status',
+                     alias.entry_status, 'rejected')
+        _log_character_membership(book, previous_members)
         _log(book, EditLog.ENTITY_CHARACTER, character.document_id, 'entry_status',
              old_status, character.entry_status)
-        st.session_state.pop('validation_character_select', None)
+        # Keep the old selection so Streamlit detects it is absent from the new
+        # options and sends the replacement value to the browser on rerun.
         clear_entity_form_state('validation_char_')
         st.rerun()
 
