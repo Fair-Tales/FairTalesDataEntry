@@ -19,10 +19,10 @@ from text_content.pipeline_runtime import (
 EXTRACTION_MODEL = 'claude-sonnet-5'
 EXTRACTION_OCR_MAX_TOKENS = 8192
 LOCATE_MAX_EDGE = 784
-AI_MODEL_ALLOWLIST = (
+_SMALL_OUTPUT_MODELS = (
     'claude-opus-4-8', 'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-haiku-4-5',
-    'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-2',
 )
+AI_MODEL_ALLOWLIST = (*_SMALL_OUTPUT_MODELS, 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-2')
 AI_EDGE_MIN, AI_EDGE_MAX = 512, 4096
 # Stay below the SDK's default-timeout non-streaming limit: 128000 * 600 / 3600 ≈ 21333.
 AI_TOKENS_MIN, AI_TOKENS_MAX = 256, 20000
@@ -181,6 +181,16 @@ _CHOICES = {
 _CONTEXT_LIMITS = ('max_images', 'max_request_bytes', 'max_input_tokens', 'max_output_tokens')
 
 
+class InvalidCharacterPromptVariant(ValueError):
+    """The selected character-detection wording is unavailable."""
+
+
+def model_options(key):
+    if key in ('rotation_model', 'crop_quality_model', 'locate_model'):
+        return _SMALL_OUTPUT_MODELS
+    return AI_MODEL_ALLOWLIST
+
+
 def validate_settings(values, *, model_ids=()):
     """Return defaults plus explicit overrides, refusing every unknown/bad key.
 
@@ -192,11 +202,12 @@ def validate_settings(values, *, model_ids=()):
     if not isinstance(values, Mapping):
         raise ValueError(PIPELINE_SETTINGS_OBJECT)
     result = deepcopy(PIPELINE_SETTINGS_DEFAULTS)
-    models = (*AI_MODEL_ALLOWLIST, *model_ids)
+    extra_models = tuple(model for model in model_ids if model not in AI_MODEL_ALLOWLIST)
     for key, value in values.items():
         if key not in result:
             raise ValueError(PIPELINE_SETTING_UNKNOWN.format(key=key))
         if key in AI_SETTINGS_MODEL_KEYS:
+            models = (*model_options(key), *extra_models)
             valid = isinstance(value, str) and value in models
             expected = ', '.join(models)
         elif key == 'character_prompt_variant':
@@ -234,7 +245,8 @@ def validate_settings(values, *, model_ids=()):
             valid = type(value) is bool
             expected = 'boolean'
         if not valid:
-            raise ValueError(PIPELINE_SETTING_INVALID.format(key=key, expected=expected))
+            error = InvalidCharacterPromptVariant if key == 'character_prompt_variant' else ValueError
+            raise error(PIPELINE_SETTING_INVALID.format(key=key, expected=expected))
         result[key] = deepcopy(value)
     for stage in STAGE_MAX_TOKENS:
         validate_generation(result[f'{stage}_model'], result[f'{stage}_thinking'], result[f'{stage}_effort'])

@@ -269,7 +269,11 @@ def test_invalid_character_variant_is_rejected(value):
         validate_settings({'character_prompt_variant': value})
 
 
-def test_retired_wording_stops_both_job_resume_paths():
+def test_retired_wording_stops_both_resume_paths_and_shows_upload_error(monkeypatch):
+    from unittest.mock import Mock
+    from streamlit.runtime.scriptrunner import StopException
+    from pages import uploader
+
     db = FakeDB()
     job_id = _make_job(db)
     production._job_ref(db, job_id).set({'ai_settings': {'character_prompt_variant': 'incidental-w3'}}, merge=True)
@@ -277,6 +281,16 @@ def test_retired_wording_stops_both_job_resume_paths():
         production.resume_job(None, db, None, job_id)
     with pytest.raises(ValueError, match='character_prompt_variant'):
         production.ensure_worker_running(None, db, None, {}, {'job_id': job_id})
+
+    messages = []
+    monkeypatch.setattr(uploader, 'get_ai_settings', lambda: {})
+    monkeypatch.setattr(uploader.st, 'session_state', {'current_book': object()})
+    monkeypatch.setattr(uploader.st, 'error', messages.append)
+    monkeypatch.setattr(uploader.st, 'stop', Mock(side_effect=StopException))
+    with pytest.raises(StopException):
+        uploader._finalize_job_batch({'job_id': job_id}, [b'page'], total=1, fs=None, db=db,
+                                     ai_client=None, model=None, status=None, progress=None)
+    assert messages == [uploader.Uploader.saved_wording_unavailable]
 
 
 @pytest.mark.parametrize('variant', CHARACTER_RULE_REPLACEMENTS)

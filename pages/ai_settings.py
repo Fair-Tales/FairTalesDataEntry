@@ -15,6 +15,7 @@ which reveals a clear warning, before anything can be changed or saved.
 import streamlit as st
 from google.api_core.exceptions import GoogleAPIError
 
+from pipeline_config import model_options
 from utilities import (
     page_layout,
     check_authentication_status,
@@ -22,7 +23,6 @@ from utilities import (
     get_ai_settings,
     save_ai_settings,
     get_api_usage_summary,
-    AI_MODEL_ALLOWLIST,
     AI_SETTINGS_DEFAULTS,
     AI_EDGE_MIN,
     AI_EDGE_MAX,
@@ -47,11 +47,11 @@ st.write(AdminSettings.intro)
 settings = get_ai_settings()
 
 
-def _model_index(key):
-    """Guarded index into the model allow-list (#91): never assume the stored
-    value is still a valid option — fall back to the first entry."""
-    value = settings[key]
-    return AI_MODEL_ALLOWLIST.index(value) if value in AI_MODEL_ALLOWLIST else 0
+def _model_select(setting, label, widget_key):
+    options = model_options(setting)
+    value = settings[setting]
+    return st.selectbox(label, options=options, index=options.index(value) if value in options else 0,
+                        disabled=disabled, key=widget_key)
 
 
 # ---------------------------------------------------------------------------
@@ -93,41 +93,20 @@ disabled = not editing_enabled
 st.subheader(AdminSettings.controls_header)
 
 st.markdown(f"**{AdminSettings.models_subheader}**")
-extraction_model = st.selectbox(
-    AdminSettings.extraction_model_label, options=AI_MODEL_ALLOWLIST,
-    index=_model_index('extraction_model'), disabled=disabled,
-    key="ai_settings_extraction_model_select",
-)
-metadata_model = st.selectbox(
-    AdminSettings.metadata_model_label, options=AI_MODEL_ALLOWLIST,
-    index=_model_index('metadata_model'), disabled=disabled,
-    key="ai_settings_metadata_model_select",
-)
-character_detection_model = st.selectbox(
-    AdminSettings.character_model_label, options=AI_MODEL_ALLOWLIST,
-    index=_model_index('character_detection_model'), disabled=disabled,
-    key="ai_settings_character_model_select",
-)
-locate_model = st.selectbox(
-    AdminSettings.locate_model_label, options=AI_MODEL_ALLOWLIST,
-    index=_model_index('locate_model'), disabled=disabled,
-    key="ai_settings_locate_model_select",
-)
-rotation_model = st.selectbox(
-    AdminSettings.rotation_model_label, options=AI_MODEL_ALLOWLIST,
-    index=_model_index('rotation_model'), disabled=disabled,
-    key="ai_settings_rotation_model_select",
-)
-crop_quality_model = st.selectbox(
-    AdminSettings.crop_model_label, options=AI_MODEL_ALLOWLIST,
-    index=_model_index('crop_quality_model'), disabled=disabled,
-    key="ai_settings_crop_model_select",
-)
-theme_model = st.selectbox(
-    AdminSettings.theme_model_label, options=AI_MODEL_ALLOWLIST,
-    index=_model_index('theme_model'), disabled=disabled,
-    key="ai_settings_theme_model_select",
-)
+extraction_model = _model_select(
+    'extraction_model', AdminSettings.extraction_model_label, 'ai_settings_extraction_model_select')
+metadata_model = _model_select(
+    'metadata_model', AdminSettings.metadata_model_label, 'ai_settings_metadata_model_select')
+character_detection_model = _model_select(
+    'character_detection_model', AdminSettings.character_model_label, 'ai_settings_character_model_select')
+locate_model = _model_select(
+    'locate_model', AdminSettings.locate_model_label, 'ai_settings_locate_model_select')
+rotation_model = _model_select(
+    'rotation_model', AdminSettings.rotation_model_label, 'ai_settings_rotation_model_select')
+crop_quality_model = _model_select(
+    'crop_quality_model', AdminSettings.crop_model_label, 'ai_settings_crop_model_select')
+theme_model = _model_select(
+    'theme_model', AdminSettings.theme_model_label, 'ai_settings_theme_model_select')
 
 st.markdown(f"**{AdminSettings.resolution_subheader}**")
 extraction_max_edge = st.number_input(

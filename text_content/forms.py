@@ -1471,6 +1471,9 @@ class Uploader:
 
     select_photos_label = "Select page photos to upload"
     status_header = "Processing your photos..."
+    saved_wording_unavailable = (
+        "This upload cannot resume because its saved character-detection wording is no longer available."
+    )
     saving_photo = "Saving photo {current} of {total}..."
     photos_saved = "Photos saved."
     processing_page = "Processing page {page} of {total} (correcting image, extracting text)..."

@@ -10,7 +10,7 @@ import pytest
 from ai_pricing import PRICING_PER_MTOK
 from ai_runtime import extraction_runtime
 from pipeline_config import (
-    STAGE_MAX_TOKENS, OPENAI_REASONING_EFFORTS, generation_request, requested_generation,
+    STAGE_MAX_TOKENS, OPENAI_REASONING_EFFORTS, generation_request, model_options, requested_generation,
     validate_generation_request, validate_settings,
 )
 from scripts.extraction_eval.billing import cycle_budgets
@@ -24,12 +24,14 @@ from scripts.extraction_eval.store import Ledger
     ('claude-fable-5-2', 'high', (8, 40, .2, 10)),
 ])
 def test_new_claude_models_from_stage_settings_to_priced_request(model, default_effort, rates):
-    settings = validate_settings({f'{stage}_model': model for stage in STAGE_MAX_TOKENS})
+    supported = ('extraction', 'metadata', 'story_context', 'character_detection', 'human_vision', 'theme')
+    settings = validate_settings({f'{stage}_model': model for stage in supported})
     config = json.loads(Path('scripts/extraction_eval/baseline.json').read_text())
     prices = validate_prices({**config, 'settings': settings}, executing=True)
     for field, rate in zip(('input', 'output', 'cache_read', 'cache_write'), rates):
         assert prices[model][field] == PRICING_PER_MTOK[model][field] == rate
-    for stage, cap in STAGE_MAX_TOKENS.items():
+    for stage in supported:
+        cap = STAGE_MAX_TOKENS[stage]
         request = generation_request(settings, stage)
         assert request == {'model': model, 'max_tokens': cap}
         assert requested_generation(request)['documented_defaults'] == {
@@ -46,6 +48,14 @@ def test_new_claude_models_from_stage_settings_to_priced_request(model, default_
                     {'temperature': 1}, {'top_p': 1}, {'top_k': 1}):
         with pytest.raises(ValueError):
             validate_generation_request({**request, **options})
+
+
+@pytest.mark.parametrize('key', ['locate_model', 'rotation_model', 'crop_quality_model'])
+def test_small_output_model_choices_match_validation(key):
+    for model in ('claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-2'):
+        assert model not in model_options(key)
+        with pytest.raises(ValueError, match=key):
+            validate_settings({key: model}, model_ids=[model])
 
 
 @pytest.mark.parametrize('model', ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-2'])

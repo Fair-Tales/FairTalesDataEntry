@@ -27,7 +27,7 @@
   "pricing": {
     "verified": true,
     "verified_at": "2026-11-04T23:03:19.304138+00:00",
-    "source": "Verified 2026-11-04 against docs.anthropic.com pricing (Sonnet 5 = $2/$10 per MTok, cache read $0.20, 5-min cache write $2.50) and the repository's ai_pricing.py, which is the same table record_api_usage bills against. Sonnet 5 max_output_tokens raised from a stale 8192 pin to the documented 128000 on 2026-11-16 (bundled claude-api reference 2.1.322, models.md); request ceilings stay at most 20000 (pipeline_config.AI_TOKENS_MAX). Sonnet 4.6 and Haiku 4.5 base rates were already correct; their cache rates now use ai_pricing.py's 0.1x/1.25x multipliers. Sonnet 5.5, Opus 5.5 and Fable 5.2 rates and token limits checked 2026-11-21 against bundled claude-api 2.1.322 shared/models.md and shared/model-migration.md.",
+    "source": "Verified 2026-11-04 against docs.anthropic.com pricing (Sonnet 5 = $2/$10 per MTok, cache read $0.20, 5-min cache write $2.50) and the repository's ai_pricing.py, which is the same table record_api_usage bills against. Sonnet 5 max_output_tokens raised from a stale 8192 pin to the documented 128000 on 2026-11-16 (bundled claude-api reference 2.1.322, models.md); request ceilings stay at most 20000 (pipeline_config.AI_TOKENS_MAX). Sonnet 4.6 and Haiku 4.5 base rates were already correct; their cache rates now use ai_pricing.py's 0.1x/1.25x multipliers. Sonnet 5.5, Opus 5.5 and Fable 5.2 rates and token limits checked 2026-11-21 against bundled claude-api 2.1.322 shared/models.md and shared/model-migration.md, except the Opus 5.5 five-minute cache write ($5.00 per MTok), inferred at 1.25 times the input rate.",
     "models": {
       "claude-sonnet-5": {
         "input": 2.0,

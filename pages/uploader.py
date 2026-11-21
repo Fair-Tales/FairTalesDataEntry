@@ -18,6 +18,7 @@ from background_pipeline import (
     wait_for_page_result, wait_for_character_suggestions, reconcile_s3_prefix,
     finalize_job, clear_page_processing_job,
 )
+from pipeline_config import InvalidCharacterPromptVariant
 from photo_upload import (
     get_upload_session_id,
     generate_put_urls,
@@ -343,7 +344,11 @@ def _finalize_job_batch(job, raw_bytes_list, total, fs, db, ai_client, model,
     # Make sure a worker is advancing this job in THIS process — resume it if the
     # starting session's worker died or this is a later/other session — and link
     # the now-known book id to the durable job for cross-session discovery.
-    ensure_worker_running(fs, db, ai_client, settings, job, raw_bytes_list)
+    try:
+        ensure_worker_running(fs, db, ai_client, settings, job, raw_bytes_list)
+    except InvalidCharacterPromptVariant:
+        st.error(Uploader.saved_wording_unavailable)
+        st.stop()
     stamp_book_id(db, job, current_book.document_id)
     alive = worker_alive_for(job)
 
