@@ -1699,7 +1699,7 @@ class Validation:
     remove_character_button = "Remove character"
     remove_character_confirm = "Confirm removal of character ‘{name}’"
     remove_character_confirmation_required = "Confirm removal before removing this character."
-    remove_character_conflict = "This character changed during review. Reload and review the latest record before removing it."
+    character_conflict = "This character changed during review. Reload and review the latest record before trying again."
 
     # --- Approval ---
     approve_header = "Approve this entry"
