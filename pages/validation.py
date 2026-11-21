@@ -756,6 +756,32 @@ def characters_editor(book):
             key=f"validation_char_submit_{character_ref.id}",
         )
 
+    with st.form(f"validation_remove_character_{character_ref.id}", clear_on_submit=True):
+        confirmed = st.checkbox(
+            Validation.remove_character_confirm.format(name=character.name),
+            key=f"validation_remove_character_confirm_{character_ref.id}",
+        )
+        removed = st.form_submit_button(
+            Validation.remove_character_button,
+            key=f"validation_remove_character_submit_{character_ref.id}",
+        )
+
+    if removed:
+        if not confirmed:
+            st.warning(Validation.remove_character_confirmation_required)
+            return
+        old_status = character.entry_status
+        try:
+            character.delete()
+        except FailedPrecondition:
+            st.warning(Validation.remove_character_conflict)
+            return
+        _log(book, EditLog.ENTITY_CHARACTER, character.document_id, 'entry_status',
+             old_status, character.entry_status)
+        st.session_state.pop('validation_character_select', None)
+        clear_entity_form_state('validation_char_')
+        st.rerun()
+
     _edit_aliases(book, character_ref)
 
     if not submitted:

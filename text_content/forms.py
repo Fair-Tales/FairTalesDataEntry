@@ -1696,6 +1696,10 @@ class Validation:
     remove_alias_button = "Remove alias"
     remove_alias_confirm = "Confirm removal of alias ‘{name}’"
     remove_alias_confirmation_required = "Confirm removal before removing this alias."
+    remove_character_button = "Remove character"
+    remove_character_confirm = "Confirm removal of character ‘{name}’"
+    remove_character_confirmation_required = "Confirm removal before removing this character."
+    remove_character_conflict = "This character changed during review. Reload and review the latest record before removing it."
 
     # --- Approval ---
     approve_header = "Approve this entry"

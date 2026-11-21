@@ -31,7 +31,7 @@ import streamlit as st
 from streamlit.runtime.scriptrunner import RerunData, RerunException
 
 from google.api_core.exceptions import AlreadyExists
-from google.cloud.firestore_v1 import ArrayUnion
+from google.cloud.firestore_v1 import ArrayRemove, ArrayUnion
 
 from alias_schema import alias_storage_id, canonical_bundle
 from data_structures import Book
@@ -294,6 +294,8 @@ def validation_editor(monkeypatch):
             if isinstance(value, ArrayUnion):
                 target[field] = target.get(field, []) + [
                     ref for ref in value.values if ref not in target.get(field, [])]
+            elif isinstance(value, ArrayRemove):
+                target[field] = [ref for ref in target.get(field, []) if ref not in value.values]
             else:
                 target[field] = value
         return SimpleNamespace(update_time=NOW)
@@ -418,3 +420,39 @@ def test_validation_remove_alias_confirmation_scope_and_rewind_log(validation_ed
     # Rewinding restores the status; all archival fields were retained.
     store['aliases'][log['entity_id']][log['field']] = log['old_value']
     assert store['aliases']['legacy_stored_id'] == original
+
+
+def test_validation_remove_character_confirmation_and_log(validation_editor, monkeypatch):
+    page, book, store, values = validation_editor
+    selected = DocumentRef('characters', 'test_book_duplicate')
+    original = {'name': 'Duplicate', 'book': book.get_ref(), 'is_registered': True,
+                'entry_status': 'accepted'}
+    store['characters'][selected.id] = dict(original)
+    store['aliases']['duplicate_alias'] = dict(original, name='Old alias', character=selected)
+    book.add_character(selected)
+    delete = Mock(side_effect=page.Character.delete)
+    monkeypatch.setattr(page.Character, 'delete', lambda character: delete(character))
+    st.session_state['validation_character_select'] = 'Duplicate'
+    st.session_state[f'validation_char_name_{selected.id}'] = 'Duplicate'
+    values[f'validation_remove_character_submit_{selected.id}'] = True
+    page.characters_editor(book)
+    delete.assert_not_called()
+    assert not store['edit_log']
+    st.warning.assert_called_with(page.Validation.remove_character_confirmation_required)
+    values[f'validation_remove_character_confirm_{selected.id}'] = True
+    with pytest.raises(RerunException):
+        page.characters_editor(book)
+    delete.assert_called_once()
+    assert store['characters'][selected.id] == dict(original, entry_status='rejected')
+    assert store['aliases']['duplicate_alias']['entry_status'] == 'rejected'
+    assert store['books']['test_book']['characters'] == []
+    assert 'validation_character_select' not in st.session_state
+    assert f'validation_char_name_{selected.id}' not in st.session_state
+    log, = store['edit_log'].values()
+    assert (log['entity_type'], log['entity_id'], log['field'],
+            log['old_value'], log['new_value']) == (
+        'character', selected.id, 'entry_status', 'accepted', 'rejected',
+    )
+    page.characters_editor(book)
+    assert book.get_character_dict() == {}
+    assert len(store['edit_log']) == 1
