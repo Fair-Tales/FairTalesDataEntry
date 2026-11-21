@@ -13,88 +13,14 @@ CHARACTER_TRUNCATED = "Character response reached the output limit; partial evid
 CHARACTER_PARTIAL = "Character response was incomplete; partial evidence retained."
 CHARACTER_STRUCTURE_INVALID = "Character response has an invalid structure; raw evidence retained."
 PROMPT_VARIANTS = ("legacy-v1", "rules-only", "rules-plus-icl")
-# First wordings: character-only additions to the frozen legacy template.
-CHARACTER_RULE_BLOCKS = {
-    "gender-cues": (
-        "Gender evidence: use pronouns first, then kinship words, titles and forms of "
-        "address, then sex-specific animal nouns. Only when the text gives none of "
-        "those cues for the character may a clearly gendered name count. Unisex, "
-        "ambiguous or invented names stay Non-specific. Illustrations never decide gender."
-    ),
-    "protagonist": (
-        "Protagonist means the character or characters around whom the action revolves: "
-        "usually one, a second only when the story is equally about both."
-    ),
-    "aliases": (
-        "Aliases: include every printed short form or description the text uses to "
-        "refer to the character, except the chosen main name. Exclude utterances, "
-        "number labels, place or shop names and sounds."
-    ),
-    "incidental": (
-        "Include individuals and groups the text mentions, not only active speakers, "
-        "even when their mention is incidental."
-    ),
-}
-# Second wordings, as chosen by Chris: each pair is (legacy text, replacement).
-# Edit the replacement here; each variant changes only its own idea.
+# Each pair replaces one passage in the legacy character prompt.
 CHARACTER_RULE_REPLACEMENTS = {
-    "gender-cues-w2": (
-        'Infer ONLY from gendered pronouns or words in the references; use "Non-specific" '
-        'when unclear.',
-        'Search the whole story, not just the chosen references, for cues that refer '
-        'to this character, and use the first kind you find: (1) gendered pronouns; '
-        '(2) kinship words, titles or forms of address; (3) sex-specific animal nouns; '
-        '(4) only then a clearly gendered name. Unisex, ambiguous or invented names, '
-        'or no cue, mean "Non-specific".',
-    ),
-    "protagonist-w2": (
-        '- "protagonist": true only for the clear main character of the story.',
-        '- "protagonist": true for the character or characters around whom the '
-        'action revolves. First judge whose problem or journey drives the whole '
-        'story. Most stories have exactly one. A character the protagonist meets, '
-        'befriends, helps or is helped by is not also a protagonist unless the story '
-        'follows their own problem just as closely. Minor helpers and framing '
-        'characters are not protagonists.',
-    ),
-    "aliases-w2": (
-        '- "aliases": the OTHER references used for this character (exclude the chosen '
-        'name; may be an empty list).',
-        '- "aliases": every other wording printed in the story for this character, '
-        'each copied exactly as printed and listed once; when both a fuller and a '
-        'shorter form occur, list both. Check every page. Include short forms, '
-        'descriptions and titles; exclude the chosen name, pronouns, words the '
-        'character says, number labels, place or shop names and sounds. May be an '
-        'empty list.',
-    ),
-    "incidental-w2": (
-        'Identify every distinct character referred to ANYWHERE in the book, grouping all '
-        'the references to the SAME character into one entry.',
-        'Identify every distinct individual and group mentioned anywhere in the book, '
-        'even in passing, including the subjects of stories told or read within it, '
-        'but not hypothetical or imagined figures such as choices offered to the reader. '
-        'Make one entry per individual or group: merge only references to the same one, '
-        'and keep individuals or groups that the text names side by side separate from '
-        'each other and from any group they form together.',
-    ),
     "human-w2": (
         '- "human": true if the character is a person, false if an animal, object or '
         'other creature.',
         '- "human": true only for human beings; false for animals, toys, objects, '
         'robots and magical or fantasy beings, even when they talk, dress or act '
         'like people.',
-    ),
-    # Third wording (DECISIONS 031): w2 plus the exclusion of kinds named only in
-    # comparisons or questions to the reader.
-    "incidental-w3": (
-        'Identify every distinct character referred to ANYWHERE in the book, grouping all '
-        'the references to the SAME character into one entry.',
-        'Identify every distinct individual and group mentioned anywhere in the book, '
-        'even in passing, including the subjects of stories told or read within it, '
-        'but not hypothetical or imagined figures such as choices offered to the reader, '
-        'nor kinds of animal or person named only in a comparison or a question to the '
-        'reader. Make one entry per individual or group: merge only references to the '
-        'same one, and keep individuals or groups that the text names side by side '
-        'separate from each other and from any group they form together.',
     ),
 }
 HUMAN_VISION_PROMPT = """Decide only whether each already detected character is human.
@@ -599,7 +525,7 @@ def load_example_pack(*, held_out_book_ids=(), held_out_groups=()):
 
 
 def _stage_examples(stage, variant):
-    if stage == "character_detection" and variant in (*CHARACTER_RULE_BLOCKS, *CHARACTER_RULE_REPLACEMENTS):
+    if stage == "character_detection" and variant in CHARACTER_RULE_REPLACEMENTS:
         return []
     if variant not in PROMPT_VARIANTS:
         raise ValueError("Unknown prompt variant")
@@ -640,8 +566,6 @@ def prompt_for(stage, variant="rules-plus-icl"):
     if stage == "character_detection" and variant in CHARACTER_RULE_REPLACEMENTS:
         old, new = CHARACTER_RULE_REPLACEMENTS[variant]
         return LEGACY_PROMPTS[stage].replace(old, new)
-    if stage == "character_detection" and variant in CHARACTER_RULE_BLOCKS:
-        return LEGACY_PROMPTS[stage] + "\n\n" + CHARACTER_RULE_BLOCKS[variant]
     if variant not in PROMPT_VARIANTS:
         raise ValueError("Unknown prompt variant")
     if variant == "legacy-v1":

@@ -990,11 +990,15 @@ def get_active_job(session_state, db, raw_bytes_list):
 def ensure_worker_running(fs, db, client, ai_settings, link, raw_bytes_list=None):
     """Compatibility resume wrapper; persisted settings win over current UI settings."""
     data = _job_ref(db, link['job_id']).get().to_dict() or {}
-    if not data or data.get('status') in ('cancelled', 'finalized') or data.get('extraction_complete'):
+    if not data or data.get('status') in ('cancelled', 'finalized'):
+        return
+    # Validate on the caller thread before the uploader can fall back to inline work.
+    settings = _validated_settings(data.get('ai_settings') or ai_settings)
+    if data.get('extraction_complete'):
         return
     if not data.get('ai_settings'):
-        _job_ref(db, link['job_id']).set({'ai_settings': _validated_settings(ai_settings)}, merge=True)
-    _spawn_worker(fs, db, client, data.get('ai_settings') or ai_settings, link['job_id'],
+        _job_ref(db, link['job_id']).set({'ai_settings': settings}, merge=True)
+    _spawn_worker(fs, db, client, settings, link['job_id'],
                   data.get('s3_prefix', link.get('s3_prefix')), data.get('page_count', 0), raw_bytes_list)
 
 

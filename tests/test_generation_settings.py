@@ -1,18 +1,64 @@
 """A9: request identity and response provenance, entirely synthetic/offline."""
 import json
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
+from ai_pricing import PRICING_PER_MTOK
 from ai_runtime import extraction_runtime
 from pipeline_config import (
-    STAGE_MAX_TOKENS, OPENAI_REASONING_EFFORTS, generation_request, requested_generation, validate_settings,
+    STAGE_MAX_TOKENS, OPENAI_REASONING_EFFORTS, generation_request, requested_generation,
+    validate_generation_request, validate_settings,
 )
 from scripts.extraction_eval.billing import cycle_budgets
-from scripts.extraction_eval.gateway import Gateway, DryRunMiss, RequestLimitError
+from scripts.extraction_eval.gateway import Gateway, DryRunMiss, RequestLimitError, request_ceiling, validate_prices
 from scripts.extraction_eval.store import Ledger
+
+
+@pytest.mark.parametrize('model,default_effort,rates', [
+    ('claude-sonnet-5-5', 'high', (2, 10, .1, 2.5)),
+    ('claude-opus-5-5', 'medium', (4, 20, .2, 5)),
+    ('claude-fable-5-2', 'high', (8, 40, .2, 10)),
+])
+def test_new_claude_models_from_stage_settings_to_priced_request(model, default_effort, rates):
+    settings = validate_settings({f'{stage}_model': model for stage in STAGE_MAX_TOKENS})
+    config = json.loads(Path('scripts/extraction_eval/baseline.json').read_text())
+    prices = validate_prices({**config, 'settings': settings}, executing=True)
+    for field, rate in zip(('input', 'output', 'cache_read', 'cache_write'), rates):
+        assert prices[model][field] == PRICING_PER_MTOK[model][field] == rate
+    for stage, cap in STAGE_MAX_TOKENS.items():
+        request = generation_request(settings, stage)
+        assert request == {'model': model, 'max_tokens': cap}
+        assert requested_generation(request)['documented_defaults'] == {
+            'thinking': 'adaptive', 'effort': default_effort}
+        validate_generation_request(request)
+        assert request_ceiling(request, prices) == Decimal(rates[3]) + Decimal(cap * rates[1]) / 1_000_000
+
+    for effort in ('low', 'medium', 'high', 'xhigh', 'max'):
+        request = generation_request({**settings, 'metadata_thinking': 'adaptive',
+                                      'metadata_effort': effort}, 'metadata')
+        validate_generation_request(request)
+    for options in ({'thinking': {'type': 'disabled'}},
+                    {'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
+                    {'temperature': 1}, {'top_p': 1}, {'top_k': 1}):
+        with pytest.raises(ValueError):
+            validate_generation_request({**request, **options})
+
+
+@pytest.mark.parametrize('model', ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-2'])
+def test_between_tools_requires_sonnet_55_and_at_most_high_effort(model):
+    for effort in ('default', 'low', 'medium', 'high', 'xhigh', 'max'):
+        overrides = dict(metadata_model=model, metadata_thinking='between_tools', metadata_effort=effort)
+        if model == 'claude-sonnet-5-5' and effort not in ('xhigh', 'max'):
+            request = generation_request(validate_settings(overrides), 'metadata')
+            assert request['thinking'] == {'type': 'between_tools'}
+            validate_generation_request(request)
+        else:
+            with pytest.raises(ValueError):
+                validate_settings(overrides)
 
 
 @pytest.mark.parametrize('stage', STAGE_MAX_TOKENS)

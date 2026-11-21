@@ -18,14 +18,8 @@ credentials while testing; all harness tests use fakes and synthetic fixtures.
 
 ## Small-book screens
 
-The first-wording configs `character_gender-cues.json`, `character_protagonist.json`,
-`character_aliases.json` and `character_incidental.json` differ from `baseline.json`
-only in `settings.character_prompt_variant`. Their short names select the rule
-blocks in `text_content/pipeline_prompts.py`; page `prompt_variant` choices stay
-unchanged. Each adds one block to the frozen legacy character prompt, without
-new examples, and preserves page and book-details request bytes/cache keys.
-Second-wording drafts: `character_gender-cues-w2.json`, `character_protagonist-w2.json`, `character_aliases-w2.json`, `character_incidental-w2.json`, `character_human-w2.json`; third wording: `character_incidental-w3.json`.
-These replace the relevant legacy lines; Chris can edit all five in `CHARACTER_RULE_REPLACEMENTS` beside `CHARACTER_RULE_BLOCKS` in `text_content/pipeline_prompts.py`.
+`character_human-w2.json` replaces the human/non-human rule in the legacy character prompt.
+`character_human-vision-sonnet.json` adds the Sonnet picture check kept in decision 033.
 `character_human-vision.json` adds evaluation-only `settings.human_vision_enabled` to `human-w2`: first two text-matched pages per character, deduplicated, no extra-image retry (DECISIONS 031).
 Defaults: `human_vision_model=claude-haiku-4-5`, `human_vision_max_edge=784`, `human_vision_max_tokens=2048`; pinned $1/$5 per million input/output tokens (batch half). Only `human` changes; `characters_initial` and `human_vision` retain the evidence.
 For two fixed-text screens, add `all_for_one` and `too_shy_for_show_and_tell` to the controls below, use this config and `--replicate-stages human_vision`, with fresh replicate tokens/output directories; null, unmatched or failed decisions retain text values.
@@ -52,13 +46,12 @@ PY=/home/expert/Documents/uob/fair_tales/FairTalesDataEntry/.venv/bin/python
 books=(cave_baby elmer_and_rose is_it_betime_wibbly_pig sharing_a_shell
        the_pirates_next_door the_rescue_party a_letter_to_santa "it's_christmas"
        snow_white,_star_striker the_little_bully who_will_save_us you_choose)
-idea=gender-cues
 pass=1
-token="screen-${idea}-w1-${pass}"
+token="screen-human-w2-${pass}"
 run="$RUNS/$token"
 args=(--snapshot "$SNAPSHOT" --freeze-dir "$FREEZE_DIR" --cohort tune
       --inputs scans --inputs-manifest "$TUNING_INPUTS"
-      --config "scripts/extraction_eval/character_${idea}.json"
+      --config scripts/extraction_eval/character_human-w2.json
       --ledger "$LEDGER" --books "${books[@]}" --out "$run"
       --replicate "$token" --replicate-stages character_detection)
 "$PY" -m scripts.extraction_eval extract "${args[@]}" --dry-run
@@ -70,8 +63,7 @@ args=(--snapshot "$SNAPSHOT" --freeze-dir "$FREEZE_DIR" --cohort tune
   --freeze-dir "$FREEZE_DIR" --cohort tune --run "$run" --out "$run/reports"
 ```
 
-Repeat from `pass=2` through scoring for `screen-gender-cues-w1-2` (the first
-token is `screen-gender-cues-w1-1`). If any upstream request is pending, resolve
+Repeat with `pass=2` for the second screen. If any upstream request is pending, resolve
 its cache/configuration mismatch before paid screening; the example's pending
 counts are expectations, not a measured real dry run. Use fresh purpose tokens
 at the gate. Screens drop or promote under decision 026; they do not establish
@@ -822,6 +814,9 @@ checks the actual body before any reservation. Supported overrides are adaptive
 or disabled thinking and low/medium/high/max effort on Sonnet 4.6; Sonnet 5 and
 Opus 4.8 also allow xhigh. Haiku 4.5 accepts only disabled thinking here, with
 effort omitted. Manual `enabled` thinking needs a budget and is not implemented.
+Sonnet 5.5, Opus 5.5 and Fable 5.2 default to adaptive thinking and accept all
+five effort levels. Default effort is high, medium and high respectively. Only
+Sonnet 5.5 accepts `between_tools`, at low through high effort.
 An evaluation model known only to the price table may use omitted options;
 explicit overrides require documented support in the shared definition. This
 prevents accidental invalid requests without guessing capabilities. OpenAI has
@@ -829,8 +824,8 @@ separate reasoning settings and output floors, documented below.
 
 The local source consulted offline was bundled `claude-api` reference **2.1.322**,
 at `/tmp/claude-1000/bundled-skills/2.1.322/98c07a88497fde2ff3d554084d8bd7d5/claude-api/shared/`:
-`models.md` (Haiku 4.5) and `model-migration.md` (Sonnet 5, Sonnet 4.6 and
-Opus 4.7/4.8 sections). Its upstream references are
+`models.md`, the corresponding model sections of `model-migration.md`, and
+the model-specific 400s in `error-codes.md`. Its upstream references are
 [adaptive thinking](https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking)
 and [effort](https://platform.claude.com/docs/en/build-with-claude/effort).
 No network verification was performed for A9.
