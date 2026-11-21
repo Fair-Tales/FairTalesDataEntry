@@ -1058,3 +1058,92 @@ and decided:
   original and the corrected references. The frozen snapshot is not changed.
   Disputed items (the protagonists of *Who Will Save Us*) stay as recorded
   until Chris has asked the original coders.
+
+## 032 — Full test of the promoted wordings together, and sealed fixes to the Check books (2026-11-19)
+
+Chris decided, before the first full 75-book test (step D) of the character
+wordings promoted by the small-book tests:
+
+- **Together.** The promoted wordings are tested as one candidate (`promoted-d1`
+  in `CHARACTER_RULE_COMBINATIONS`): human-w2 with the Sonnet picture step,
+  aliases-w2 and incidental-w3, plus protagonist-w3 if its small-book test
+  promotes it. One formal attempt instead of three, about half the cost, and
+  the wordings are judged as they would ship. Gains are still reported per
+  measure.
+- **Method unchanged.** Decision 020 applies as approved: noise from 20 repeat
+  runs of the old prompt on all 75 books (run from the same frozen code as the
+  first three), then 4 Iterate and 8 Check repeats per arm. Spending cap for
+  step D: $25 (typed `AFFIRMATIVE`).
+- **Check-book references.** The 20 sealed Check books still carried the
+  original coding, so a correct answer under decisions 029–031 could count as
+  an error there and wrongly reject a change. At Chris's request a separate
+  agent reviewed those books against 029–031, from the books' own text and
+  pictures only and never from model output, and wrote its fixes to a sealed
+  changelog and overlay (`evaluation_runs/sealed-check-review/`, not opened by
+  the tuning session). Only aggregate counts were reported. The overlay is used
+  for scoring; the database edits for those books are made after tuning ends,
+  when the Check books are unsealed, following the same changelog.
+- **Who Will Save Us** (amends 031). Chris decided the five young penguins are
+  the protagonists, not the Old Wise penguin; the database and the fix
+  changelog record this.
+
+## 033 — Step D result: keep human/non-human with the picture check; Chris decides from the figures (2026-11-21)
+
+- **Keep/drop by Chris from the figures** (amends 020). Chris judged the
+  pre-named target and automatic verdict of 020 unnecessary. Full tests report,
+  per measure and set, the old and new means and a 95% noise range from the
+  calibration runs (t(.975, R−1) × f × sqrt(2/r)); Chris decides what to keep.
+  The step D target was not named before its runs, and no verdict was logged.
+- **Result** (4 runs per arm on 55 Iterate books, 8 on 20 Check books, scored
+  against the corrected references; Check aggregate only). Human/non-human rose
+  0.782 → 0.858 (Iterate, noise ±0.015) and 0.878 → 0.896 (Check, ±0.009).
+  Protagonist was unchanged on Iterate and fell 0.895 → 0.869 on Check (±0.013).
+  Duplicate aliases rose from 0.35 to 1.59 per book (Iterate) and 0.27 to 1.20
+  (Check): alias wording 2 lists article and case variants of the name ("a
+  tiger" beside "the tiger"). Character recall, gender and alias coverage
+  changed within noise or on too few books; extra characters rose on Check.
+- **Kept:** human-w2 with the Sonnet picture step
+  (`character_human-vision-sonnet.json`). **Dropped:** protagonist-w3,
+  aliases-w2 and incidental-w3, which return to the old wording.
+- Step D cost $18.39 of its $25 cap. The 20-book Check runs could not enter
+  `tuning-attempt` because the configuration id includes the book list; the
+  figures were computed with the same averaging code instead.
+
+## 034 — Corrected references by re-freezing, the character redesign, and photo transcription first (2026-11-21)
+
+- **Re-freeze** (amends 031's use of overlays). All known reference fixes are
+  now in the database: the 58 Iterate rows on 19 November, and the 43 Check
+  rows on 21 November, applied through Validation by a separate sealed agent
+  that reported counts only. The frozen reference copy is retaken into a new
+  folder, `autonomy-freeze/snapshot-2026-11-21`; the book draws and seal are
+  unchanged. The old copy, the overlays and the fix changelogs are kept for
+  provenance and are not used for new scoring. Runbook:
+  `planning/refreeze_runbook_2026-11-21.md` (branch `impl/refreeze`). Chris
+  typed AFFIRMATIVE.
+- **Remove character** is added to Validation (Chris approved), first used for
+  a duplicate merge among the Check fixes.
+- **Character redesign.** Astra and Fable designed the character step
+  independently and then reviewed each other's designs (private:
+  `evaluation_runs/character-designs-2026-11-21/`). Both start with the
+  cheapest test: today's single prompt with worked examples. Chris: the
+  examples are made up, not book excerpts. The newest models (Sonnet 5.5,
+  Opus 5.5, Fable 5.2) are always tried alongside prompt changes. The
+  character test waits until transcription is settled.
+- **Transcription first, on phone photos only.** Books are entered from photos
+  from now on, so transcription of the old colour scans no longer matters.
+  Sonnet 5.5, Opus 5.5 and Fable 5.2 are compared with Sonnet 5. The answers
+  are the stored pilot text (drafted by Claude, checked by a person) plus an
+  independent Astra transcription of the same photos; where they disagree, a
+  separate Fable 5.2 agent decides from the photo, seeing both readings
+  unlabelled. The 57 pilot photo books are split reproducibly before anyone
+  sees text: about 29 to choose the model and 28 kept untouched for one final
+  check (amends 015 item 4).
+- **Picture check stays evaluation-only**: 0.86 human/non-human agreement is
+  not good enough for production (Chris).
+- The unkept character wordings are deleted on branch `impl/models-and-tidy`
+  (merge pending). The code for combining wordings (`CHARACTER_RULE_COMBINATIONS`)
+  and protagonist-w3 stay on the unmerged branch `impl/char-combined`.
+- **Fixture exposure.** Speech fixtures in the analysis repository that
+  probably quote two held-out books were authorised as already exposed on
+  16 November (`planning/pronoun_handling_review_2026-11-16.md`); Chris
+  confirmed on 21 November that this is not a problem.
