@@ -19,7 +19,8 @@ import streamlit as st
 import anthropic
 from streamlit_option_menu import option_menu
 
-from text_content import BookPhotoEntry, PhotoUpload, BookForm
+from text_content import BookPhotoEntry, PhotoUpload, BookForm, Uploader
+from pipeline_config import InvalidCharacterPromptVariant
 from utilities import (
     page_layout,
     check_authentication_status,
@@ -283,16 +284,20 @@ def _run_extraction(fs, *, check_settled):
     # be seeded with the extracted title (no rename needed if the user keeps it).
     # ``fs``/``db`` are built on THIS (script) thread and handed to the worker.
     if client is not None:
-        start_page_processing_job(
-            st.session_state,
-            get_s3_filesystem(),
-            st.session_state.firestore.connect_book(),
-            client,
-            get_ai_settings(),
-            [data for _name, data in pages],
-            entered_by=st.session_state.get('username'),
-            extracted_title=metadata.get('title'),
-        )
+        try:
+            start_page_processing_job(
+                st.session_state,
+                get_s3_filesystem(),
+                st.session_state.firestore.connect_book(),
+                client,
+                get_ai_settings(),
+                [data for _name, data in pages],
+                entered_by=st.session_state.get('username'),
+                extracted_title=metadata.get('title'),
+            )
+        except InvalidCharacterPromptVariant:
+            st.error(Uploader.saved_wording_unavailable)
+            return
 
     has_any = bool(
         metadata.get('title')

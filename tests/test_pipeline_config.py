@@ -11,7 +11,7 @@ import utilities
 from ai_runtime import extraction_runtime
 from pipeline_config import AI_SETTINGS_DEFAULTS, GENERATION_DEFAULTS, generation_request, validate_settings
 from scripts.extraction_eval import cli, runner
-from text_content.pipeline_prompts import (CHARACTER_RULE_BLOCKS, CHARACTER_RULE_REPLACEMENTS, PROMPT_VARIANTS,
+from text_content.pipeline_prompts import (CHARACTER_RULE_REPLACEMENTS, PROMPT_VARIANTS,
                                           evaluation_prompt_context, prompt_for)
 from test_background_pipeline import FakeClient as FakeDB, FakeFs, _make_job
 from test_extraction_eval_core import FakeClient, image_bytes, isolated  # noqa: F401,F811 - pytest fixtures
@@ -248,7 +248,7 @@ def test_production_worker_and_harness_build_identical_request_bytes(
                 == json.dumps(harness_request, ensure_ascii=False).encode('utf-8'))
 
 
-@pytest.mark.parametrize('character_variant', [None, *PROMPT_VARIANTS, *CHARACTER_RULE_BLOCKS, *CHARACTER_RULE_REPLACEMENTS])
+@pytest.mark.parametrize('character_variant', [None, *PROMPT_VARIANTS, *CHARACTER_RULE_REPLACEMENTS])
 def test_foreground_character_override_matches_harness(character_variant, monkeypatch):
     settings = validate_settings({'prompt_variant': 'rules-only', 'character_prompt_variant': character_variant})
     monkeypatch.setattr(utilities, '_read_ai_settings_doc', lambda: settings)
@@ -269,7 +269,31 @@ def test_invalid_character_variant_is_rejected(value):
         validate_settings({'character_prompt_variant': value})
 
 
-@pytest.mark.parametrize('variant', [*CHARACTER_RULE_BLOCKS, *CHARACTER_RULE_REPLACEMENTS])
+def test_retired_wording_stops_both_resume_paths_and_shows_upload_error(monkeypatch):
+    from unittest.mock import Mock
+    from streamlit.runtime.scriptrunner import StopException
+    from pages import uploader
+
+    db = FakeDB()
+    job_id = _make_job(db)
+    production._job_ref(db, job_id).set({'ai_settings': {'character_prompt_variant': 'incidental-w3'}}, merge=True)
+    with pytest.raises(ValueError, match='character_prompt_variant'):
+        production.resume_job(None, db, None, job_id)
+    with pytest.raises(ValueError, match='character_prompt_variant'):
+        production.ensure_worker_running(None, db, None, {}, {'job_id': job_id})
+
+    messages = []
+    monkeypatch.setattr(uploader, 'get_ai_settings', lambda: {})
+    monkeypatch.setattr(uploader.st, 'session_state', {'current_book': object()})
+    monkeypatch.setattr(uploader.st, 'error', messages.append)
+    monkeypatch.setattr(uploader.st, 'stop', Mock(side_effect=StopException))
+    with pytest.raises(StopException):
+        uploader._finalize_job_batch({'job_id': job_id}, [b'page'], total=1, fs=None, db=db,
+                                     ai_client=None, model=None, status=None, progress=None)
+    assert messages == [uploader.Uploader.saved_wording_unavailable]
+
+
+@pytest.mark.parametrize('variant', CHARACTER_RULE_REPLACEMENTS)
 def test_character_only_variant_does_not_expand_page_choices(variant):
     with pytest.raises(ValueError, match='prompt_variant'):
         validate_settings({'prompt_variant': variant})

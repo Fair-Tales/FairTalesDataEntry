@@ -45,6 +45,11 @@ PRICING_PER_MTOK = {
     "claude-sonnet-4-6": {"input": 3.0, "output": 15.0, "cache_read": .3, "cache_write": 3.75},
     "claude-opus-4-8": {"input": 5.0, "output": 25.0, "cache_read": .5, "cache_write": 6.25},
     "claude-haiku-4-5": {"input": 1.0, "output": 5.0, "cache_read": .1, "cache_write": 1.25},
+    # Bundled claude-api 2.1.322, models.md and model-migration.md (2026-11-21).
+    "claude-sonnet-5-5": {"input": 2.0, "output": 10.0, "cache_read": 0.1, "cache_write": 2.5},
+    # Opus 5.5 five-minute cache writes are inferred at 1.25 times the input rate.
+    "claude-opus-5-5": {"input": 4.0, "output": 20.0, "cache_read": 0.2, "cache_write": 5.0},
+    "claude-fable-5-2": {"input": 8.0, "output": 40.0, "cache_read": 0.2, "cache_write": 10.0},
     # OpenAI frontier models: standard short-context rates (up to 272K input),
     # without regional surcharges. Longer prompts remain counted but unpriced.
     # All four cached-input rates are published:

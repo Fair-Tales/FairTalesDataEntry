@@ -11,8 +11,7 @@ the harness's existing default of False; production scheduling is unchanged.
 from collections.abc import Mapping
 from copy import deepcopy
 
-from text_content.pipeline_prompts import (CHARACTER_RULE_BLOCKS, CHARACTER_RULE_REPLACEMENTS,
-                                          PROMPT_VARIANTS)
+from text_content.pipeline_prompts import CHARACTER_RULE_REPLACEMENTS, PROMPT_VARIANTS
 from text_content.pipeline_runtime import (
     PIPELINE_SETTINGS_OBJECT, PIPELINE_SETTING_UNKNOWN, PIPELINE_SETTING_INVALID,
 )
@@ -20,9 +19,10 @@ from text_content.pipeline_runtime import (
 EXTRACTION_MODEL = 'claude-sonnet-5'
 EXTRACTION_OCR_MAX_TOKENS = 8192
 LOCATE_MAX_EDGE = 784
-AI_MODEL_ALLOWLIST = (
+_SMALL_OUTPUT_MODELS = (
     'claude-opus-4-8', 'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-haiku-4-5',
 )
+AI_MODEL_ALLOWLIST = (*_SMALL_OUTPUT_MODELS, 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-2')
 AI_EDGE_MIN, AI_EDGE_MAX = 512, 4096
 # Stay below the SDK's default-timeout non-streaming limit: 128000 * 600 / 3600 ≈ 21333.
 AI_TOKENS_MIN, AI_TOKENS_MAX = 256, 20000
@@ -73,14 +73,17 @@ def validate_openai_generation(model, effort, floor):
         raise ValueError(PIPELINE_SETTING_INVALID.format(
             key='openai_output_floor', expected='integer from 256 to 128000'))
 
-# Offline source: bundled claude-api reference 2.1.322, shared/models.md and
-# shared/model-migration.md (Sonnet 5, Sonnet 4.6, Opus 4.7/4.8 sections).
-# See the extraction_eval README for source paths and documented limitations.
+# Bundled claude-api 2.1.322, shared/{models,model-migration,error-codes}.md:
+# Sonnet 4.6/5/5.5, Opus 4.7/4.8/5.5, Fable 5.2 and Haiku 4.5.
 # These are supported overrides, not an exhaustive provider capability registry.
+_FIVE_EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
 ANTHROPIC_GENERATION = {
-    'claude-sonnet-5': (('adaptive', 'disabled'), ('low', 'medium', 'high', 'xhigh', 'max'), 'adaptive', 'high'),
+    'claude-sonnet-5-5': (('adaptive', 'between_tools'), _FIVE_EFFORTS, 'adaptive', 'high'),
+    'claude-opus-5-5': (('adaptive',), _FIVE_EFFORTS, 'adaptive', 'medium'),
+    'claude-fable-5-2': (('adaptive',), _FIVE_EFFORTS, 'adaptive', 'high'),
+    'claude-sonnet-5': (('adaptive', 'disabled'), _FIVE_EFFORTS, 'adaptive', 'high'),
     'claude-sonnet-4-6': (('adaptive', 'disabled'), ('low', 'medium', 'high', 'max'), 'disabled', 'high'),
-    'claude-opus-4-8': (('adaptive', 'disabled'), ('low', 'medium', 'high', 'xhigh', 'max'), 'disabled', 'high'),
+    'claude-opus-4-8': (('adaptive', 'disabled'), _FIVE_EFFORTS, 'disabled', 'high'),
     'claude-haiku-4-5': (('disabled',), (), 'disabled', None),
 }
 
@@ -92,6 +95,8 @@ def validate_generation(model, thinking='default', effort='default'):
     reasoning belongs in its own provider mapping (A12a), not this one.
     """
     modes, efforts, _, _ = ANTHROPIC_GENERATION.get(model, ((), (), None, None))
+    if thinking == 'between_tools':
+        efforts = ('low', 'medium', 'high')
     for field, value, allowed in (('thinking', thinking, modes), ('effort', effort, efforts)):
         if value != 'default' and value not in allowed:
             raise ValueError(PIPELINE_SETTING_INVALID.format(
@@ -146,7 +151,8 @@ def validate_generation_request(request):
         raise ValueError(PIPELINE_SETTING_INVALID.format(
             key='generation', expected='thinking.type and output_config.effort only'))
     validate_generation(request.get('model'), thinking.get('type', 'default'), output.get('effort', 'default'))
-    if any(key in request for key in ('temperature', 'top_p', 'top_k')) and request.get('model') in {'claude-sonnet-5', 'claude-opus-4-8'}:
+    if {'temperature', 'top_p', 'top_k'} & request.keys() and request.get('model') in {
+            'claude-sonnet-5', 'claude-opus-4-8', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-2'}:
         raise ValueError(PIPELINE_SETTING_INVALID.format(key='sampling', expected='omitted for this model'))
 
 
@@ -175,6 +181,16 @@ _CHOICES = {
 _CONTEXT_LIMITS = ('max_images', 'max_request_bytes', 'max_input_tokens', 'max_output_tokens')
 
 
+class InvalidCharacterPromptVariant(ValueError):
+    """The selected character-detection wording is unavailable."""
+
+
+def model_options(key):
+    if key in ('rotation_model', 'crop_quality_model', 'locate_model'):
+        return _SMALL_OUTPUT_MODELS
+    return AI_MODEL_ALLOWLIST
+
+
 def validate_settings(values, *, model_ids=()):
     """Return defaults plus explicit overrides, refusing every unknown/bad key.
 
@@ -186,15 +202,16 @@ def validate_settings(values, *, model_ids=()):
     if not isinstance(values, Mapping):
         raise ValueError(PIPELINE_SETTINGS_OBJECT)
     result = deepcopy(PIPELINE_SETTINGS_DEFAULTS)
-    models = (*AI_MODEL_ALLOWLIST, *model_ids)
+    extra_models = tuple(model for model in model_ids if model not in AI_MODEL_ALLOWLIST)
     for key, value in values.items():
         if key not in result:
             raise ValueError(PIPELINE_SETTING_UNKNOWN.format(key=key))
         if key in AI_SETTINGS_MODEL_KEYS:
+            models = (*model_options(key), *extra_models)
             valid = isinstance(value, str) and value in models
             expected = ', '.join(models)
         elif key == 'character_prompt_variant':
-            choices = (*PROMPT_VARIANTS, *CHARACTER_RULE_BLOCKS, *CHARACTER_RULE_REPLACEMENTS)
+            choices = (*PROMPT_VARIANTS, *CHARACTER_RULE_REPLACEMENTS)
             valid = value is None or isinstance(value, str) and value in choices
             expected = 'null or ' + ', '.join(choices)
         elif key in _CHOICES:
@@ -207,8 +224,8 @@ def validate_settings(values, *, model_ids=()):
             valid = type(value) is int and 256 <= value <= 128000
             expected = 'integer from 256 to 128000'
         elif key.endswith('_thinking') or key.endswith('_effort'):
-            choices = (('default', 'adaptive', 'disabled') if key.endswith('_thinking')
-                       else ('default', 'low', 'medium', 'high', 'xhigh', 'max'))
+            choices = (('default', 'adaptive', 'disabled', 'between_tools') if key.endswith('_thinking')
+                       else ('default', *_FIVE_EFFORTS))
             valid = isinstance(value, str) and value in choices
             expected = ', '.join(choices)
         elif key.endswith('_max_edge') or key.endswith('_max_tokens'):
@@ -228,7 +245,8 @@ def validate_settings(values, *, model_ids=()):
             valid = type(value) is bool
             expected = 'boolean'
         if not valid:
-            raise ValueError(PIPELINE_SETTING_INVALID.format(key=key, expected=expected))
+            error = InvalidCharacterPromptVariant if key == 'character_prompt_variant' else ValueError
+            raise error(PIPELINE_SETTING_INVALID.format(key=key, expected=expected))
         result[key] = deepcopy(value)
     for stage in STAGE_MAX_TOKENS:
         validate_generation(result[f'{stage}_model'], result[f'{stage}_thinking'], result[f'{stage}_effort'])

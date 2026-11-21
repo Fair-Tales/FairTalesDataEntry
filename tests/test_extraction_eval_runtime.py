@@ -10,7 +10,7 @@ import pytest
 
 from scripts.extraction_eval.tuning import current_loader
 from scripts.extraction_eval.billing import BillingStopped, cycle_budgets
-from text_content.pipeline_prompts import CHARACTER_RULE_BLOCKS, CHARACTER_RULE_REPLACEMENTS
+from text_content.pipeline_prompts import CHARACTER_RULE_REPLACEMENTS
 
 
 from scripts.extraction_eval.gateway import (
@@ -1323,9 +1323,8 @@ def test_character_variant_reuses_exact_page_request_and_cache_key(config, ledge
     assert len(provider.calls) == 3  # Page once, each character prompt once.
 
 
-@pytest.mark.parametrize('variant', [*CHARACTER_RULE_BLOCKS, *CHARACTER_RULE_REPLACEMENTS])
-def test_small_book_configs_preserve_upstream_requests(
-        variant, ledger_factory, example_pack, synthetic_cohort):
+def test_human_w2_preserves_upstream_requests(ledger_factory, example_pack, synthetic_cohort):
+    variant = 'human-w2'
     import io
     from pathlib import Path
     from PIL import Image
@@ -1343,16 +1342,6 @@ def test_small_book_configs_preserve_upstream_requests(
     # Pin the whole historical character template, independently of the new blocks.
     assert hashlib.sha256(prompt_for('character_detection', 'legacy-v1').encode()).hexdigest() == (
         '61c356bb44df9484872e87943bf0a76e0649aaf848b974bfd8f6b322dee83b3a')
-    # Captured before w2: paid first-wording requests must not drift.
-    first_wording_hashes = {
-        'gender-cues': '5299bdc53bb11e2c64b05f494de4acad76dac4c932509a8fea709f7cd7172dc1',
-        'protagonist': '2f6df7553492776d25658ba5f3ff1643a201565455b23b42cf03f0ee0e84beb0',
-        'aliases': '3eedb149680df603359c483d9d2401273a92c7b6eb3077bd703dff4cf20eb161',
-        'incidental': 'ffd829a01e708c39e3ef2fe6be1f32ad1c1675fb20634e3e0043f122ec9b8acf',
-    }
-    if variant in first_wording_hashes:
-        assert hashlib.sha256(prompt_for('character_detection', variant).encode()).hexdigest() == (
-            first_wording_hashes[variant])
     buffer = io.BytesIO()
     Image.new('RGB', (4, 4), 'white').save(buffer, format='PNG')
     page = {'has_text': True, 'text': 'A traveller waved.', 'is_story_page': True,
@@ -1393,16 +1382,13 @@ def test_small_book_configs_preserve_upstream_requests(
     old, old_key = requests[0][3]
     new, new_key = requests[1][3]
     expected = deepcopy(old)
-    if variant in CHARACTER_RULE_REPLACEMENTS:
-        legacy = prompt_for('character_detection', 'legacy-v1')
-        restored = prompt_for('character_detection', variant)
-        before, after = CHARACTER_RULE_REPLACEMENTS[variant]
-        assert legacy.count(before) == restored.count(after) == 1
-        assert before not in restored
-        assert restored.replace(after, before) == legacy  # Only the declared replacement.
-        expected['messages'][0]['content'] = expected['messages'][0]['content'].replace(before, after)
-    else:
-        expected['messages'][0]['content'] += '\n\n' + CHARACTER_RULE_BLOCKS[variant]
+    legacy = prompt_for('character_detection', 'legacy-v1')
+    restored = prompt_for('character_detection', variant)
+    before, after = CHARACTER_RULE_REPLACEMENTS[variant]
+    assert legacy.count(before) == restored.count(after) == 1
+    assert before not in restored
+    assert restored.replace(after, before) == legacy  # Only the declared replacement.
+    expected['messages'][0]['content'] = expected['messages'][0]['content'].replace(before, after)
     assert canonical(new) == canonical(expected)
     assert new_key != old_key
     assert len(provider.calls) == 5  # Page, locator and details once; characters twice.
